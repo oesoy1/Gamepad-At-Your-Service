@@ -1,27 +1,26 @@
 ﻿<#
 .SYNOPSIS
-    Gamepad At Your Service — Release Archive Builder (I1.1, D64).
+    Gamepad At Your Service — MO2-Ready Release Archive Builder (D64 / MT-TEST).
 
 .DESCRIPTION
-    Assembles a distributable release archive following docs/kb/27-packaging-design.md
-    and D64 (2026-11-14 base switch):
-      - Primary target (-Target gamma-monolith): original G.A.M.M.A. engine
-        (xray-monolith by themrdemonized, AnomalyDX11AVX.exe from ports\PORT-G\out)
-        + original G.A.M.M.A. modpack.
-      - Secondary target (-Target anomaly-vanilla): original S.T.A.L.K.E.R. Anomaly
-        1.5.2/1.5.3 (AnomalyDX11AVX.exe from ports\PORT-A\out, without G.A.M.M.A.-only
-        screen override files).
-      - Optional package (-Target pbr-dx12-optional): Optional PBR + DX12 + DLSS
-        build (AnomalyDX12.exe).
+    Assembles a distributable release archive ready for direct import into
+    Mod Organizer 2 (Install a new mod from an archive):
+      - Single top-level mod folder: GAMMA Gamepad & Tactical UI\
+          meta.ini
+          gamedata\                (strict Windows-1251 / 1252 without BOM)
+          engine_files\            (files for <Anomaly>\bin\ + engine_helper.ps1)
+          tools\verify.ps1         (read-only installation verifier)
+          Установить_движок.cmd / Вернуть_оригинал.cmd
+          Install_Engine.cmd    / Restore_Original.cmd
+          README-RU.txt / README-EN.txt / THIRD-PARTY-NOTICES.txt / THIRD_PARTY\
+          manifest.sha256.json / SHA256SUMS.txt
 
-    Features:
-      - Re-encodes UTF-8/UTF-16 .script/.ltx/.xml files into strict Windows-1251 without BOM
-        (while preserving already-valid CP1251 files byte-for-byte without corruption).
-      - Excludes debug/profiler/autotest/backup files, redistributed shaders (D23), and
-        obsolete unreferenced draft .dds textures.
-      - Generates THIRD-PARTY-NOTICES.txt + THIRD_PARTY\ license bundle, meta.ini,
-        manifest.sha256.json, and SHA256SUMS.txt.
-      - Supports -DryRun (prints full file plan without writing staging or .zip).
+    Supported targets:
+      - gamma-monolith (default): G.A.M.M.A. DX11/AVX + DX11 fallback from may-test\bin.
+      - gamma-monolith-dlss: G.A.M.M.A. DX12 bridge (DLSS, FSR 3, Frame Generation) from
+        may-test-dlss\bin + open-source DLSS shaders/menu from extras\dlss_gamma.
+      - anomaly-vanilla: clean S.T.A.L.K.E.R. Anomaly 1.5.2/1.5.3 (PORT-A).
+      - pbr-dx12-optional: optional PBR + DX12 + DLSS build (AnomalyDX12.exe).
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +29,7 @@ param(
     [string]$Target = "gamma-monolith",
 
     [Parameter(Mandatory = $false)]
-    [string]$Version = "0.2.0",
+    [string]$Version = "0.2.2",
 
     [Parameter(Mandatory = $false)]
     [string]$ModSourceDir = "D:\GAMMA-Gamepad-Lab\build\mod",
@@ -38,15 +37,18 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$EngineExe = "",
 
-    # gamma-monolith-dlss: runtime-файлы DLSS/FSR/Streamline (bin) и DLSS-оверлей gamedata (меню + шейдеры)
     [Parameter(Mandatory = $false)]
-    [string]$DlssStandBin = "D:\GAMMA-Gamepad-Lab\may-test-dlssin",
+    [string]$StandBinDir = "D:\GAMMA-Gamepad-Lab\may-test\bin",
+
+    # gamma-monolith-dlss: runtime files (bin) and DLSS overlay gamedata (menu + shaders)
+    [Parameter(Mandatory = $false)]
+    [string]$DlssStandBin = "D:\GAMMA-Gamepad-Lab\may-test-dlss\bin",
 
     [Parameter(Mandatory = $false)]
     [string]$DlssExtrasDir = "D:\GAMMA-Gamepad-Lab\ports\PORT-MT\wt\may-dlss\extras\dlss_gamma",
 
     [Parameter(Mandatory = $false)]
-    [string]$SdlDllPath = "D:\GAMMA-Gamepad-Lab\game\bin\SDL3.dll",
+    [string]$SdlDllPath = "",
 
     [Parameter(Mandatory = $false)]
     [string]$OutputDir = "D:\GAMMA-Gamepad-Lab\release",
@@ -95,7 +97,7 @@ if ($Target -eq "anomaly-vanilla" -or $StrictCleanRoom) {
     $IncludeGammaScreenOverrides = $false
 }
 
-# G.A.M.M.A.-specific foreign/vanilla UI files modified in WS1 / FW1 / DIALOGS
+# G.A.M.M.A.-specific foreign/vanilla UI files (excluded on anomaly-vanilla / StrictCleanRoom)
 $GammaScreenOverrideFiles = @{
     "gamedata\scripts\ui_workshop.script"           = $true
     "gamedata\scripts\ui_furniture_workshop.script" = $true
@@ -115,67 +117,144 @@ $ObsoleteDraftDdsPatterns = @(
     "^ui_gp_menu_shortcuts\.dds$"
 )
 
-function Resolve-EngineExecutable {
-    $expectedExeName = if ($Target -eq "pbr-dx12-optional") { "AnomalyDX12.exe" } elseif ($Target -eq "gamma-monolith-dlss") { "AnomalyDX12-DLSS.exe" } else { "AnomalyDX11AVX.exe" }
+# Closed PBR/SSS shaders that must never be redistributed in any release archive
+$ForbiddenPbrShaderNames = @{
+    "hashed_alpha.h"        = $true
+    "ssfx_sss.ps"           = $true
+    "ssfx_sss_ext.ps"       = $true
+    "upscaler_reactive.ps"  = $true
+    "screenspace_shadows.h" = $true
+}
+
+function Resolve-EnginePackageFiles {
+    $expectedPrimaryName = switch ($Target) {
+        "pbr-dx12-optional"   { "AnomalyDX12.exe" }
+        "gamma-monolith-dlss" { "AnomalyDX12-DLSS.exe" }
+        default               { "AnomalyDX11AVX.exe" }
+    }
+
+    $primarySource = ""
+    $isStub = $false
+    $stubReason = ""
+    $additionalExes = New-Object System.Collections.Generic.List[object]
 
     if (-not [string]::IsNullOrWhiteSpace($EngineExe)) {
         if (-not (Test-Path -LiteralPath $EngineExe)) {
             throw "Explicit -EngineExe path does not exist: $EngineExe"
         }
-        return [PSCustomObject]@{
-            ExeName    = $expectedExeName
-            SourcePath = (Resolve-Path -LiteralPath $EngineExe).Path
-            IsStub     = $false
-            StubReason = ""
+        $primarySource = (Resolve-Path -LiteralPath $EngineExe).Path
+        $expectedPrimaryName = [System.IO.Path]::GetFileName($primarySource)
+    } else {
+        $candidates = switch ($Target) {
+            "gamma-monolith" {
+                @(
+                    (Join-Path $StandBinDir "AnomalyDX11AVX.exe"),
+                    "D:\GAMMA-Gamepad-Lab\ports\PORT-MT\wt\may\_out\bin\AnomalyDX11AVX.exe",
+                    "D:\GAMMA-Gamepad-Lab\ports\PORT-G\out\AnomalyDX11AVX.exe",
+                    (Join-Path $StandBinDir "AnomalyDX11.exe")
+                )
+            }
+            "anomaly-vanilla" {
+                @(
+                    "D:\GAMMA-Gamepad-Lab\ports\PORT-A\out\AnomalyDX11AVX.exe",
+                    "D:\GAMMA-Gamepad-Lab\ports\PORT-A\out\AnomalyDX11.exe"
+                )
+            }
+            "gamma-monolith-dlss" {
+                @(
+                    (Join-Path $DlssStandBin "AnomalyDX12-DLSS.exe"),
+                    "D:\GAMMA-Gamepad-Lab\ports\PORT-MT\wt\may-dlss\_out\bin\AnomalyDX12-DLSS.exe"
+                )
+            }
+            "pbr-dx12-optional" {
+                @(
+                    "D:\GAMMA-Gamepad-Lab\build\engine\_build\_game\bin_dbg\AnomalyDX12.exe",
+                    "D:\GAMMA-Gamepad-Lab\game\bin\AnomalyDX12-DIALOGS.exe",
+                    "D:\GAMMA-Gamepad-Lab\game\bin\AnomalyDX12.exe"
+                )
+            }
+        }
+
+        foreach ($cand in $candidates) {
+            if (-not [string]::IsNullOrWhiteSpace($cand) -and (Test-Path -LiteralPath $cand)) {
+                $primarySource = (Resolve-Path -LiteralPath $cand).Path
+                if ($Target -eq "anomaly-vanilla") {
+                    $expectedPrimaryName = [System.IO.Path]::GetFileName($primarySource)
+                }
+                break
+            }
+        }
+
+        if (-not $primarySource) {
+            if ($AllowEngineStub) {
+                $isStub = $true
+                $stubReason = "pending_engine_build ($Target)"
+            } else {
+                throw ("No built engine executable found for target '{0}' (checked: {1}). Pass -EngineExe <path> or -AllowEngineStub for pre-build test packaging." -f $Target, ($candidates -join ", "))
+            }
         }
     }
 
-    $candidates = switch ($Target) {
-        "gamma-monolith" {
-            @(
-                "D:\GAMMA-Gamepad-Lab\ports\PORT-G\out\AnomalyDX11AVX.exe",
-                "D:\GAMMA-Gamepad-Lab\ports\PORT-G\out\AnomalyDX11.exe"
-            )
-        }
-        "anomaly-vanilla" {
-            @(
-                "D:\GAMMA-Gamepad-Lab\ports\PORT-A\out\AnomalyDX11AVX.exe",
-                "D:\GAMMA-Gamepad-Lab\ports\PORT-A\out\AnomalyDX11.exe"
-            )
-        }
-        "gamma-monolith-dlss" {
-            @("D:\GAMMA-Gamepad-Lab\may-test-dlssin\AnomalyDX12-DLSS.exe")
-        }
-        "pbr-dx12-optional" {
-            @(
-                "D:\GAMMA-Gamepad-Lab\build\engine\_build\_game\bin_dbg\AnomalyDX12.exe",
-                "D:\GAMMA-Gamepad-Lab\game\bin\AnomalyDX12-DIALOGS.exe",
-                "D:\GAMMA-Gamepad-Lab\game\bin\AnomalyDX12.exe"
-            )
+    # For gamma-monolith, bundle sibling AnomalyDX11.exe fallback alongside AnomalyDX11AVX.exe
+    if (-not $isStub -and $Target -eq "gamma-monolith" -and $expectedPrimaryName -ieq "AnomalyDX11AVX.exe") {
+        $primaryDir = Split-Path -Parent $primarySource
+        $dx11Candidates = @(
+            (Join-Path $primaryDir "AnomalyDX11.exe"),
+            (Join-Path $StandBinDir "AnomalyDX11.exe"),
+            "D:\GAMMA-Gamepad-Lab\ports\PORT-MT\wt\may\_out\bin\AnomalyDX11.exe",
+            "D:\GAMMA-Gamepad-Lab\ports\PORT-G\out\AnomalyDX11.exe"
+        )
+        foreach ($dx11 in $dx11Candidates) {
+            if (Test-Path -LiteralPath $dx11) {
+                $additionalExes.Add([PSCustomObject]@{
+                    ExeName    = "AnomalyDX11.exe"
+                    SourcePath = (Resolve-Path -LiteralPath $dx11).Path
+                })
+                break
+            }
         }
     }
 
-    $existing = @($candidates | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-Item -LiteralPath $_ } | Sort-Object LastWriteTimeUtc -Descending)
-    if ($existing.Count -gt 0) {
-        return [PSCustomObject]@{
-            ExeName    = $expectedExeName
-            SourcePath = $existing[0].FullName
-            IsStub     = $false
-            StubReason = ""
+    # Resolve SDL3.dll
+    $resolvedSdl = ""
+    if (-not [string]::IsNullOrWhiteSpace($SdlDllPath)) {
+        if (-not (Test-Path -LiteralPath $SdlDllPath)) {
+            throw "SdlDllPath not found: $SdlDllPath"
+        }
+        $resolvedSdl = (Resolve-Path -LiteralPath $SdlDllPath).Path
+    } else {
+        $sdlCandidates = New-Object System.Collections.Generic.List[string]
+        if ($primarySource) {
+            $sdlCandidates.Add((Join-Path (Split-Path -Parent $primarySource) "SDL3.dll"))
+        }
+        if ($Target -eq "gamma-monolith") {
+            $sdlCandidates.Add((Join-Path $StandBinDir "SDL3.dll"))
+        } elseif ($Target -eq "gamma-monolith-dlss") {
+            $sdlCandidates.Add((Join-Path $DlssStandBin "SDL3.dll"))
+        } elseif ($Target -eq "anomaly-vanilla") {
+            $sdlCandidates.Add("D:\GAMMA-Gamepad-Lab\ports\PORT-A\out\SDL3.dll")
+        }
+        $sdlCandidates.Add("D:\GAMMA-Gamepad-Lab\game\bin\SDL3.dll")
+
+        foreach ($sc in $sdlCandidates) {
+            if (Test-Path -LiteralPath $sc) {
+                $resolvedSdl = (Resolve-Path -LiteralPath $sc).Path
+                break
+            }
+        }
+        if (-not $resolvedSdl) {
+            throw ("SDL3.dll not found (checked: {0}). Pass -SdlDllPath <path>." -f ($sdlCandidates -join ", "))
         }
     }
 
-    if ($AllowEngineStub) {
-        $reason = if ($Target -eq "gamma-monolith") { "pending_port_g_build (ports/PORT-G/out)" } else { "pending_port_a_build (ports/PORT-A/out)" }
-        return [PSCustomObject]@{
-            ExeName    = $expectedExeName
-            SourcePath = ""
-            IsStub     = $true
-            StubReason = $reason
-        }
+    return [PSCustomObject]@{
+        ExeName        = $expectedPrimaryName
+        SourcePath     = $primarySource
+        IsStub         = $isStub
+        StubReason     = $stubReason
+        AdditionalExes = $additionalExes.ToArray()
+        SdlDllPath     = $resolvedSdl
     }
-
-    throw ("No built engine executable found for target '{0}' (checked: {1}). Pass -EngineExe <path> or -AllowEngineStub for pre-build test packaging." -f $Target, ($candidates -join ", "))
 }
 
 function Get-ModFileDisposition {
@@ -261,7 +340,7 @@ function Convert-GameTextToTargetBytes {
         return [PSCustomObject]@{ Bytes = $raw; Action = "kept_ascii_clean" }
     }
 
-    # Try strict UTF-8 decode: multi-byte UTF-8 text succeeds here, whereas single-byte CP1251 Cyrillic throws!
+    # Try strict UTF-8 decode: multi-byte UTF-8 succeeds here, single-byte CP1251 Cyrillic throws
     $utf8Decoded = $null
     try {
         $utf8Decoded = $Utf8Strict.GetString($raw, $offset, $raw.Length - $offset)
@@ -288,20 +367,22 @@ function Convert-GameTextToTargetBytes {
 
 function New-ThirdPartyNoticesText {
     param([string]$BuildTarget, [string]$RelVersion)
-    $pbrBlock = if ($BuildTarget -in @("pbr-dx12-optional", "gamma-monolith-dlss")) {
+    $dlssBlock = if ($BuildTarget -in @("pbr-dx12-optional", "gamma-monolith-dlss")) {
 @"
 
 --------------------------------------------------------------------------------
-OPTIONAL PBR / DX12 / DLSS BUILD COMPONENTS (present ONLY in pbr-dx12-optional)
+DLSS / FSR 3 / DX12 BRIDGE COMPONENTS (present in $BuildTarget)
 --------------------------------------------------------------------------------
-- NVIDIA DLSS SDK (NGX) & NVIDIA Streamline SDK — Copyright (c) NVIDIA
+- NVIDIA DLSS SDK (NGX) & NVIDIA Streamline SDK - Copyright (c) NVIDIA
   Corporation. Governed by NVIDIA DLSS / Streamline license terms (see
-  THIRD_PARTY\DLSS-LICENSE.txt and Streamline-LICENSE.txt). Runtime DLLs are
-  NOT bundled inside the MO2 mod archive.
-- AMD FidelityFX SDK / FSR 3 — Copyright (c) Advanced Micro Devices, Inc.
-  Licensed under the MIT License (see THIRD_PARTY\FSR3-LICENSE.txt).
-- Microsoft DirectX 12 Agility SDK — Copyright (c) Microsoft Corporation
-  (see THIRD_PARTY\AgilitySDK-LICENSE.txt).
+  THIRD_PARTY\DLSS-LICENSE.txt, Streamline-LICENSE.txt, and
+  engine_files\NVIDIA-DLSS-LICENSE.txt).
+- AMD FidelityFX SDK / FSR 3 - Copyright (c) Advanced Micro Devices, Inc.
+  Licensed under the MIT License (see THIRD_PARTY\FSR3-LICENSE.txt and
+  engine_files\AMD-FIDELITYFX-LICENSE.md).
+- Microsoft DirectX 12 Agility SDK - Copyright (c) Microsoft Corporation
+  (see THIRD_PARTY\AgilitySDK-LICENSE.txt and
+  engine_files\D3D12\AGILITY-SDK-LICENSE.txt).
 "@
     } else {
         ""
@@ -319,7 +400,7 @@ THIRD-PARTY SOFTWARE NOTICES & ATTRIBUTIONS
    - S.T.A.L.K.E.R. Anomaly Monolith Engine & Modded Exes contributions by Anomaly Team,
      OpenXRay contributors, and themrdemonized (https://github.com/themrdemonized/xray-monolith).
 
-2. Simple DirectMedia Layer 3 (SDL3.dll — SDL 3.4.x)
+2. Simple DirectMedia Layer 3 (SDL3.dll - SDL 3.4.x)
    - Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
    - Licensed under the zlib License (see THIRD_PARTY\SDL3-LICENSE.txt).
 
@@ -329,50 +410,74 @@ THIRD-PARTY SOFTWARE NOTICES & ATTRIBUTIONS
      ABI-compatible x64 OpenAL Soft build (https://github.com/kcat/openal-soft).
 
 4. Libraries Statically Linked in X-Ray Engine Executable
-   - LuaJIT 2.x (Copyright (C) 2005-2023 Mike Pall) & Lua 5.1 (PUC-Rio) — MIT License.
-   - Luabind (Copyright (c) 2003-2010 Daniel Wallin, Arvid Norberg) — MIT License.
-   - Dear ImGui (Copyright (c) 2014-2025 Omar Cornut) — MIT License.
-   - Intel oneAPI Threading Building Blocks (oneTBB) — Apache License 2.0.
-   - OpenSSL / SSLeay (xrCore\crypto) — OpenSSL & Original SSLeay Licenses:
+   - LuaJIT 2.x (Copyright (C) 2005-2023 Mike Pall) & Lua 5.1 (PUC-Rio) - MIT License.
+   - Luabind (Copyright (c) 2003-2010 Daniel Wallin, Arvid Norberg) - MIT License.
+   - Dear ImGui (Copyright (c) 2014-2025 Omar Cornut) - MIT License.
+   - Intel oneAPI Threading Building Blocks (oneTBB) / PPL - Apache License 2.0.
+   - OpenSSL / SSLeay (xrCore\crypto) - OpenSSL & Original SSLeay Licenses:
      "This product includes cryptographic software written by Eric Young (eay@cryptsoft.com)"
      "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
    - Independent JPEG Group libjpeg 6b:
      "This software is based in part on the work of the Independent JPEG Group."
-   - Xiph.Org libogg, libvorbis, libtheora — BSD 3-Clause License.
-   - Open Dynamics Engine (ODE, Copyright (c) Russell L. Smith) — BSD 3-Clause License.
-   - OPCODE 1.2 (Pierre Terdiman) — Author attribution notice.
-   - CxImage (Davide Pizzolato), giflib, NVIDIA Texture Tools (NVTT) — zlib / MIT.
-   - StackWalker (Jochen Kalmbach) — BSD 2-Clause License.
-   - Unicode ICU Components — Unicode / ICU License.
+   - Xiph.Org libogg, libvorbis, libtheora - BSD 3-Clause License.
+   - Open Dynamics Engine (ODE, Copyright (c) Russell L. Smith) - BSD 3-Clause License.
+   - OPCODE 1.2 (Pierre Terdiman) - Author attribution notice.
+   - CxImage (Davide Pizzolato), giflib, NVIDIA Texture Tools (NVTT) - zlib / MIT.
+   - StackWalker (Jochen Kalmbach) - BSD 2-Clause License.
+   - Unicode ICU Components - Unicode / ICU License.
 
 5. Gamepad UI Icons, Glyphs & Clean-Room Compatibility Adapters
-   - Vector Gamepad Diagrams (TheHoodieGuy02) — Creative Commons Zero v1.0 Universal
+   - Vector Gamepad Diagrams (TheHoodieGuy02) - Creative Commons Zero v1.0 Universal
      (CC0-1.0, see THIRD_PARTY\VectorGamepad-CC0-LICENSE.txt).
-   - Steam-Style Gamepad Icon Reference Pack — see THIRD_PARTY\SteamStylePack-LICENSE.txt.
+   - Steam-Style Gamepad Icon Reference Pack - see THIRD_PARTY\SteamStylePack-LICENSE.txt.
    - Clean-room first-party gamepad glyphs & tactical UI atlases created for this project;
      public Lua API compatibility hooks interoperate with locally installed G.A.M.M.A.
      addons (GAMMA Mags Reloaded, AmmoCheck Enhanced, Quick Action Wheel by HarukaSai,
      Hideout Furniture by Aoldri, PAW by RavenAscendant, Ledge Grabbing by themrdemonized)
      without bundling their proprietary archives.
-$pbrBlock
+$dlssBlock
 ================================================================================
 "@
 }
 
+function New-CmdLauncherText {
+    param(
+        [ValidateSet("Install", "Restore")]
+        [string]$Action,
+        [ValidateSet("ru", "en")]
+        [string]$Lang
+    )
+    return @(
+        "@echo off",
+        "setlocal",
+        "chcp 65001 >nul",
+        ("powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""%~dp0engine_files\engine_helper.ps1"" -Action {0} -Lang {1} %*" -f $Action, $Lang),
+        "set ""RC=%ERRORLEVEL%""",
+        "echo.",
+        "if not defined GP_NO_PAUSE pause",
+        "exit /b %RC%"
+    ) -join "`r`n"
+}
+
 Write-Host "========================================================================" -ForegroundColor Cyan
-Write-Host (" BUILD RELEASE — Gamepad At Your Service v{0} [{1}]{2}" -f $Version, $Target, $(if ($DryRun) { " (DRY RUN)" } else { "" })) -ForegroundColor Cyan
+Write-Host (" BUILD RELEASE - Gamepad At Your Service v{0} [{1}]{2}" -f $Version, $Target, $(if ($DryRun) { " (DRY RUN)" } else { "" })) -ForegroundColor Cyan
 Write-Host "========================================================================" -ForegroundColor Cyan
 
 if (-not (Test-Path -LiteralPath $ModSourceDir)) {
     throw "ModSourceDir not found: $ModSourceDir"
 }
-if (-not (Test-Path -LiteralPath $SdlDllPath)) {
-    throw "SdlDllPath not found: $SdlDllPath"
+
+$helperSrc = Join-Path $PkgToolDir "engine_helper.ps1"
+if (-not (Test-Path -LiteralPath $helperSrc)) {
+    throw "engine_helper.ps1 not found at: $helperSrc"
 }
 
-$engineInfo = Resolve-EngineExecutable
+$engineInfo = Resolve-EnginePackageFiles
 Write-Host ("Engine Target : {0} -> {1}" -f $engineInfo.ExeName, $(if ($engineInfo.IsStub) { "STUB ($($engineInfo.StubReason))" } else { $engineInfo.SourcePath }))
-Write-Host ("SDL3 Runtime  : {0}" -f $SdlDllPath)
+foreach ($ax in $engineInfo.AdditionalExes) {
+    Write-Host ("Engine Extra  : {0} -> {1}" -f $ax.ExeName, $ax.SourcePath)
+}
+Write-Host ("SDL3 Runtime  : {0}" -f $engineInfo.SdlDllPath)
 Write-Host ("Mod Source    : {0}" -f $ModSourceDir)
 
 $modSourceResolved = (Resolve-Path -LiteralPath $ModSourceDir).Path
@@ -394,11 +499,11 @@ foreach ($f in $allModFiles) {
         $outLen = if ($null -ne $encPlan) { $encPlan.Bytes.Length } else { $f.Length }
         $action = if ($null -ne $encPlan) { $encPlan.Action } else { "copy_binary" }
         $includedPlan.Add([PSCustomObject]@{
-            SourcePath = $f.FullName
-            RelPath    = $rel
-            Category   = $disp.Category
-            Action     = $action
-            SizeBytes  = $outLen
+            SourcePath    = $f.FullName
+            RelPath       = $rel
+            Category      = $disp.Category
+            Action        = $action
+            SizeBytes     = $outLen
             PreparedBytes = if ($null -ne $encPlan) { $encPlan.Bytes } else { $null }
         })
     } else {
@@ -410,20 +515,34 @@ foreach ($f in $allModFiles) {
     }
 }
 
+$dlssOverlayRelSet = @{}
 if ($Target -eq "gamma-monolith-dlss") {
     if (-not (Test-Path -LiteralPath $DlssExtrasDir)) { throw "DlssExtrasDir not found: $DlssExtrasDir" }
     $extrasResolved = (Resolve-Path -LiteralPath $DlssExtrasDir).Path
+    $sss235FlatCandidate = Join-Path (Split-Path -Parent $extrasResolved) "dlss_fomod\sss235\gamedata\shaders\r3\deffer_impl_flat.ps"
     foreach ($f in @(Get-ChildItem -LiteralPath $extrasResolved -Recurse -File | Sort-Object FullName)) {
         $rel = $f.FullName.Substring($extrasResolved.Length + 1)
         if (-not $rel.StartsWith("gamedata\", [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        # Match verified may-test-dlss overlay: omit wd_body.vs and prefer SSS 23.5 deffer_impl_flat.ps if present
+        if ($rel -ieq "gamedata\shaders\r3\wd_body.vs") { continue }
+        $srcToUse = $f.FullName
+        if ($rel -ieq "gamedata\shaders\r3\deffer_impl_flat.ps" -and (Test-Path -LiteralPath $sss235FlatCandidate)) {
+            $srcToUse = (Resolve-Path -LiteralPath $sss235FlatCandidate).Path
+        }
+        if ($ForbiddenPbrShaderNames.ContainsKey($f.Name.ToLowerInvariant())) {
+            throw "Forbidden closed PBR shader encountered in DLSS overlay: $rel"
+        }
+
         $ext = $f.Extension.ToLowerInvariant()
-        $encPlan = if ($ext -in @(".script", ".ltx", ".xml")) { (Convert-GameTextToTargetBytes -SourcePath $f.FullName -RelPath $rel) } else { $null }
+        $encPlan = if ($ext -in @(".script", ".ltx", ".xml")) { (Convert-GameTextToTargetBytes -SourcePath $srcToUse -RelPath $rel) } else { $null }
+        $relNormSlash = ($rel -replace "\\", "/").ToLowerInvariant()
+        $dlssOverlayRelSet[$relNormSlash] = $true
         $includedPlan.Add([PSCustomObject]@{
-            SourcePath = $f.FullName
-            RelPath    = $rel
-            Category   = "dlss_overlay_gamedata"
-            Action     = $(if ($null -ne $encPlan) { $encPlan.Action } else { "copy_binary" })
-            SizeBytes  = $(if ($null -ne $encPlan) { $encPlan.Bytes.Length } else { $f.Length })
+            SourcePath    = $srcToUse
+            RelPath       = $rel
+            Category      = "dlss_overlay_gamedata"
+            Action        = $(if ($null -ne $encPlan) { $encPlan.Action } else { "copy_binary" })
+            SizeBytes     = $(if ($null -ne $encPlan) { $encPlan.Bytes.Length } else { (Get-Item -LiteralPath $srcToUse).Length })
             PreparedBytes = $(if ($null -ne $encPlan) { $encPlan.Bytes } else { $null })
         })
     }
@@ -443,24 +562,26 @@ foreach ($g in $excGroups) {
 }
 
 if ($DryRun) {
-    Write-Host "`n--- DRY RUN: INCLUDED FILES ---" -ForegroundColor Green
-    Write-Host ("  1_Copy_To_Anomaly_bin\{0} ({1})" -f $engineInfo.ExeName, $(if ($engineInfo.IsStub) { "STUB" } else { "$((Get-Item $engineInfo.SourcePath).Length) bytes" }))
-    Write-Host ("  1_Copy_To_Anomaly_bin\SDL3.dll ({0} bytes)" -f (Get-Item -LiteralPath $SdlDllPath).Length)
-    Write-Host "  1_Copy_To_Anomaly_bin\THIRD-PARTY-NOTICES.txt"
-    foreach ($item in $includedPlan) {
-        Write-Host ("  2_Install_In_MO2_mods\{0}\{1}  [{2} | {3} | {4} B]" -f $ModFolderName, $item.RelPath, $item.Category, $item.Action, $item.SizeBytes)
+    Write-Host "`n--- DRY RUN: MO2-READY ARCHIVE PLAN ($ModFolderName\) ---" -ForegroundColor Green
+    Write-Host ("  {0}\meta.ini" -f $ModFolderName)
+    Write-Host ("  {0}\engine_files\{1} ({2})" -f $ModFolderName, $engineInfo.ExeName, $(if ($engineInfo.IsStub) { "STUB" } else { "$((Get-Item $engineInfo.SourcePath).Length) bytes" }))
+    foreach ($ax in $engineInfo.AdditionalExes) {
+        Write-Host ("  {0}\engine_files\{1} ({2} bytes)" -f $ModFolderName, $ax.ExeName, (Get-Item $ax.SourcePath).Length)
     }
-    Write-Host "  3_Verify_Installation_ReadOnly\verify.ps1"
-    Write-Host "  3_Verify_Installation_ReadOnly\manifest.sha256.json"
-    Write-Host "  3_Verify_Installation_ReadOnly\SHA256SUMS.txt"
-    Write-Host "  THIRD_PARTY\*"
-    Write-Host "  README-RU.txt, README-EN.txt, THIRD-PARTY-NOTICES.txt, manifest.sha256.json, SHA256SUMS.txt"
-    Write-Host "`nDRY RUN COMPLETE — zero files written." -ForegroundColor Green
+    Write-Host ("  {0}\engine_files\SDL3.dll ({1} bytes)" -f $ModFolderName, (Get-Item -LiteralPath $engineInfo.SdlDllPath).Length)
+    Write-Host ("  {0}\engine_files\engine_helper.ps1" -f $ModFolderName)
+    foreach ($item in $includedPlan) {
+        Write-Host ("  {0}\{1}  [{2} | {3} | {4} B]" -f $ModFolderName, $item.RelPath, $item.Category, $item.Action, $item.SizeBytes)
+    }
+    Write-Host ("  {0}\tools\verify.ps1" -f $ModFolderName)
+    Write-Host ("  {0}\Установить_движок.cmd, Вернуть_оригинал.cmd, Install_Engine.cmd, Restore_Original.cmd" -f $ModFolderName)
+    Write-Host ("  {0}\THIRD_PARTY\*, README-RU.txt, README-EN.txt, THIRD-PARTY-NOTICES.txt, manifest.sha256.json, SHA256SUMS.txt" -f $ModFolderName)
+    Write-Host "`nDRY RUN COMPLETE - zero files written." -ForegroundColor Green
     exit 0
 }
 
 # ==============================================================================
-# Stage Release Directory
+# Stage Release Directory (MO2-Ready Single Root Folder: GAMMA Gamepad & Tactical UI)
 # ==============================================================================
 if (-not (Test-Path -LiteralPath $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
@@ -468,71 +589,96 @@ if (-not (Test-Path -LiteralPath $OutputDir)) {
 $OutputDirResolved = (Resolve-Path -LiteralPath $OutputDir).Path
 $ArchiveStem = ("Gamepad-At-Your-Service-v{0}-{1}" -f $Version, $Target)
 $StageContainer = Join-Path $OutputDirResolved ("_staging_{0}" -f $Target)
-$StageRoot = Join-Path $StageContainer "Gamepad-At-Your-Service"
+$StageRoot = Join-Path $StageContainer $ModFolderName
 $ZipPath = Join-Path $OutputDirResolved ("{0}.zip" -f $ArchiveStem)
 
 if (Test-Path -LiteralPath $StageContainer) {
     Remove-Item -LiteralPath $StageContainer -Recurse -Force
 }
 
-$Dir1Bin   = Join-Path $StageRoot "1_Copy_To_Anomaly_bin"
-$Dir2Mod   = Join-Path $StageRoot ("2_Install_In_MO2_mods\{0}" -f $ModFolderName)
-$Dir3Ver   = Join-Path $StageRoot "3_Verify_Installation_ReadOnly"
+$DirEngine = Join-Path $StageRoot "engine_files"
+$DirTools  = Join-Path $StageRoot "tools"
 $DirLic    = Join-Path $StageRoot "THIRD_PARTY"
 
-foreach ($d in @($Dir1Bin, $Dir2Mod, $Dir3Ver, $DirLic)) {
+foreach ($d in @($StageRoot, $DirEngine, $DirTools, $DirLic)) {
     New-Item -ItemType Directory -Path $d -Force | Out-Null
 }
 
-# 1. Populate 1_Copy_To_Anomaly_bin
-$stagedExePath = Join-Path $Dir1Bin $engineInfo.ExeName
+# 1. Populate engine_files\
+$stagedExePath = Join-Path $DirEngine $engineInfo.ExeName
 if ($engineInfo.IsStub) {
-    $stubText = "PENDING_BUILD_STUB: target=$Target version=$Version reason=$($engineInfo.StubReason)`r`nReplace with compiled $($engineInfo.ExeName) from PORT-G/PORT-A before player distribution.`r`n"
+    $stubText = "PENDING_BUILD_STUB: target=$Target version=$Version reason=$($engineInfo.StubReason)`r`nReplace with compiled $($engineInfo.ExeName) before player distribution.`r`n"
     [System.IO.File]::WriteAllText($stagedExePath, $stubText, $Utf8NoBom)
 } else {
     Copy-Item -LiteralPath $engineInfo.SourcePath -Destination $stagedExePath -Force
 }
-$stagedSdlPath = Join-Path $Dir1Bin "SDL3.dll"
-Copy-Item -LiteralPath $SdlDllPath -Destination $stagedSdlPath -Force
+
+$stagedAdditionalExes = New-Object System.Collections.Generic.List[object]
+foreach ($ax in $engineInfo.AdditionalExes) {
+    $axDst = Join-Path $DirEngine $ax.ExeName
+    Copy-Item -LiteralPath $ax.SourcePath -Destination $axDst -Force
+    $stagedAdditionalExes.Add([ordered]@{
+        exe_name     = $ax.ExeName
+        package_path = ("engine_files/{0}" -f $ax.ExeName)
+        size_bytes   = (Get-Item -LiteralPath $axDst).Length
+        sha256       = (Get-FileHash -LiteralPath $axDst -Algorithm SHA256).Hash.ToUpperInvariant()
+    })
+}
+
+$stagedSdlPath = Join-Path $DirEngine "SDL3.dll"
+Copy-Item -LiteralPath $engineInfo.SdlDllPath -Destination $stagedSdlPath -Force
 
 if ($Target -eq "gamma-monolith-dlss") {
-    # runtime DLSS/FSR/Streamline/Agility (без pdb, логов и самих exe/SDL3 — они ставятся отдельно)
     $dlssBinRoot = (Resolve-Path -LiteralPath $DlssStandBin).Path
     $dlssBinFiles = @(
-        "nvngx_dlss.dll", "amd_fidelityfx_framegeneration_dx12.dll", "amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll",
-        "AMD-FIDELITYFX-LICENSE.md", "NVIDIA-DLSS-LICENSE.txt",
-        "D3D12\D3D12Core.dll", "D3D12\AGILITY-SDK-LICENSE.txt",
-        "streamline
-vngx_dlssg.dll", "streamline\sl.common.dll", "streamline\sl.dlss_g.dll", "streamline\sl.interposer.dll",
-        "streamline\sl.pcl.dll", "streamline\sl.reflex.dll", "streamline\RUNTIME.txt", "streamline\STREAMLINE-LICENSE.txt"
+        "nvngx_dlss.dll",
+        "amd_fidelityfx_framegeneration_dx12.dll",
+        "amd_fidelityfx_loader_dx12.dll",
+        "amd_fidelityfx_upscaler_dx12.dll",
+        "AMD-FIDELITYFX-LICENSE.md",
+        "NVIDIA-DLSS-LICENSE.txt",
+        "D3D12\D3D12Core.dll",
+        "D3D12\AGILITY-SDK-LICENSE.txt",
+        "streamline\nvngx_dlssg.dll",
+        "streamline\sl.common.dll",
+        "streamline\sl.dlss_g.dll",
+        "streamline\sl.interposer.dll",
+        "streamline\sl.pcl.dll",
+        "streamline\sl.reflex.dll",
+        "streamline\RUNTIME.txt",
+        "streamline\STREAMLINE-LICENSE.txt"
     )
     foreach ($rel in $dlssBinFiles) {
         $src = Join-Path $dlssBinRoot $rel
         if (-not (Test-Path -LiteralPath $src)) { throw "DLSS runtime file missing: $src" }
-        $dst = Join-Path $Dir1Bin $rel
-        New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
+        $dst = Join-Path $DirEngine $rel
+        $dstParent = Split-Path -Parent $dst
+        if (-not (Test-Path -LiteralPath $dstParent)) {
+            New-Item -ItemType Directory -Path $dstParent -Force | Out-Null
+        }
         Copy-Item -LiteralPath $src -Destination $dst -Force
     }
 }
 
-$noticesText = (New-ThirdPartyNoticesText -BuildTarget $Target -RelVersion $Version) -replace "`r?`n", "`r`n"
-[System.IO.File]::WriteAllText((Join-Path $Dir1Bin "THIRD-PARTY-NOTICES.txt"), $noticesText, $Utf8NoBom)
-[System.IO.File]::WriteAllText((Join-Path $StageRoot "THIRD-PARTY-NOTICES.txt"), $noticesText, $Utf8NoBom)
-[System.IO.File]::WriteAllText((Join-Path $DirLic "THIRD-PARTY-NOTICES.txt"), $noticesText, $Utf8NoBom)
+$helperText = [System.IO.File]::ReadAllText($helperSrc, [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText((Join-Path $DirEngine "engine_helper.ps1"), $helperText, $Utf8Bom)
 
-# 2. Populate THIRD_PARTY license files
+# 2. Populate THIRD-PARTY-NOTICES.txt & THIRD_PARTY\
+$noticesText = (New-ThirdPartyNoticesText -BuildTarget $Target -RelVersion $Version) -replace "`r?`n", "`r`n"
+[System.IO.File]::WriteAllText((Join-Path $StageRoot "THIRD-PARTY-NOTICES.txt"), $noticesText, $Utf8NoBom)
+
 $licenseSources = @(
     @{ Src = "D:\GAMMA-Gamepad-Lab\ports\PORT-G\src\License.txt"; Fallback = "D:\GAMMA-Gamepad-Lab\build\engine\License.txt"; Dst = "License-XRay-GSC.txt" },
-    @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\src\3rd party\SDL3\LICENSE.txt"; Fallback = ""; Dst = "SDL3-LICENSE.txt" },
+    @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\src\3rd party\SDL3\LICENSE.txt"; Fallback = "D:\GAMMA-Gamepad-Lab\ports\PORT-MT\wt\may\src\3rd party\SDL3\LICENSE.txt"; Dst = "SDL3-LICENSE.txt" },
     @{ Src = (Join-Path $RepoRoot "assets\third_party\vector-gamepad\LICENSE.txt"); Fallback = ""; Dst = "VectorGamepad-CC0-LICENSE.txt" },
     @{ Src = (Join-Path $RepoRoot "assets\gamepad_icons\steam_style_pack\LICENSE"); Fallback = ""; Dst = "SteamStylePack-LICENSE.txt" }
 )
 if ($Target -in @("pbr-dx12-optional", "gamma-monolith-dlss")) {
     $licenseSources += @(
-        @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\sdk\DLSS\LICENSE.txt"; Fallback = ""; Dst = "DLSS-LICENSE.txt" },
-        @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\sdk\Streamline\LICENSE.txt"; Fallback = ""; Dst = "Streamline-LICENSE.txt" },
-        @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\sdk\FSR3\LICENSE.txt"; Fallback = ""; Dst = "FSR3-LICENSE.txt" },
-        @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\sdk\AgilitySDK\LICENSE.txt"; Fallback = ""; Dst = "AgilitySDK-LICENSE.txt" }
+        @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\sdk\DLSS\LICENSE.txt"; Fallback = (Join-Path $DlssStandBin "NVIDIA-DLSS-LICENSE.txt"); Dst = "DLSS-LICENSE.txt" },
+        @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\sdk\Streamline\LICENSE.txt"; Fallback = (Join-Path $DlssStandBin "streamline\STREAMLINE-LICENSE.txt"); Dst = "Streamline-LICENSE.txt" },
+        @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\sdk\FSR3\LICENSE.txt"; Fallback = (Join-Path $DlssStandBin "AMD-FIDELITYFX-LICENSE.md"); Dst = "FSR3-LICENSE.txt" },
+        @{ Src = "D:\GAMMA-Gamepad-Lab\build\engine\sdk\AgilitySDK\LICENSE.txt"; Fallback = (Join-Path $DlssStandBin "D3D12\AGILITY-SDK-LICENSE.txt"); Dst = "AgilitySDK-LICENSE.txt" }
     )
 }
 foreach ($ls in $licenseSources) {
@@ -542,21 +688,22 @@ foreach ($ls in $licenseSources) {
     }
 }
 
-# 3. Populate 2_Install_In_MO2_mods\<ModFolderName>
+# 3. Populate meta.ini & gamedata\
 $metaIni = @"
 [General]
+gameName=stalkeranomaly
 modid=0
 version=$Version
 newestVersion=$Version
 category="User Interface,"
 installationFile=$ArchiveStem.zip
 comments="Gamepad At Your Service ($Target) - place at the VERY BOTTOM of MO2"
-notes="Step 1: copy 1_Copy_To_Anomaly_bin into Anomaly\bin"
+notes="Open mod folder and run Install_Engine.cmd or Установить_движок.cmd to update Anomaly\bin"
 "@ -replace "`r?`n", "`r`n"
-[System.IO.File]::WriteAllText((Join-Path $Dir2Mod "meta.ini"), $metaIni, $Utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $StageRoot "meta.ini"), $metaIni, $Utf8NoBom)
 
 foreach ($item in $includedPlan) {
-    $dstPath = Join-Path $Dir2Mod $item.RelPath
+    $dstPath = Join-Path $StageRoot $item.RelPath
     $dstParent = Split-Path -Parent $dstPath
     if (-not (Test-Path -LiteralPath $dstParent)) {
         New-Item -ItemType Directory -Path $dstParent -Force | Out-Null
@@ -568,14 +715,27 @@ foreach ($item in $includedPlan) {
     }
 }
 
-# 4. Populate READMEs & 3_Verify_Installation_ReadOnly\verify.ps1
-Copy-Item -LiteralPath (Join-Path $PkgToolDir "README-RU.txt") -Destination (Join-Path $StageRoot "README-RU.txt") -Force
-Copy-Item -LiteralPath (Join-Path $PkgToolDir "README-EN.txt") -Destination (Join-Path $StageRoot "README-EN.txt") -Force
-$verifySrcText = [System.IO.File]::ReadAllText((Join-Path $PkgToolDir "verify.ps1"), [System.Text.Encoding]::UTF8)
-[System.IO.File]::WriteAllText((Join-Path $Dir3Ver "verify.ps1"), $verifySrcText, $Utf8Bom)
+# 4. Populate .cmd one-click helpers, READMEs & tools\verify.ps1
+$cmdDefs = @(
+    @{ Name = "Установить_движок.cmd"; Action = "Install"; Lang = "ru" },
+    @{ Name = "Вернуть_оригинал.cmd";  Action = "Restore"; Lang = "ru" },
+    @{ Name = "Install_Engine.cmd";    Action = "Install"; Lang = "en" },
+    @{ Name = "Restore_Original.cmd";  Action = "Restore"; Lang = "en" }
+)
+foreach ($cd in $cmdDefs) {
+    $cmdContent = (New-CmdLauncherText -Action $cd.Action -Lang $cd.Lang) + "`r`n"
+    [System.IO.File]::WriteAllText((Join-Path $StageRoot $cd.Name), $cmdContent, [System.Text.Encoding]::ASCII)
+}
 
-# 5. Compute SHA-256 Manifest across all staged payload files
-$modPrefix = ("2_Install_In_MO2_mods/{0}/" -f $ModFolderName)
+$readmeRuText = [System.IO.File]::ReadAllText((Join-Path $PkgToolDir "README-RU.txt"), [System.Text.Encoding]::UTF8)
+$readmeEnText = [System.IO.File]::ReadAllText((Join-Path $PkgToolDir "README-EN.txt"), [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText((Join-Path $StageRoot "README-RU.txt"), ($readmeRuText -replace "`r?`n", "`r`n"), $Utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $StageRoot "README-EN.txt"), ($readmeEnText -replace "`r?`n", "`r`n"), $Utf8NoBom)
+
+$verifySrcText = [System.IO.File]::ReadAllText((Join-Path $PkgToolDir "verify.ps1"), [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText((Join-Path $DirTools "verify.ps1"), $verifySrcText, $Utf8Bom)
+
+# 5. Compute SHA-256 Manifest across all staged payload files inside $StageRoot
 $gammaOverrideNormSet = @{}
 foreach ($k in $GammaScreenOverrideFiles.Keys) {
     $gammaOverrideNormSet[($k -replace "\\", "/").ToLowerInvariant()] = $true
@@ -590,31 +750,39 @@ $shaSumsLines = New-Object System.Collections.Generic.List[string]
 
 foreach ($sf in $stagedFiles) {
     $relSlash = $sf.FullName.Substring($StageRoot.Length + 1) -replace "\\", "/"
+    $relLower = $relSlash.ToLowerInvariant()
     $hash = (Get-FileHash -LiteralPath $sf.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
 
     $cat = "docs_and_tools"
     $gdRel = ""
-    if ($relSlash.StartsWith("1_Copy_To_Anomaly_bin/")) {
-        $cat = "anomaly_bin"
-    } elseif ($relSlash.StartsWith("THIRD_PARTY/") -or $relSlash -eq "THIRD-PARTY-NOTICES.txt") {
-        $cat = "license"
-    } elseif ($relSlash.StartsWith($modPrefix)) {
-        $sub = $relSlash.Substring($modPrefix.Length)
-        if ($sub -eq "meta.ini") {
-            $cat = "mo2_meta"
+    $binRel = ""
+
+    if ($relLower -eq "meta.ini") {
+        $cat = "mo2_meta"
+    } elseif ($relLower.StartsWith("gamedata/")) {
+        $gdRel = $relSlash
+        if ($gammaOverrideNormSet.ContainsKey($relLower)) {
+            $cat = "gamma_screen_override"
+        } elseif ($dlssOverlayRelSet.ContainsKey($relLower)) {
+            $cat = "dlss_overlay_gamedata"
         } else {
-            $gdRel = $sub
-            if ($gammaOverrideNormSet.ContainsKey($sub.ToLowerInvariant())) {
-                $cat = "gamma_screen_override"
-            } else {
-                $cat = "mod_gamedata"
-            }
+            $cat = "mod_gamedata"
         }
+    } elseif ($relLower.StartsWith("engine_files/")) {
+        if ($relLower -eq "engine_files/engine_helper.ps1") {
+            $cat = "docs_and_tools"
+        } else {
+            $cat = "anomaly_bin"
+            $binRel = $relSlash.Substring("engine_files/".Length)
+        }
+    } elseif ($relLower.StartsWith("third_party/") -or $relLower -eq "third-party-notices.txt") {
+        $cat = "license"
     }
 
     $manifestEntries.Add([ordered]@{
         path              = $relSlash
         gamedata_rel_path = $gdRel
+        bin_rel_path      = $binRel
         category          = $cat
         size_bytes        = $sf.Length
         sha256            = $hash
@@ -626,7 +794,7 @@ $exeHash = (Get-FileHash -LiteralPath $stagedExePath -Algorithm SHA256).Hash.ToU
 $sdlHash = (Get-FileHash -LiteralPath $stagedSdlPath -Algorithm SHA256).Hash.ToUpperInvariant()
 
 $manifestObj = [ordered]@{
-    schema_version  = 1
+    schema_version  = 2
     package_name    = "Gamepad-At-Your-Service"
     version         = $Version
     target          = $Target
@@ -635,22 +803,24 @@ $manifestObj = [ordered]@{
     mod_folder_name = $ModFolderName
     file_marker     = "GAYS_REL1_20261114"
     engine          = [ordered]@{
-        exe_name     = $engineInfo.ExeName
-        package_path = ("1_Copy_To_Anomaly_bin/{0}" -f $engineInfo.ExeName)
-        size_bytes   = (Get-Item -LiteralPath $stagedExePath).Length
-        sha256       = $exeHash
-        is_stub      = $engineInfo.IsStub
-        stub_reason  = $engineInfo.StubReason
+        exe_name        = $engineInfo.ExeName
+        package_path    = ("engine_files/{0}" -f $engineInfo.ExeName)
+        size_bytes      = (Get-Item -LiteralPath $stagedExePath).Length
+        sha256          = $exeHash
+        is_stub         = $engineInfo.IsStub
+        stub_reason     = $engineInfo.StubReason
+        additional_exes = $stagedAdditionalExes.ToArray()
     }
     sdl3            = [ordered]@{
         dll_name     = "SDL3.dll"
-        package_path = "1_Copy_To_Anomaly_bin/SDL3.dll"
+        package_path = "engine_files/SDL3.dll"
         size_bytes   = (Get-Item -LiteralPath $stagedSdlPath).Length
         sha256       = $sdlHash
     }
     counts          = [ordered]@{
         total_files   = $manifestEntries.Count
-        gamedata_only = @($manifestEntries | Where-Object { $_.category -in @("mod_gamedata", "gamma_screen_override") }).Count
+        gamedata_only = @($manifestEntries | Where-Object { $_.category -in @("mod_gamedata", "gamma_screen_override", "dlss_overlay_gamedata") }).Count
+        engine_bin    = @($manifestEntries | Where-Object { $_.category -eq "anomaly_bin" }).Count
         excluded      = $excludedPlan.Count
         reencoded     = $reencodedCount
     }
@@ -660,30 +830,40 @@ $manifestObj = [ordered]@{
 $manifestJson = $manifestObj | ConvertTo-Json -Depth 6
 $shaSumsText = ($shaSumsLines -join "`r`n") + "`r`n"
 
-foreach ($destDir in @($StageRoot, $Dir3Ver)) {
-    [System.IO.File]::WriteAllText((Join-Path $destDir "manifest.sha256.json"), $manifestJson, $Utf8NoBom)
-    [System.IO.File]::WriteAllText((Join-Path $destDir "SHA256SUMS.txt"), $shaSumsText, $Utf8NoBom)
-}
+[System.IO.File]::WriteAllText((Join-Path $StageRoot "manifest.sha256.json"), $manifestJson, $Utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $StageRoot "SHA256SUMS.txt"), $shaSumsText, $Utf8NoBom)
 
-# 6. Post-stage self-verification via verify.ps1 -PackageRoot
+# 6. Post-stage self-verification via tools\verify.ps1 -PackageRoot
 Write-Host "`nRunning read-only package verification gate..." -ForegroundColor Cyan
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Dir3Ver "verify.ps1") -PackageRoot $StageRoot -Lang ru
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $DirTools "verify.ps1") -PackageRoot $StageRoot -Lang ru
 $verExit = $LASTEXITCODE
 if ($verExit -eq 1) {
     throw "Post-stage verify.ps1 FAILED (exit code 1)!"
 }
 
-# 7. Compress .zip Archive
+# 7. Compress .zip Archive (UTF-8 filenames + standard forward slashes for MO2)
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 if (Test-Path -LiteralPath $ZipPath) {
     Remove-Item -LiteralPath $ZipPath -Force
 }
-[System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $StageContainer,
-    $ZipPath,
-    [System.IO.Compression.CompressionLevel]::Optimal,
-    $false
-)
+
+$containerNorm = (Resolve-Path -LiteralPath $StageContainer).Path
+$zipStream = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create, [System.Text.Encoding]::UTF8)
+try {
+    $allZipFiles = @(Get-ChildItem -LiteralPath $containerNorm -Recurse -File | Sort-Object FullName)
+    foreach ($zf in $allZipFiles) {
+        $entryName = $zf.FullName.Substring($containerNorm.Length + 1) -replace "\\", "/"
+        [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zipStream,
+            $zf.FullName,
+            $entryName,
+            [System.IO.Compression.CompressionLevel]::Optimal
+        )
+    }
+} finally {
+    $zipStream.Dispose()
+}
 
 $zipItem = Get-Item -LiteralPath $ZipPath
 $zipHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToUpperInvariant()

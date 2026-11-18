@@ -7,13 +7,15 @@
     Verifies either:
       A) An installed game (Anomaly\bin + MO2\mods / modlist.txt + appdata\gamepad\profile.ltx,
          or standalone Anomaly\gamedata when -Mo2Root is omitted) against manifest.sha256.json.
+         When launched from <GAMMA>\mods\<ModName>\tools\verify.ps1 with no arguments,
+         auto-detects -Mo2Root and -AnomalyRoot from ..\..\ModOrganizer.ini.
       B) A staged / unpacked release package (-PackageRoot) against manifest.sha256.json,
          encoding rules (Windows-1251 without BOM), PE import table, and clean-room exclusions.
 
     Exit codes:
-      0 — PASS (all checks passed)
-      2 — WARN (playable, minor recommendations such as missing .orig backup)
-      1 — FAIL (missing/corrupted/overwritten file, stock EXE without gamepad support, or bad MO2 order)
+      0 - PASS (all checks passed)
+      2 - WARN (playable, minor recommendations such as missing backup)
+      1 - FAIL (missing/corrupted/overwritten file, stock EXE without gamepad support, or bad MO2 order)
 #>
 [CmdletBinding()]
 param(
@@ -54,6 +56,14 @@ $KnownStockExeHashes = @{
     "C434471FBFFF5409442847119B07B02B22409F64A2F1FEDFFE802259A118D2AC" = "Stock PBR test AnomalyDX11AVX.exe (without gamepad module)"
     "F4C892E798191C31FD6C4E3EBE5D0157E0047D7E25A2A59D9ED0C54377C9E3BD" = "Stock AnomalyDX11.exe (without gamepad module)"
     "93E2A7D68589488164727A98769A13E77958854BF18B87A5D414BE283EC74281" = "Stock PBR AnomalyDX12.exe (without gamepad module)"
+}
+
+$ForbiddenPbrShaderNames = @{
+    "hashed_alpha.h"        = $true
+    "ssfx_sss.ps"           = $true
+    "ssfx_sss_ext.ps"       = $true
+    "upscaler_reactive.ps"  = $true
+    "screenspace_shadows.h" = $true
 }
 
 $Results = New-Object System.Collections.Generic.List[object]
@@ -121,25 +131,25 @@ function Get-PeImportedDlls {
     $br = New-Object System.IO.BinaryReader($fs)
     try {
         if ($fs.Length -lt 128) { return @() }
-        if ($br.ReadUInt16() -ne 0x5A4D) { return @() } # Not MZ
+        if ($br.ReadUInt16() -ne 0x5A4D) { return @() }
         $fs.Position = 0x3C
         $peOffset = $br.ReadInt32()
         if ($peOffset -lt 0 -or ($peOffset + 24) -gt $fs.Length) { return @() }
         $fs.Position = $peOffset
-        if ($br.ReadUInt32() -ne 0x00004550) { return @() } # Not PE\0\0
+        if ($br.ReadUInt32() -ne 0x00004550) { return @() }
 
-        $null = $br.ReadUInt16() # Machine
+        $null = $br.ReadUInt16()
         $numSections = $br.ReadUInt16()
         $fs.Position += 12
         $sizeOfOptHeader = $br.ReadUInt16()
-        $null = $br.ReadUInt16() # Characteristics
+        $null = $br.ReadUInt16()
 
         $optHeaderStart = $fs.Position
         $magic = $br.ReadUInt16()
         if ($magic -eq 0x20B) {
-            $importDirOffset = $optHeaderStart + 112 + 8 # PE32+
+            $importDirOffset = $optHeaderStart + 112 + 8
         } elseif ($magic -eq 0x10B) {
-            $importDirOffset = $optHeaderStart + 96 + 8  # PE32
+            $importDirOffset = $optHeaderStart + 96 + 8
         } else {
             return @()
         }
@@ -208,6 +218,29 @@ function Get-PeImportedDlls {
     }
 }
 
+function Resolve-Mo2GamePath {
+    param([string]$Mo2IniPath)
+    if (-not (Test-Path -LiteralPath $Mo2IniPath)) { return "" }
+    $lines = [System.IO.File]::ReadAllLines($Mo2IniPath, [System.Text.Encoding]::UTF8)
+    foreach ($ln in $lines) {
+        if ($ln -match "^\s*gamePath\s*=\s*(.+)$") {
+            $rawVal = $Matches[1].Trim()
+            if ($rawVal -match "^@ByteArray\((.*)\)$") { $rawVal = $Matches[1] }
+            $rawVal = $rawVal.Trim('"').Replace("\\", "\").Replace("/", "\")
+            if ($rawVal.StartsWith("\\")) {
+                $rawVal = "\\" + ($rawVal.Substring(2) -replace "\\{2,}", "\")
+            } else {
+                $rawVal = $rawVal -replace "\\{2,}", "\"
+            }
+            $rawVal = $rawVal.TrimEnd("\")
+            if ($rawVal -and (Test-Path -LiteralPath (Join-Path $rawVal "bin"))) {
+                return $rawVal
+            }
+        }
+    }
+    return ""
+}
+
 function Resolve-ManifestFile {
     if (-not [string]::IsNullOrWhiteSpace($ManifestPath)) {
         if (Test-Path -LiteralPath $ManifestPath) { return (Resolve-Path -LiteralPath $ManifestPath).Path }
@@ -216,8 +249,8 @@ function Resolve-ManifestFile {
     if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
         $cand1 = Join-Path $PackageRoot "manifest.sha256.json"
         if (Test-Path -LiteralPath $cand1) { return (Resolve-Path -LiteralPath $cand1).Path }
-        $cand2 = Join-Path $PackageRoot "3_Verify_Installation_ReadOnly\manifest.sha256.json"
-        if (Test-Path -LiteralPath $cand2) { return (Resolve-Path -LiteralPath $cand2).Path }
+        $candSub = Join-Path (Join-Path $PackageRoot $ModName) "manifest.sha256.json"
+        if (Test-Path -LiteralPath $candSub) { return (Resolve-Path -LiteralPath $candSub).Path }
     }
     $scriptDir = $PSScriptRoot
     if (-not [string]::IsNullOrWhiteSpace($scriptDir)) {
@@ -247,6 +280,23 @@ function Test-NoBomEncoding {
     return "OK"
 }
 
+# Auto-detect MO2 and Anomaly when invoked directly inside <GAMMA>\mods\<ModName>\tools\verify.ps1
+if ([string]::IsNullOrWhiteSpace($AnomalyRoot) -and [string]::IsNullOrWhiteSpace($PackageRoot) -and -not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    $modRootCand = Split-Path -Parent $PSScriptRoot
+    $modsParent = if ($modRootCand) { Split-Path -Parent $modRootCand } else { "" }
+    $mo2Cand = if ($modsParent) { Split-Path -Parent $modsParent } else { "" }
+    if ($mo2Cand -and (Test-Path -LiteralPath (Join-Path $mo2Cand "ModOrganizer.ini"))) {
+        $detectedAnomaly = Resolve-Mo2GamePath -Mo2IniPath (Join-Path $mo2Cand "ModOrganizer.ini")
+        if ($detectedAnomaly) {
+            $AnomalyRoot = $detectedAnomaly
+            if ([string]::IsNullOrWhiteSpace($Mo2Root)) { $Mo2Root = $mo2Cand }
+            if ($ModName -eq "GAMMA Gamepad & Tactical UI" -and $modRootCand) {
+                $ModName = Split-Path -Leaf $modRootCand
+            }
+        }
+    }
+}
+
 Write-Host "========================================================================" -ForegroundColor White
 Write-Host " GAMEPAD AT YOUR SERVICE — ПРОВЕРКА УСТАНОВКИ / INSTALLATION VERIFIER" -ForegroundColor White
 Write-Host " Режим: ТОЛЬКО ЧТЕНИЕ (Read-Only) — файлы игры не изменяются" -ForegroundColor DarkGray
@@ -268,11 +318,19 @@ if ($null -ne $resolvedManifest) {
 # MODE A: Staged / Unpacked Release Package Audit (-PackageRoot)
 # ==============================================================================
 if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
-    if (-not (Test-Path -LiteralPath $PackageRoot)) {
+    $resolvedPkgRoot = $PackageRoot
+    if ((Test-Path -LiteralPath $PackageRoot) -and -not (Test-Path -LiteralPath (Join-Path $PackageRoot "manifest.sha256.json"))) {
+        $subPkg = Join-Path $PackageRoot $ModName
+        if (Test-Path -LiteralPath (Join-Path $subPkg "manifest.sha256.json")) {
+            $resolvedPkgRoot = $subPkg
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $resolvedPkgRoot)) {
         Add-CheckResult -Status "FAIL" -Code "PKG_ROOT_MISSING" `
             -TitleRu "Папка пакета не найдена" `
             -TitleEn "Package folder not found" `
-            -DetailRu $PackageRoot -DetailEn $PackageRoot `
+            -DetailRu $resolvedPkgRoot -DetailEn $resolvedPkgRoot `
             -FixRu "Укажите верный путь в -PackageRoot." -FixEn "Pass a valid path to -PackageRoot."
     } elseif ($null -eq $manifest) {
         Add-CheckResult -Status "FAIL" -Code "PKG_MANIFEST_MISSING" `
@@ -280,15 +338,10 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
             -TitleEn "manifest.sha256.json is missing from package" `
             -FixRu "Пересоберите архив через build_release.ps1." -FixEn "Rebuild package via build_release.ps1."
     } else {
-        # 1. Verify required top-level structure (kb/27)
-        $reqDirs = @(
-            "1_Copy_To_Anomaly_bin",
-            "2_Install_In_MO2_mods",
-            "3_Verify_Installation_ReadOnly",
-            "THIRD_PARTY"
-        )
+        # 1. Verify required MO2-ready package structure
+        $reqDirs = @("gamedata", "engine_files", "tools", "THIRD_PARTY")
         foreach ($d in $reqDirs) {
-            $dp = Join-Path $PackageRoot $d
+            $dp = Join-Path $resolvedPkgRoot $d
             if (-not (Test-Path -LiteralPath $dp)) {
                 Add-CheckResult -Status "FAIL" -Code "PKG_DIR_MISSING" `
                     -TitleRu ("Отсутствует обязательная папка: {0}" -f $d) `
@@ -296,13 +349,41 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
                     -FixRu "Пересоберите релизный архив." -FixEn "Rebuild the release archive."
             }
         }
+        $reqFiles = @(
+            "meta.ini",
+            "engine_files\engine_helper.ps1",
+            "tools\verify.ps1",
+            "Установить_движок.cmd",
+            "Вернуть_оригинал.cmd",
+            "Install_Engine.cmd",
+            "Restore_Original.cmd",
+            "README-RU.txt",
+            "README-EN.txt",
+            "THIRD-PARTY-NOTICES.txt",
+            "SHA256SUMS.txt"
+        )
+        foreach ($rf in $reqFiles) {
+            $fp = Join-Path $resolvedPkgRoot $rf
+            if (-not (Test-Path -LiteralPath $fp)) {
+                Add-CheckResult -Status "FAIL" -Code "PKG_FILE_MISSING" `
+                    -TitleRu ("Отсутствует обязательный файл: {0}" -f $rf) `
+                    -TitleEn ("Missing required package file: {0}" -f $rf) `
+                    -FixRu "Пересоберите релизный архив." -FixEn "Rebuild the release archive."
+            }
+        }
+        if (Test-Path -LiteralPath (Join-Path $resolvedPkgRoot "bin")) {
+            Add-CheckResult -Status "FAIL" -Code "PKG_FORBIDDEN_BIN_DIR" `
+                -TitleRu "В корне мода обнаружена папка bin\ (должна называться engine_files\)" `
+                -TitleEn "Found bin\ directory inside MO2 mod root (must be engine_files\)" `
+                -FixRu "Переместите файлы движка в engine_files\." -FixEn "Place engine binaries inside engine_files\."
+        }
 
         # 2. Verify every file in manifest.sha256.json
         $hashOk = 0
         $hashBad = @()
         foreach ($entry in $manifest.files) {
             $rel = ($entry.path -replace "/", "\")
-            $full = Join-Path $PackageRoot $rel
+            $full = Join-Path $resolvedPkgRoot $rel
             if (-not (Test-Path -LiteralPath $full)) {
                 $hashBad += "MISSING: $rel"
                 continue
@@ -329,29 +410,48 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
                 -FixRu "Скачайте или соберите архив заново." -FixEn "Re-download or rebuild the archive."
         }
 
-        # 3. Verify mod folder cleanliness & encodings
-        $modDir = Join-Path $PackageRoot ("2_Install_In_MO2_mods\{0}" -f $manifest.mod_folder_name)
-        if (Test-Path -LiteralPath $modDir) {
-            $forbiddenInMod = Get-ChildItem -LiteralPath $modDir -Recurse -File | Where-Object {
-                $_.Extension -in @(".dll", ".exe", ".pdb", ".lib", ".exp", ".bak", ".orig") -or
-                $_.Name -match "^(zz_gp_perf_|zz_gp_batch|qa_autotest_|gp_testkit|ui_gp_testkit)" -or
-                $_.FullName -match "\\gamedata\\shaders\\"
+        # 3. Verify gamedata\ cleanliness & encodings
+        $gdDir = Join-Path $resolvedPkgRoot "gamedata"
+        if (Test-Path -LiteralPath $gdDir) {
+            $allowedDlssShaders = @{}
+            if ($manifest.target -in @("gamma-monolith-dlss", "pbr-dx12-optional")) {
+                foreach ($me in $manifest.files) {
+                    if ($me.category -eq "dlss_overlay_gamedata" -and ($me.path -replace "\\", "/") -match "(?i)^gamedata/shaders/") {
+                        $allowedDlssShaders[($me.path -replace "\\", "/").ToLowerInvariant()] = $true
+                    }
+                }
             }
-            if (@($forbiddenInMod).Count -eq 0) {
+
+            $forbiddenInGd = Get-ChildItem -LiteralPath $gdDir -Recurse -File | Where-Object {
+                $relGd = $_.FullName.Substring($resolvedPkgRoot.Length + 1) -replace "\\", "/"
+                $relGdLower = $relGd.ToLowerInvariant()
+                $isBadExt = $_.Extension -in @(".dll", ".exe", ".pdb", ".lib", ".exp", ".bak", ".orig")
+                $isDebug = $_.Name -match "^(zz_gp_perf_|zz_gp_batch|qa_autotest_|gp_testkit|ui_gp_testkit)"
+                $isForbiddenShader = $false
+                if ($relGdLower -match "^gamedata/shaders/") {
+                    if ($ForbiddenPbrShaderNames.ContainsKey($_.Name.ToLowerInvariant())) {
+                        $isForbiddenShader = $true
+                    } elseif (-not $allowedDlssShaders.ContainsKey($relGdLower)) {
+                        $isForbiddenShader = $true
+                    }
+                }
+                $isBadExt -or $isDebug -or $isForbiddenShader
+            }
+            if (@($forbiddenInGd).Count -eq 0) {
                 Add-CheckResult -Status "PASS" -Code "PKG_MOD_CLEAN" `
-                    -TitleRu "В папке мода нет отладочных, временных и запрещённых файлов" `
-                    -TitleEn "No debug, temporary, shader, or binary files inside MO2 mod folder"
+                    -TitleRu "В папке gamedata нет отладочных, временных и запрещённых файлов" `
+                    -TitleEn "No debug, temporary, forbidden shader, or binary files inside gamedata"
             } else {
-                $names = ($forbiddenInMod | ForEach-Object { $_.Name }) -join ", "
+                $names = ($forbiddenInGd | ForEach-Object { $_.Name }) -join ", "
                 Add-CheckResult -Status "FAIL" -Code "PKG_MOD_FORBIDDEN" `
-                    -TitleRu "В папке мода найдены запрещённые/отладочные файлы" `
-                    -TitleEn "Forbidden or debug files found inside MO2 mod folder" `
+                    -TitleRu "В папке gamedata найдены запрещённые/отладочные файлы" `
+                    -TitleEn "Forbidden or debug files found inside gamedata" `
                     -DetailRu $names -DetailEn $names `
                     -FixRu "Исключите их в build_release.ps1." -FixEn "Exclude them in build_release.ps1."
             }
 
             $badEnc = @()
-            $textFiles = @(Get-ChildItem -LiteralPath $modDir -Recurse -File | Where-Object { $_.Extension -in @(".script", ".ltx", ".xml") })
+            $textFiles = @(Get-ChildItem -LiteralPath $gdDir -Recurse -File | Where-Object { $_.Extension -in @(".script", ".ltx", ".xml") })
             foreach ($tf in $textFiles) {
                 $encSt = Test-NoBomEncoding -FilePath $tf.FullName
                 if ($encSt -ne "OK") { $badEnc += "$($tf.Name):$encSt" }
@@ -371,31 +471,39 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
             }
         }
 
-        # 4. PE import check on packaged EXE (unless placeholder stub)
-        $exeRel = ($manifest.engine.package_path -replace "/", "\")
-        $exeFull = Join-Path $PackageRoot $exeRel
-        if (Test-Path -LiteralPath $exeFull) {
+        # 4. PE import check on packaged EXE(s)
+        $exesToCheck = New-Object System.Collections.Generic.List[object]
+        $exesToCheck.Add([PSCustomObject]@{ Name = $manifest.engine.exe_name; Path = $manifest.engine.package_path })
+        if ($manifest.engine.PSObject.Properties.Name -contains "additional_exes") {
+            foreach ($ax in @($manifest.engine.additional_exes)) {
+                if ($ax.package_path) {
+                    $exesToCheck.Add([PSCustomObject]@{ Name = $ax.exe_name; Path = $ax.package_path })
+                }
+            }
+        }
+
+        foreach ($ex in $exesToCheck) {
+            $exeFull = Join-Path $resolvedPkgRoot ($ex.Path -replace "/", "\")
+            if (-not (Test-Path -LiteralPath $exeFull)) { continue }
             if ($manifest.engine.is_stub -eq $true) {
                 Add-CheckResult -Status "WARN" -Code "PKG_ENGINE_STUB" `
-                    -TitleRu "В пакете лежит временная заглушка движка (ожидается сборка PORT-G)" `
-                    -TitleEn "Package contains an engine placeholder stub (awaiting PORT-G build)" `
-                    -DetailRu ("Файл: {0} ({1})" -f $manifest.engine.exe_name, $manifest.engine.stub_reason) `
-                    -DetailEn ("File: {0} ({1})" -f $manifest.engine.exe_name, $manifest.engine.stub_reason) `
-                    -FixRu "После завершения сборки PORT-G пересоберите пакет без -AllowEngineStub." `
-                    -FixEn "Once PORT-G finishes building, re-run build_release.ps1 without -AllowEngineStub."
+                    -TitleRu "В пакете лежит временная заглушка движка" `
+                    -TitleEn "Package contains an engine placeholder stub" `
+                    -DetailRu ("Файл: {0} ({1})" -f $ex.Name, $manifest.engine.stub_reason) `
+                    -DetailEn ("File: {0} ({1})" -f $ex.Name, $manifest.engine.stub_reason) `
+                    -FixRu "Пересоберите пакет без -AllowEngineStub." `
+                    -FixEn "Re-run build_release.ps1 without -AllowEngineStub."
             } else {
                 $imports = @(Get-PeImportedDlls -FilePath $exeFull)
                 $hasSdl3 = @($imports | Where-Object { $_ -ieq "SDL3.dll" }).Count -gt 0
                 if ($hasSdl3) {
                     Add-CheckResult -Status "PASS" -Code "PKG_EXE_PE_OK" `
-                        -TitleRu "Исполняемый файл движка проверен (PE x64, импорт SDL3.dll подтверждён)" `
-                        -TitleEn "Engine executable verified (PE x64, SDL3.dll import present)" `
-                        -DetailRu $manifest.engine.exe_name -DetailEn $manifest.engine.exe_name
+                        -TitleRu ("Исполняемый файл движка {0} проверен (PE x64, импорт SDL3.dll подтверждён)" -f $ex.Name) `
+                        -TitleEn ("Engine executable {0} verified (PE x64, SDL3.dll import present)" -f $ex.Name)
                 } else {
                     Add-CheckResult -Status "FAIL" -Code "PKG_EXE_NO_SDL3" `
-                        -TitleRu "В исполняемом файле движка отсутствует импорт SDL3.dll" `
-                        -TitleEn "Engine executable does not import SDL3.dll" `
-                        -DetailRu $manifest.engine.exe_name -DetailEn $manifest.engine.exe_name `
+                        -TitleRu ("В файле {0} отсутствует импорт SDL3.dll" -f $ex.Name) `
+                        -TitleEn ("Engine executable {0} does not import SDL3.dll" -f $ex.Name) `
                         -FixRu "Укажите собранный с поддержкой геймпада EXE в -EngineExe." `
                         -FixEn "Pass a gamepad-enabled engine executable via -EngineExe."
                 }
@@ -413,12 +521,14 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
             -TitleRu "Папка Anomaly не найдена" `
             -TitleEn "Anomaly folder not found" `
             -DetailRu $AnomalyRoot -DetailEn $AnomalyRoot `
-            -FixRu "Проверьте путь в параметре -AnomalyRoot (например, D:\Stalker\Anomaly)." `
-            -FixEn "Check the -AnomalyRoot path (for example, D:\Stalker\Anomaly)."
+            -FixRu "Проверьте путь в параметре -AnomalyRoot." `
+            -FixEn "Check the -AnomalyRoot path."
     } else {
         $binDir = Join-Path $AnomalyRoot "bin"
         $expectedExeName = if ($null -ne $manifest -and $manifest.engine.exe_name) {
             [string]$manifest.engine.exe_name
+        } elseif (Test-Path -LiteralPath (Join-Path $binDir "AnomalyDX12-DLSS.exe")) {
+            "AnomalyDX12-DLSS.exe"
         } elseif (Test-Path -LiteralPath (Join-Path $binDir "AnomalyDX11AVX.exe")) {
             "AnomalyDX11AVX.exe"
         } elseif (Test-Path -LiteralPath (Join-Path $binDir "AnomalyDX12.exe")) {
@@ -429,16 +539,18 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
 
         $exePath = Join-Path $binDir $expectedExeName
         $origPath = "$exePath.orig"
+        $backupDir = Join-Path $binDir "_gamepad_backup"
+        $backupManifestPath = Join-Path $backupDir "backup_manifest.json"
         $sdlPath = Join-Path $binDir "SDL3.dll"
 
-        # 1. Check Engine EXE
+        # 1. Check primary Engine EXE
         if (-not (Test-Path -LiteralPath $exePath)) {
             Add-CheckResult -Status "FAIL" -Code "GAME_EXE_MISSING" `
                 -TitleRu ("Не найден файл запуска {0} в Anomaly\bin" -f $expectedExeName) `
                 -TitleEn ("Executable {0} not found in Anomaly\bin" -f $expectedExeName) `
                 -DetailRu $exePath -DetailEn $exePath `
-                -FixRu "Выполните Шаг 1 из README: скопируйте файлы из 1_Copy_To_Anomaly_bin в Anomaly\bin." `
-                -FixEn "Complete Step 1 from README: copy files from 1_Copy_To_Anomaly_bin into Anomaly\bin."
+                -FixRu "Запустите Установить_движок.cmd (или Install_Engine.cmd) внутри папки мода." `
+                -FixEn "Run Install_Engine.cmd (or Установить_движок.cmd) inside the mod folder."
         } else {
             $instExeHash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToUpperInvariant()
             if ($KnownStockExeHashes.ContainsKey($instExeHash)) {
@@ -448,8 +560,8 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
                     -TitleEn ("Anomaly\bin contains stock {0} without gamepad support" -f $expectedExeName) `
                     -DetailRu ("Обнаружен стандартный бинарник: {0}" -f $stockDesc) `
                     -DetailEn ("Detected stock binary: {0}" -f $stockDesc) `
-                    -FixRu "Скорее всего, игру обновил G.A.M.M.A. Installer. Скопируйте содержимое 1_Copy_To_Anomaly_bin в Anomaly\bin." `
-                    -FixEn "G.A.M.M.A. Installer likely overwrote the EXE. Re-copy 1_Copy_To_Anomaly_bin into Anomaly\bin."
+                    -FixRu "Скорее всего, игру обновил G.A.M.M.A. Launcher. Запустите Установить_движок.cmd в папке мода." `
+                    -FixEn "G.A.M.M.A. Launcher likely overwrote the EXE. Run Install_Engine.cmd inside the mod folder."
             } elseif ($null -ne $manifest -and $manifest.engine.sha256) {
                 $expExeHash = $manifest.engine.sha256.ToUpperInvariant()
                 if ($instExeHash -eq $expExeHash) {
@@ -463,8 +575,8 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
                         -TitleEn ("{0} checksum does not match this mod package" -f $expectedExeName) `
                         -DetailRu ("Ожидался {0}, установлен {1}" -f $expExeHash.Substring(0, 16), $instExeHash.Substring(0, 16)) `
                         -DetailEn ("Expected {0}, installed {1}" -f $expExeHash.Substring(0, 16), $instExeHash.Substring(0, 16)) `
-                        -FixRu "Обновите Anomaly\bin и папку мода в MO2 из одного и того же архива." `
-                        -FixEn "Update both Anomaly\bin and the MO2 mod folder from the same release archive."
+                        -FixRu "Запустите Установить_движок.cmd внутри папки мода (и обновите папку мода из того же архива)." `
+                        -FixEn "Run Install_Engine.cmd inside the mod folder (and ensure both bin and mod match the same archive)."
                 }
             } else {
                 $imports = @(Get-PeImportedDlls -FilePath $exePath)
@@ -476,25 +588,56 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
                     Add-CheckResult -Status "FAIL" -Code "GAME_EXE_NO_SDL3" `
                         -TitleRu ("Файл {0} не содержит поддержки геймпада (нет импорта SDL3.dll)" -f $expectedExeName) `
                         -TitleEn ("{0} lacks gamepad support (no SDL3.dll import)" -f $expectedExeName) `
-                        -FixRu "Скопируйте обновлённый файл запуска из 1_Copy_To_Anomaly_bin в Anomaly\bin." `
-                        -FixEn "Copy the modded executable from 1_Copy_To_Anomaly_bin into Anomaly\bin."
+                        -FixRu "Запустите Установить_движок.cmd внутри папки мода." `
+                        -FixEn "Run Install_Engine.cmd inside the mod folder."
                 }
             }
         }
 
-        # 2. Check .orig backup
-        if (Test-Path -LiteralPath $origPath) {
+        # 2. Check automatic backup (_gamepad_backup\ or legacy .orig)
+        $backupOk = $false
+        $backupDetailRu = ""
+        $backupDetailEn = ""
+        if (Test-Path -LiteralPath $backupManifestPath) {
+            try {
+                $bMan = ([System.IO.File]::ReadAllText($backupManifestPath, [System.Text.Encoding]::UTF8)) | ConvertFrom-Json
+                $exeEntry = @($bMan.files | Where-Object { $_.rel_path -ieq $expectedExeName } | Select-Object -First 1)
+                if ($exeEntry.Count -gt 0) {
+                    if ([bool]$exeEntry[0].existed_before) {
+                        $bakExeFile = Join-Path $backupDir $expectedExeName
+                        if (Test-Path -LiteralPath $bakExeFile) {
+                            $backupOk = $true
+                            $backupDetailRu = "Найдена папка _gamepad_backup с оригинальным $expectedExeName"
+                            $backupDetailEn = "Found _gamepad_backup with original $expectedExeName"
+                        }
+                    } else {
+                        $backupOk = $true
+                        $backupDetailRu = "Учтено в _gamepad_backup: файл $expectedExeName добавлен модом (удаляется при откате)"
+                        $backupDetailEn = "Tracked in _gamepad_backup: $expectedExeName was newly added (removed on restore)"
+                    }
+                }
+            } catch {
+                $backupOk = $false
+            }
+        } elseif (Test-Path -LiteralPath $origPath) {
+            $backupOk = $true
+            $backupDetailRu = "Найдена резервная копия $expectedExeName.orig"
+            $backupDetailEn = "Found backup file $expectedExeName.orig"
+        }
+
+        if ($backupOk) {
             Add-CheckResult -Status "PASS" -Code "GAME_EXE_BACKUP_OK" `
-                -TitleRu ("Резервная копия оригинального движка ({0}.orig) сохранена" -f $expectedExeName) `
-                -TitleEn ("Original engine backup ({0}.orig) is present" -f $expectedExeName)
+                -TitleRu "Резервная копия для отката движка сохранена" `
+                -TitleEn "Engine rollback backup is present" `
+                -DetailRu $backupDetailRu -DetailEn $backupDetailEn
         } else {
             Add-CheckResult -Status "WARN" -Code "GAME_EXE_BACKUP_MISSING" `
-                -TitleRu ("Резервная копия {0}.orig не найдена в Anomaly\bin" -f $expectedExeName) `
-                -TitleEn ("Backup file {0}.orig not found in Anomaly\bin" -f $expectedExeName) `
-                -DetailRu "Игра будет работать нормально, но для быстрого удаления мода полезно хранить копию оригинала." `
-                -DetailEn "The game will run fine, but keeping a .orig backup makes clean rollback much easier." `
-                -FixRu ("В следующий раз перед заменой переименуйте оригинал в {0}.orig." -f $expectedExeName) `
-                -FixEn ("Before replacing the EXE next time, rename the stock binary to {0}.orig." -f $expectedExeName)
+                -TitleRu "Резервная копия оригинального движка не найдена в Anomaly\bin" `
+                -TitleEn "Original engine backup not found in Anomaly\bin" `
+                -DetailRu "Игра будет работать нормально, но для отката кнопкой Вернуть_оригинал.cmd нужна сохранённая копия." `
+                -DetailEn "The game will run fine, but Restore_Original.cmd needs a saved backup." `
+                -FixRu "Запустите Установить_движок.cmd перед заменой, чтобы автоматически создать _gamepad_backup." `
+                -FixEn "Run Install_Engine.cmd to manage _gamepad_backup automatically."
         }
 
         # 3. Check SDL3.dll
@@ -503,8 +646,8 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
                 -TitleRu "В папке Anomaly\bin отсутствует библиотека SDL3.dll" `
                 -TitleEn "SDL3.dll is missing from Anomaly\bin" `
                 -DetailRu $sdlPath -DetailEn $sdlPath `
-                -FixRu "Скопируйте SDL3.dll из папки 1_Copy_To_Anomaly_bin архива в Anomaly\bin." `
-                -FixEn "Copy SDL3.dll from 1_Copy_To_Anomaly_bin into Anomaly\bin."
+                -FixRu "Запустите Установить_движок.cmd внутри папки мода." `
+                -FixEn "Run Install_Engine.cmd inside the mod folder."
         } elseif ($null -ne $manifest -and $manifest.sdl3.sha256) {
             $instSdlHash = (Get-FileHash -LiteralPath $sdlPath -Algorithm SHA256).Hash.ToUpperInvariant()
             $expSdlHash = $manifest.sdl3.sha256.ToUpperInvariant()
@@ -518,13 +661,53 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
                     -TitleEn "SDL3.dll in Anomaly\bin does not match the release manifest" `
                     -DetailRu ("Ожидался {0}, установлен {1}" -f $expSdlHash.Substring(0, 16), $instSdlHash.Substring(0, 16)) `
                     -DetailEn ("Expected {0}, installed {1}" -f $expSdlHash.Substring(0, 16), $instSdlHash.Substring(0, 16)) `
-                    -FixRu "Скопируйте SDL3.dll из 1_Copy_To_Anomaly_bin поверх файла в Anomaly\bin." `
-                    -FixEn "Overwrite Anomaly\bin\SDL3.dll with the file from 1_Copy_To_Anomaly_bin."
+                    -FixRu "Запустите Установить_движок.cmd внутри папки мода." `
+                    -FixEn "Run Install_Engine.cmd inside the mod folder."
             }
         } else {
             Add-CheckResult -Status "PASS" -Code "GAME_SDL3_PRESENT" `
                 -TitleRu "Библиотека SDL3.dll найдена в Anomaly\bin" `
                 -TitleEn "SDL3.dll found in Anomaly\bin"
+        }
+
+        # 3b. Check any extra anomaly_bin files from manifest (e.g. AnomalyDX11.exe or DLSS/FSR/Streamline DLLs)
+        if ($null -ne $manifest) {
+            $extraBins = @($manifest.files | Where-Object {
+                $_.category -eq "anomaly_bin" -and
+                ($_.PSObject.Properties.Name -contains "bin_rel_path") -and
+                $_.bin_rel_path -and
+                ($_.bin_rel_path -ine $expectedExeName) -and
+                ($_.bin_rel_path -ine "SDL3.dll")
+            })
+            if ($extraBins.Count -gt 0) {
+                $extraBad = @()
+                foreach ($eb in $extraBins) {
+                    $ebPath = Join-Path $binDir ($eb.bin_rel_path -replace "/", "\")
+                    if (-not (Test-Path -LiteralPath $ebPath)) {
+                        $extraBad += "MISSING: $($eb.bin_rel_path)"
+                    } else {
+                        $ebHash = (Get-FileHash -LiteralPath $ebPath -Algorithm SHA256).Hash.ToUpperInvariant()
+                        if ($ebHash -ne $eb.sha256.ToUpperInvariant()) {
+                            $extraBad += "MISMATCH: $($eb.bin_rel_path)"
+                        }
+                    }
+                }
+                if ($extraBad.Count -eq 0) {
+                    Add-CheckResult -Status "PASS" -Code "GAME_EXTRA_BIN_OK" `
+                        -TitleRu "Все дополнительные файлы движка и библиотеки в Anomaly\bin совпадают с манифестом" `
+                        -TitleEn "All additional engine binaries and runtime DLLs in Anomaly\bin match manifest" `
+                        -DetailRu ("Проверено файлов: {0}" -f $extraBins.Count) `
+                        -DetailEn ("Verified files: {0}" -f $extraBins.Count)
+                } else {
+                    Add-CheckResult -Status "FAIL" -Code "GAME_EXTRA_BIN_FAIL" `
+                        -TitleRu "Не хватает или изменены дополнительные файлы в Anomaly\bin" `
+                        -TitleEn "Missing or mismatched additional engine files in Anomaly\bin" `
+                        -DetailRu ($extraBad[0..([Math]::Min(4, $extraBad.Count - 1))] -join "; ") `
+                        -DetailEn ($extraBad[0..([Math]::Min(4, $extraBad.Count - 1))] -join "; ") `
+                        -FixRu "Запустите Установить_движок.cmd внутри папки мода." `
+                        -FixEn "Run Install_Engine.cmd inside the mod folder."
+                }
+            }
         }
 
         # 4. Check installed mod files (MO2 mods\<ModName> or standalone Anomaly)
@@ -535,15 +718,15 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
         }
 
         if (-not (Test-Path -LiteralPath (Join-Path $installedModRoot "gamedata"))) {
-            $whereHintRu = if ($Mo2Root) { "Скопируйте папку '$ModName' из 2_Install_In_MO2_mods в $Mo2Root\mods\." } else { "Укажите -Mo2Root для сборки с MO2 или скопируйте gamedata в папку Anomaly." }
-            $whereHintEn = if ($Mo2Root) { "Copy '$ModName' from 2_Install_In_MO2_mods into $Mo2Root\mods\." } else { "Specify -Mo2Root for MO2 setups, or copy gamedata into Anomaly root." }
+            $whereHintRu = if ($Mo2Root) { "Импортируйте архив мода через Mod Organizer 2 (Install a new mod from an archive) в $Mo2Root\mods\$ModName." } else { "Укажите -Mo2Root для сборки с MO2 или скопируйте gamedata в папку Anomaly." }
+            $whereHintEn = if ($Mo2Root) { "Install the mod archive directly in Mod Organizer 2 into $Mo2Root\mods\$ModName." } else { "Specify -Mo2Root for MO2 setups, or copy gamedata into Anomaly root." }
             Add-CheckResult -Status "FAIL" -Code "MOD_GAMEDATA_MISSING" `
                 -TitleRu "Не найдены игровые файлы мода (папка gamedata)" `
                 -TitleEn "Mod gamedata files not found" `
                 -DetailRu (Join-Path $installedModRoot "gamedata") -DetailEn (Join-Path $installedModRoot "gamedata") `
                 -FixRu $whereHintRu -FixEn $whereHintEn
         } elseif ($null -ne $manifest) {
-            $modEntries = @($manifest.files | Where-Object { $_.category -in @("mod_gamedata", "gamma_screen_override") })
+            $modEntries = @($manifest.files | Where-Object { $_.category -in @("mod_gamedata", "gamma_screen_override", "dlss_overlay_gamedata") })
             $missingModFiles = @()
             $changedModFiles = @()
             foreach ($me in $modEntries) {
@@ -572,8 +755,8 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
                     -TitleRu "Часть файлов мода отсутствует или повреждена/перезаписана" `
                     -TitleEn "Some installed mod files are missing or modified" `
                     -DetailRu ($summaryErr -join " | ") -DetailEn ($summaryErr -join " | ") `
-                    -FixRu "Переустановите папку мода из 2_Install_In_MO2_mods с заменой всех файлов." `
-                    -FixEn "Reinstall the mod folder from 2_Install_In_MO2_mods and overwrite existing files."
+                    -FixRu "Переустановите архив мода в MO2 с заменой файлов." `
+                    -FixEn "Reinstall the mod archive in MO2 and choose Replace."
             }
         }
 
@@ -622,7 +805,7 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
                         -FixRu "Убедитесь вручную, что мод включён и стоит в самом низу списка MO2." `
                         -FixEn "Verify manually in MO2 that the mod is checked and placed at the very bottom."
                 } else {
-                    # In MO2 modlist.txt: line 0 (top of file) = bottom of MO2 UI = HIGHEST priority!
+                    # In MO2 modlist.txt: line 0 (top of file) = bottom of MO2 UI = HIGHEST priority
                     $mlLines = @(Get-Content -LiteralPath $modlistPath -Encoding UTF8 | Where-Object {
                         -not [string]::IsNullOrWhiteSpace($_) -and -not $_.StartsWith("#")
                     })
@@ -649,8 +832,8 @@ if (-not [string]::IsNullOrWhiteSpace($AnomalyRoot)) {
                         Add-CheckResult -Status "FAIL" -Code "MO2_MOD_DISABLED" `
                             -TitleRu ("Мод «{0}» выключен (снята галочка) в Mod Organizer 2" -f $ModName) `
                             -TitleEn ("Mod '{0}' is unchecked (disabled) in Mod Organizer 2" -f $ModName) `
-                            -FixRu "Поставьте галочку напротив «GAMMA Gamepad & Tactical UI» в левом списке MO2." `
-                            -FixEn "Enable the checkbox next to 'GAMMA Gamepad & Tactical UI' in MO2."
+                            -FixRu ("Поставьте галочку напротив «{0}» в левом списке MO2." -f $ModName) `
+                            -FixEn ("Enable the checkbox next to '{0}' in MO2." -f $ModName)
                     } else {
                         # Scan mods with HIGHER priority than ours (index < ourIdx in modlist.txt)
                         $ourRelPaths = @{}
@@ -724,8 +907,8 @@ if ([string]::IsNullOrWhiteSpace($AnomalyRoot) -and [string]::IsNullOrWhiteSpace
     Add-CheckResult -Status "FAIL" -Code "NO_TARGET_SPECIFIED" `
         -TitleRu "Не указана папка для проверки" `
         -TitleEn "No target path specified to verify" `
-        -FixRu "Передайте -AnomalyRoot ""D:\Stalker\Anomaly"" -Mo2Root ""D:\Stalker\GAMMA"" (или -PackageRoot для проверки архива)." `
-        -FixEn "Pass -AnomalyRoot ""D:\Stalker\Anomaly"" -Mo2Root ""D:\Stalker\GAMMA"" (or -PackageRoot to audit an unpacked release)."
+        -FixRu "Запустите скрипт из папки мода в MO2 или передайте -AnomalyRoot ""D:\Anomaly"" -Mo2Root ""D:\GAMMA"" (либо -PackageRoot)." `
+        -FixEn "Run from inside your MO2 mod folder or pass -AnomalyRoot ""D:\Anomaly"" -Mo2Root ""D:\GAMMA"" (or -PackageRoot)."
 }
 
 $passCount = @($Results | Where-Object { $_.Status -eq "PASS" }).Count

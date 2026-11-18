@@ -20,7 +20,7 @@ Keep `446- Quick Action Wheel - HarukaSai` and `G.A.M.M.A. Quick Action Wheel Ba
 
 ## DLSS edition notes
 
-Frame Generation in `gamma-monolith-dlss` requires a DirectX 12 GPU, Windows HAGS enabled, and `r__framelimit` set to twice your target framerate.
+Frame Generation in `gamma-monolith-dlss` requires a DirectX 12 GPU, Windows HAGS enabled, and both MSAA and VSync turned off in video settings. When Frame Generation is active, `r__framelimit` already caps the final displayed framerate including generated frames.
 
 ## Script error recovery and ultrawide HUDs
 

@@ -24,8 +24,10 @@ Gamepad At Your Service добавляет в S.T.A.L.K.E.R. G.A.M.M.A. прям
 | Архив | Для какой сборки | Файлы движка для папки `bin\` |
 |---|---|---|
 | `gamma-monolith` | Обычная S.T.A.L.K.E.R. G.A.M.M.A. (DX11 / AVX) | `AnomalyDX11AVX.exe`, `AnomalyDX11.exe`, `SDL3.dll` |
-| `gamma-monolith-dlss` | S.T.A.L.K.E.R. G.A.M.M.A. с DX12-мостом (DLSS, FSR 3, генерация кадров) | `AnomalyDX12-DLSS.exe`, `SDL3.dll`, меню и шейдерный патч DLSS |
+| `gamma-monolith-dlss` | S.T.A.L.K.E.R. G.A.M.M.A. с DX12-мостом (DLSS, FSR 3, генерация кадров) | `AnomalyDX12-DLSS.exe`, `SDL3.dll`, библиотеки DLSS/FSR/Streamline, меню и шейдерный патч DLSS |
 | `anomaly-vanilla` | Чистая S.T.A.L.K.E.R. Anomaly 1.5.2 / 1.5.3 без G.A.M.M.A. | `AnomalyDX11.exe` (`PORT-A`, прошла автотесты, ждёт проверки в игре) |
+
+Каждый архив устанавливается напрямую в Mod Organizer 2 (`Install a new mod from an archive`). Включите мод в самом низу списка, откройте его папку в проводнике и запустите `Установить_движок.cmd` (или `Install_Engine.cmd`), чтобы обновить `<Anomaly>\bin\` с автоматической резервной копией.
 
 ## Какие геймпады поддерживаются
 
