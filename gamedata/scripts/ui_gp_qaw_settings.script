@@ -1,0 +1,111 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+local gui
+local function tr(key) return game.translate_string(key) end
+class "UIGpQawSettings" (CUIScriptWnd)
+
+function UIGpQawSettings:__init() super()
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    self:AllowMovement(true)
+    self:SetAutoDelete(true)
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ui_gp_qaw.xml")
+    self.bg = xml:InitStatic("settings_bg", self)
+    self.title = xml:InitTextWnd("settings_title", self)
+    self.title:SetText(tr("st_gp_qaw_settings"))
+    self.hint = xml:InitTextWnd("settings_hint", self)
+    self.hint:SetText(tr("st_gp_qaw_settings_keys"))
+    self.rows = {}
+    for i = 1, 17 do
+        local row = xml:InitTextWnd("settings_row", self)
+        row:SetWndPos(vector2():set(308, 202 + (i - 1) * 21))
+        self.rows[i] = row
+    end
+    self.index = 1
+end
+
+function UIGpQawSettings:Refresh()
+    local order, enabled, actions, defaults, quick, labels, devices = gp_qaw_patch.get_settings()
+    local entries = {}
+    for position, tab in ipairs(order) do
+        entries[#entries + 1] = {
+            name = tr(labels[tab]) .. "  /  " .. tr(enabled[tab] and "st_gp_qaw_on" or "st_gp_qaw_off"),
+            toggle = function() gp_qaw_patch.set_tab_enabled(tab) end,
+            move = function(step) gp_qaw_patch.swap_tab(position, step) end
+        }
+    end
+    for group = 1, 2 do
+        for _, spec in ipairs(defaults[group]) do
+            local slots = actions[group]
+            local position, empty
+            for slot = 1, 8 do
+                if slots[slot] == spec then position = slot end
+                if not slots[slot] and not empty and not (group == 1 and devices[slot]) then empty = slot end
+            end
+            local action = gp_qaw_tabs.make(spec)
+            entries[#entries + 1] = {
+                name = tr(labels[group + 2]) .. " / " .. action:get_text() .. "  " ..
+                    (position and ("[" .. position .. "]") or tr("st_gp_qaw_off")),
+                toggle = function()
+                    if position then gp_qaw_patch.set_action(group, position, nil)
+                    elseif empty then gp_qaw_patch.set_action(group, empty, spec) end
+                end,
+                move = function(step)
+                    if position then gp_qaw_patch.move_action(group, position, step) end
+                end
+            }
+        end
+    end
+    entries[#entries + 1] = {name = tr("st_gp_qaw_quick") .. "  /  " ..
+        (quick and ui_item.get_sec_name(quick.section) or tr("st_gp_qaw_empty")), toggle = gp_qaw_patch.reset_quick}
+    entries[#entries + 1] = {name = tr("st_gp_qaw_time") .. "  /  " ..
+        tr("ui_gp_wheel_mode_" .. gp_wheel.get_time_mode()), toggle = function()
+            gp_wheel.cycle_time_mode()
+            gp_qaw_patch.save_profile()
+        end}
+    self.entries = entries
+    local first = math.max(1, math.min(self.index - 8, #entries - #self.rows + 1))
+    for i, row in ipairs(self.rows) do
+        local index = first + i - 1
+        local entry = entries[index]
+        row:SetText(entry and ((index == self.index and ">  " or "    ") .. entry.name) or "")
+        local color = index == self.index and 255 or 183
+        row:SetTextColor(GetARGB(255, color, color, color))
+    end
+end
+
+function UIGpQawSettings:OnKeyboard(dik, event)
+    if event == ui_events.WINDOW_KEY_PRESSED then
+        local keys = DIK_keys
+        local button = ({[keys.DIK_ESCAPE]="B", [keys.DIK_RETURN]="A", [keys.DIK_UP]="UP",
+            [keys.DIK_DOWN]="DOWN", [keys.DIK_LEFT]="LB", [keys.DIK_RIGHT]="RB"})[dik]
+        if button then return on_button(button) end
+    end
+    return CUIScriptWnd.OnKeyboard(self, dik, event)
+end
+
+function on_button(button)
+    if not is_open() then return false end
+    if button == "B" then
+        gui:HideDialog()
+        Unregister_UI("UIGpQawSettings")
+        return true
+    end
+    local entry = gui.entries[gui.index]
+    if button == "UP" or button == "DOWN" then
+        gui.index = (gui.index - 1 + (button == "UP" and -1 or 1)) % #gui.entries + 1
+    elseif button == "A" then entry.toggle()
+    elseif (button == "LB" or button == "RB") and entry.move then entry.move(button == "LB" and -1 or 1)
+    else return false end
+    gui:Refresh()
+    return true
+end
+
+function is_open() return gui and gui:IsShown() or false end
+function get_gui() return gui end
+function open()
+    if is_open() then return end
+    if not gui then gui = UIGpQawSettings() end
+    gui:Refresh()
+    gui:ShowDialog(true)
+    Register_UI("UIGpQawSettings", "ui_gp_qaw_settings")
+end

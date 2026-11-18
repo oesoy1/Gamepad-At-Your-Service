@@ -1,0 +1,1296 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+	<string id="ui_gp_eng_talk_select">
+		<text>Вибрати</text>
+	</string>
+	<string id="ui_gp_eng_talk_exit">
+		<text>Вийти</text>
+	</string>
+	<string id="ui_gp_eng_talk_trade">
+		<text>Торгувати</text>
+	</string>
+	<string id="ui_gp_eng_talk_scroll">
+		<text>Гортати</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_cross">
+		<text>[Хрест]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_circle">
+		<text>[Коло]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_square">
+		<text>[Квадрат]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_triangle">
+		<text>[Трикутник]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_up">
+		<text>[Хрест. Вгору]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_down">
+		<text>[Хрест. Вниз]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_left">
+		<text>[Хрест. Вліво]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_right">
+		<text>[Хрест. Вправо]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_hold_prefix">
+		<text>Утрим. </text>
+	</string>
+	<string id="ui_gp_eng_err_seh_av">
+		<text>EXCEPTION_ACCESS_VIOLATION (звернення до недоступної пам'яті / нульового вказівника)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_div0">
+		<text>EXCEPTION_INT_DIVIDE_BY_ZERO (ділення цілого числа на нуль)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_bounds">
+		<text>EXCEPTION_ARRAY_BOUNDS_EXCEEDED (вихід за межі масиву)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_ill">
+		<text>EXCEPTION_ILLEGAL_INSTRUCTION (неприпустима інструкція процесора)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_stack">
+		<text>EXCEPTION_STACK_OVERFLOW (переповнення стека)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_cpp">
+		<text>CPP_STD_EXCEPTION (виняток C++)</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_main_menu">
+		<text>У головному меню або у вікні налаштувань гри.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_wheel">
+		<text>Під час відкриття або вибору предмета в колесі швидкого доступу.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_pda">
+		<text>Під час роботи з КПК (мапа Зони, завдання або вкладки КПК).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_menu_ui">
+		<text>Під час роботи з відкритим вікном (інвентар, обшук, торгівля, ремонт або вікно дії).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_dialog">
+		<text>Під час розмови з персонажем (діалог).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_osk">
+		<text>Під час введення тексту на екранній клавіатурі.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_sleep">
+		<text>У вікні вибору часу сну.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_placement">
+		<text>У режимі розміщення меблів або предметів у сховку.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_console">
+		<text>При відкритому командному рядку гри (~).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_world">
+		<text>Під час звичайної гри у світі (ходьба, огляд навколо або бій).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_generic">
+		<text>Під час чергового кадру обробки керування геймпадом.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_paused_suffix">
+		<text> Гра в цей момент стояла на паузі.</text>
+	</string>
+	<string id="ui_gp_eng_err_unknown_stage">
+		<text>невідома ділянка</text>
+	</string>
+	<string id="ui_gp_eng_err_unexpected_fault">
+		<text>непередбачений збій</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_wheel">
+		<text>Сталася непередбачена помилка під час обробки швидкого колеса вибору для геймпада.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_pda">
+		<text>Сталася непередбачена помилка під час керування КПК з геймпада.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_ui">
+		<text>Сталася непередбачена помилка під час обробки кнопки чи курсора геймпада у вікні інвентарю / меню.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_field">
+		<text>Сталася непередбачена помилка під час виконання польової або збройової дії з геймпада.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_generic">
+		<text>В одному з допоміжних обробників геймпада виникла непередбачена помилка.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_seh">
+		<text>Під час опитування геймпада всередині ядра гри виникла критична помилка пам'яті чи обчислень, яку перехопив вбудований захист.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_update">
+		<text>Під час покадрового опитування кнопок і стіків геймпада стався непередбачений збій.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_look">
+		<text>Під час розрахунку повороту камери правим стіком геймпада стався непередбачений збій.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_move">
+		<text>Під час розрахунку руху персонажа лівим стіком геймпада стався непередбачений збій.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_frame_fmt">
+		<text>Під час обробки кадру керування геймпадом сталася непередбачена помилка (%s).</text>
+	</string>
+	<string id="ui_gp_eng_err_recovery_default">
+		<text>Проблемний кадр геймпада безпечно пропущено. Усі кнопки, тригери, стіки та вібрацію геймпада миттєво скинуто в нейтральне положення (персонаж не біжить і не стріляє сам по собі), керування автоматично перемкнуто на клавіатуру й мишу, а гра продовжила роботу без вильоту.</text>
+	</string>
+	<string id="ui_gp_eng_err_hdr_title">
+		<text>АВАРІЙНИЙ ЗВІТ ЗАХИСТУ ГЕЙМПАДА (gamepad_last_error.log)</text>
+	</string>
+	<string id="ui_gp_eng_err_hdr_time">
+		<text>Час запису: </text>
+	</string>
+	<string id="ui_gp_eng_err_sec_what">
+		<text>1. ЩО СТАЛОСЯ:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_when">
+		<text>2. У ЯКИЙ МОМЕНТ ГРИ:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_recovery">
+		<text>3. ЩО ЗРОБИВ ЗАХИСТ:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_tech">
+		<text>ТЕХНІЧНІ ДЕТАЛІ ДЛЯ ШВИДКОГО ВИПРАВЛЕННЯ:</text>
+	</string>
+	<string id="ui_gp_eng_ctx_world_gameplay">
+		<text>Світ / Польова гра</text>
+	</string>
+	<string id="ui_gp_eng_ctx_menu_ui">
+		<text>Меню / Інвентар / Інтерфейс</text>
+	</string>
+	<string id="ui_gp_eng_ctx_main_menu">
+		<text>Головне меню</text>
+	</string>
+	<string id="ui_gp_eng_ctx_dialog_npc">
+		<text>Діалог із НПС</text>
+	</string>
+	<string id="ui_gp_eng_ctx_radial_wheel">
+		<text>Колесо швидкого доступу</text>
+	</string>
+	<string id="ui_gp_eng_ctx_world_3dpda">
+		<text>3D-КПК</text>
+	</string>
+	<string id="ui_gp_eng_ctx_placement">
+		<text>Розміщення у сховку</text>
+	</string>
+	<string id="ui_gp_eng_ctx_vehicle">
+		<text>Транспорт / Турель</text>
+	</string>
+	<string id="ui_gp_eng_ctx_console">
+		<text>Консоль</text>
+	</string>
+	<string id="ui_gp_eng_ctx_text_entry">
+		<text>Введення тексту</text>
+	</string>
+	<string id="ui_gp_eng_ctx_cutscene">
+		<text>Кат-сцена</text>
+	</string>
+	<string id="ui_gp_eng_ctx_sleep">
+		<text>Сон</text>
+	</string>
+	<string id="ui_gp_eng_ctx_unknown">
+		<text>Невідомо</text>
+	</string>
+	<string id="ui_gp_eng_act_menu">
+		<text>Пауза / Меню [ЗАХИЩЕНО]</text>
+	</string>
+	<string id="ui_gp_eng_act_confirm">
+		<text>Підтвердити / Вибрати [ЗАХИЩЕНО]</text>
+	</string>
+	<string id="ui_gp_eng_act_back">
+		<text>Назад / Закрити [ЗАХИЩЕНО]</text>
+	</string>
+	<string id="ui_gp_eng_act_context_menu">
+		<text>Контекстне меню предмета</text>
+	</string>
+	<string id="ui_gp_eng_act_quick_action">
+		<text>Швидка дія / Перенесення</text>
+	</string>
+	<string id="ui_gp_eng_act_tab_prev">
+		<text>Попередня вкладка (LB)</text>
+	</string>
+	<string id="ui_gp_eng_act_tab_next">
+		<text>Наступна вкладка (RB)</text>
+	</string>
+	<string id="ui_gp_eng_act_page_prev">
+		<text>Попередня сторінка / підвкладка</text>
+	</string>
+	<string id="ui_gp_eng_act_page_next">
+		<text>Наступна сторінка / підвкладка</text>
+	</string>
+	<string id="ui_gp_eng_act_jump">
+		<text>Стрибок / Паркур</text>
+	</string>
+	<string id="ui_gp_eng_act_crouch">
+		<text>Присідання (перемк.)</text>
+	</string>
+	<string id="ui_gp_eng_act_low_crouch">
+		<text>Низьке присідання</text>
+	</string>
+	<string id="ui_gp_eng_act_sprint">
+		<text>Спринт</text>
+	</string>
+	<string id="ui_gp_eng_act_freelook">
+		<text>Вільний огляд</text>
+	</string>
+	<string id="ui_gp_eng_act_melee_quick">
+		<text>Швидкий удар</text>
+	</string>
+	<string id="ui_gp_eng_act_fire">
+		<text>Вогонь</text>
+	</string>
+	<string id="ui_gp_eng_act_aim">
+		<text>Прицілювання (ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_context_use_reload">
+		<text>Взаємодія / Перезаряджання / Клин</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_check">
+		<text>Перевірка магазина</text>
+	</string>
+	<string id="ui_gp_eng_act_fast_reload">
+		<text>Швидке перезаряджання</text>
+	</string>
+	<string id="ui_gp_eng_act_next_weapon">
+		<text>Зміна зброї</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_wheel">
+		<text>Колесо зброї / швидкого доступу</text>
+	</string>
+	<string id="ui_gp_eng_act_grenade_quick">
+		<text>Швидка граната</text>
+	</string>
+	<string id="ui_gp_eng_act_lean_left">
+		<text>Нахил вліво (в ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_lean_right">
+		<text>Нахил вправо (в ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_torch_toggle">
+		<text>Налобний ліхтар</text>
+	</string>
+	<string id="ui_gp_eng_act_night_vision">
+		<text>ПНБ (прилад нічного бачення)</text>
+	</string>
+	<string id="ui_gp_eng_act_detector_toggle">
+		<text>Детектор</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_3d_toggle">
+		<text>Дістати / сховати 3D-КПК</text>
+	</string>
+	<string id="ui_gp_eng_act_mask_clean">
+		<text>Протерти маску</text>
+	</string>
+	<string id="ui_gp_eng_act_underbarrel_toggle">
+		<text>Підствольник (ПГ)</text>
+	</string>
+	<string id="ui_gp_eng_act_fire_mode_next">
+		<text>Режим вогню</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_type_next">
+		<text>Зміна типу набоїв</text>
+	</string>
+	<string id="ui_gp_eng_act_pause_menu">
+		<text>Меню паузи (у світі)</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_full_toggle">
+		<text>КПК / Мапа</text>
+	</string>
+	<string id="ui_gp_eng_act_dialog_select">
+		<text>Вибрати репліку</text>
+	</string>
+	<string id="ui_gp_eng_act_dialog_exit">
+		<text>Вийти з діалогу</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_confirm">
+		<text>Вибрати сектор колеса</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_cancel">
+		<text>Закрити колесо</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_tab_prev">
+		<text>Попередня вкладка колеса</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_tab_next">
+		<text>Наступна вкладка колеса</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_interactive">
+		<text>Курсор / інтерактив КПК</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_close">
+		<text>Сховати 3D-КПК</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_confirm">
+		<text>Встановити предмет</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_cancel">
+		<text>Скасувати встановлення</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_rotate">
+		<text>Повернути предмет</text>
+	</string>
+	<string id="ui_gp_eng_act_quick_bolt_slot">
+		<text>Швидкий болт / слот</text>
+	</string>
+	<string id="ui_gp_eng_act_switch_panel">
+		<text>Змінити панель (Рюкзак / Обшук)</text>
+	</string>
+	<string id="ui_gp_eng_act_cancel_queue">
+		<text>Скасувати чергу дій</text>
+	</string>
+	<string id="ui_gp_eng_act_knife_draw">
+		<text>Дістати ніж</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_lower">
+		<text>Опустити / підняти зброю</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_flat">
+		<text>КПК (2D-екран)</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_wheel">
+		<text>Колесо вибору набоїв</text>
+	</string>
+	<string id="ui_gp_eng_act_bolt_throw">
+		<text>Болт</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_select">
+		<text>Вибір вогнепальної зброї</text>
+	</string>
+	<string id="ui_gp_eng_act_force_reload">
+		<text>Примусове перезаряджання / Клин</text>
+	</string>
+	<string id="ui_gp_eng_act_tutorial_prompt">
+		<text>Відкрити / сховати підказку навчання</text>
+	</string>
+	<string id="ui_gp_eng_act_unknown">
+		<text>Невідома дія</text>
+	</string>
+	<string id="ui_gp_eng_trig_unbound">
+		<text>[Не призначено]</text>
+	</string>
+	<string id="ui_gp_eng_trig_press_fmt">
+		<text>Натискання [%s]</text>
+	</string>
+	<string id="ui_gp_eng_trig_hold_fmt">
+		<text>Утримання [%s] (%u мс)</text>
+	</string>
+	<string id="ui_gp_eng_trig_chord_fmt">
+		<text>Сполучення [%s + %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_title">
+		<text>КАЛІБРУВАННЯ ОСЕЙ І ТРИГЕРІВ ГЕЙМПАДА</text>
+	</string>
+	<string id="ui_gp_eng_cal_subtitle_fmt">
+		<text>Профіль v%u | МЗ арбітра=%.2f | LB/RB (Q/E): Група | Хрестовина: Вибір/Крок | X (R): Скидання вкладки | B (Esc): Зберегти й вийти</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_short_radial">
+		<text>радіальна</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_short_axial">
+		<text>осьова</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_linear">
+		<text>лінійна</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_power">
+		<text>степенева</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_scurve">
+		<text>S-крива</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_twozone">
+		<text>2-зонна</text>
+	</string>
+	<string id="ui_gp_eng_cal_ls_title_fmt">
+		<text>Лівий стік (Ходьба) [%s, %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_stick_readout_fmt">
+		<text>Вхід: (%+.2f, %+.2f) |v|=%.2f  -&gt;  Вихід: (%+.2f, %+.2f) |v|=%.2f   [МЗ=%.2f Нас.=%.2f]</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_title_fmt">
+		<text>Крива: %s</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_readout_fmt">
+		<text>gamma=%.2f  s_exp=%.2f  злам=(%.2f -&gt; %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_rs_title_fmt">
+		<text>Правий стік (Камера) [%s, %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_trig_pressed">
+		<text>НАТИСНУТО</text>
+	</string>
+	<string id="ui_gp_eng_cal_trig_released">
+		<text>ВІДПУЩЕНО</text>
+	</string>
+	<string id="ui_gp_eng_cal_lt_readout_fmt">
+		<text>LT: Вхід=%.2f Вихід=%.2f [%s] (МЗ=%.2f Відп.=%.2f Спрац.=%.2f Нас.=%.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_rt_readout_fmt">
+		<text>RT: Вхід=%.2f Вихід=%.2f [%s] (МЗ=%.2f Відп.=%.2f Спрац.=%.2f Нас.=%.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_ls">
+		<text>Лівий стік (Рух)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_rs">
+		<text>Правий стік (Огляд камерою)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_ui">
+		<text>Стік інтерфейсу (Навігація в меню)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_trig">
+		<text>Тригери LT / RT (Аналог і пороги)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_target_fmt">
+		<text>Цільова група              :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_radial_full">
+		<text>Радіальна (довжина вектора)</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_axial_full">
+		<text>Осьова (хрест по осях)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_shape_fmt">
+		<text>Форма мертвої зони         :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_inner_dz_fmt">
+		<text>Внутрішня мертва зона      :  &lt;  %.2f  &gt;   (мін. %.2f .. макс. %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_outer_sat_fmt">
+		<text>Зовнішній поріг насичення  :  &lt;  %.2f  &gt;   (мін. %.2f .. макс. %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_curve_fmt">
+		<text>Крива відгуку              :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_gamma_fmt">
+		<text>Степінь кривої (gamma)     :  &lt;  %.2f  &gt;   (0.50 .. 4.00)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_sexp_fmt">
+		<text>Крутизна S-кривої          :  &lt;  %.2f  &gt;   (0.50 .. 4.00)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_knee_in_fmt">
+		<text>Точка зламу за входом (X)  :  &lt;  %.2f  &gt;   (0.05 .. 0.95)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_linear_param">
+		<text>Параметр кривої            :  (Лінійна f(t) = t)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_knee_out_fmt">
+		<text>Точка зламу за виходом (Y) :  &lt;  %.2f  &gt;   (0.05 .. 0.95)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_omega_fmt">
+		<text>Швидкість огляду (Г / В)   :  &lt;  %.2f / %.2f рад/с  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_sec_none">
+		<text>Дод. параметр кривої       :  ---</text>
+	</string>
+	<string id="ui_gp_eng_cal_on">
+		<text>УВІМК</text>
+	</string>
+	<string id="ui_gp_eng_cal_off">
+		<text>ВИМК</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_invert_fmt">
+		<text>Інверсія осей (X / Y)      :  Вліво: Інв. X [%s]  |  Вправо: Інв. Y [%s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_reset_fmt">
+		<text>[ Дія: A / Enter або X — скинути «%s» за замовчуванням ]</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_dz_fmt">
+		<text>LT Внутрішня мертва зона   :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_sat_fmt">
+		<text>LT Зовнішнє насичення      :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_press_fmt">
+		<text>LT Поріг натискання        :  &lt;  %.2f  &gt;   (гістерезис спрац.)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_rel_fmt">
+		<text>LT Поріг відпускання       :  &lt;  %.2f  &gt;   (&lt;= нат. - 0.05)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_dz_fmt">
+		<text>RT Внутрішня мертва зона   :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_sat_fmt">
+		<text>RT Зовнішнє насичення      :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_press_fmt">
+		<text>RT Поріг натискання        :  &lt;  %.2f  &gt;   (гістерезис спрац.)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_rel_fmt">
+		<text>RT Поріг відпускання       :  &lt;  %.2f  &gt;   (&lt;= нат. - 0.05)</text>
+	</string>
+	<string id="ui_gp_eng_cal_footer_fmt">
+		<text>Файл: %s | Жовтий=Сирий стік, Зелений=Вихід, Помаранчевий=Мертва зона, Блакитний=Насичення</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_01_title">
+		<text>1/21: Нижня кнопка (A / Хрест)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_01_prompt">
+		<text>Натисніть НИЖНЮ лицьову кнопку (A / Хрест)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_02_title">
+		<text>2/21: Права кнопка (B / Коло)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_02_prompt">
+		<text>Натисніть ПРАВУ лицьову кнопку (B / Коло)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_03_title">
+		<text>3/21: Ліва кнопка (X / Квадрат)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_03_prompt">
+		<text>Натисніть ЛІВУ лицьову кнопку (X / Квадрат)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_04_title">
+		<text>4/21: Верхня кнопка (Y / Трикутник)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_04_prompt">
+		<text>Натисніть ВЕРХНЮ лицьову кнопку (Y / Трикутник)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_05_title">
+		<text>5/21: Back / Select / Share / View</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_05_prompt">
+		<text>Натисніть кнопку BACK / SELECT / VIEW / SHARE</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_06_title">
+		<text>6/21: Guide / Home (необов'язково)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_06_prompt">
+		<text>Натисніть кнопку GUIDE / HOME (або ПРОБІЛ/TAB для пропуску)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_07_title">
+		<text>7/21: Start / Menu / Options</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_07_prompt">
+		<text>Натисніть кнопку START / MENU / OPTIONS</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_08_title">
+		<text>8/21: Натискання лівого стіка (L3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_08_prompt">
+		<text>Натисніть ЛІВИЙ СТІК вертикально вниз (L3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_09_title">
+		<text>9/21: Натискання правого стіка (R3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_09_prompt">
+		<text>Натисніть ПРАВИЙ СТІК вертикально вниз (R3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_10_title">
+		<text>10/21: Лівий бампер (LB / L1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_10_prompt">
+		<text>Натисніть ЛІВИЙ БАМПЕР (LB / L1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_11_title">
+		<text>11/21: Правий бампер (RB / R1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_11_prompt">
+		<text>Натисніть ПРАВИЙ БАМПЕР (RB / R1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_12_title">
+		<text>12/21: Хрестовина ВГОРУ</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_12_prompt">
+		<text>Натисніть ВГОРУ на хрестовині (D-Pad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_13_title">
+		<text>13/21: Хрестовина ВНИЗ</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_13_prompt">
+		<text>Натисніть ВНИЗ на хрестовині (D-Pad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_14_title">
+		<text>14/21: Хрестовина ВЛІВО</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_14_prompt">
+		<text>Натисніть ВЛІВО на хрестовині (D-Pad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_15_title">
+		<text>15/21: Хрестовина ВПРАВО</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_15_prompt">
+		<text>Натисніть ВПРАВО на хрестовині (D-Pad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_16_title">
+		<text>16/21: Лівий стік по горизонталі (+X)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_16_prompt">
+		<text>Відхиліть ЛІВИЙ СТІК до упору ВПРАВО</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_17_title">
+		<text>17/21: Лівий стік по вертикалі (+Y)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_17_prompt">
+		<text>Відхиліть ЛІВИЙ СТІК до упору ВНИЗ (на себе)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_18_title">
+		<text>18/21: Правий стік по горизонталі (+X)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_18_prompt">
+		<text>Відхиліть ПРАВИЙ СТІК до упору ВПРАВО</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_19_title">
+		<text>19/21: Правий стік по вертикалі (+Y)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_19_prompt">
+		<text>Відхиліть ПРАВИЙ СТІК до упору ВНИЗ (на себе)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_20_title">
+		<text>20/21: Лівий тригер (LT / L2)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_20_prompt">
+		<text>Витисніть ЛІВИЙ ТРИГЕР (LT / L2) до упору</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_21_title">
+		<text>21/21: Правий тригер (RT / R2)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_21_prompt">
+		<text>Витисніть ПРАВИЙ ТРИГЕР (RT / R2) до упору</text>
+	</string>
+	<string id="ui_gp_eng_remap_ready">
+		<text>Готово. Виберіть дію та натисніть [A / Enter] для прив'язки або [Y / F2] для майстра Class C.</text>
+	</string>
+	<string id="ui_gp_eng_remap_mode_active">
+		<text>Режим перепризначення: [LB/RB] Контекст, [A] Призначити, [X] Зняти, [Y/F2] Майстер Class C, [B/Start] Вихід.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_exited">
+		<text>Вихід із майстра Class C назад до екрана перепризначення.</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_cancelled_kbd">
+		<text>Захоплення кнопки скасовано.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_started">
+		<text>Майстер налаштування геймпада Class C запущено. Натискайте запитувані кнопки або [ПРОБІЛ/TAB] для пропуску.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_skipped">
+		<text>Крок пропущено. Поверніть стіки та кнопки в нейтральне положення...</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_prev">
+		<text>Повернення до попереднього кроку.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_captured_fmt">
+		<text>Записано: %s = %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_err_disconnected">
+		<text>Помилка майстра Class C: цільовий контролер більше не підключений.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_saved_ok">
+		<text>Контролер Class C переведено в режим SDL_Gamepad (Class B), розкладку збережено!</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_save_fail">
+		<text>Не вдалося застосувати або зберегти рядок розкладки SDL. Перевірте лог консолі.</text>
+	</string>
+	<string id="ui_gp_eng_remap_listening">
+		<text>Очікування введення... Коротко — натискання, 0.45 с — утримання, Модифікатор + 2-га кнопка — сполучення.</text>
+	</string>
+	<string id="ui_gp_eng_remap_bound_fmt">
+		<text>Призначено [%s] -&gt; %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_swapped_suffix_fmt">
+		<text> (обмін із %s)</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_status">
+		<text>Виявлено конфлікт у цьому контексті! [A / Enter] — поміняти місцями, [B / Esc] — скасувати.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_protected_trigger">
+		<text>Захищена дія навігації (Меню/Вибрати/Назад) потребує прямого натискання або утримання звичайної кнопки.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_protected_unbind">
+		<text>Захищену дію навігації не можна відв'язати — її можна лише поміняти місцями з іншою кнопкою.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_nav_broken">
+		<text>Неможливо вирішити конфлікт: це порушить навігацію в меню.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_invalid_trigger">
+		<text>Некоректне сполучення кнопок або неприпустимий тригер.</text>
+	</string>
+	<string id="ui_gp_eng_remap_confirmed_fmt">
+		<text>Підтверджено [%s] -&gt; %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_unbound_fmt">
+		<text>Прив'язку знято: [%s].</text>
+	</string>
+	<string id="ui_gp_eng_remap_ctx_restored_fmt">
+		<text>Відновлено прив'язки за замовчуванням для контексту [%s].</text>
+	</string>
+	<string id="ui_gp_eng_remap_exported_fmt">
+		<text>Розкладку експортовано в '%s'.</text>
+	</string>
+	<string id="ui_gp_eng_remap_export_fail_fmt">
+		<text>Помилка експорту: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_imported_fmt">
+		<text>Імпортовано прив'язок: %u з '%s'.</text>
+	</string>
+	<string id="ui_gp_eng_remap_import_fail_fmt">
+		<text>Помилка імпорту: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_reset_done">
+		<text>АВАРІЙНЕ СКИДАННЯ ВИКОНАНО: усі контексти повернуто до безпечних значень за замовчуванням і збережено!</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_wiz_exit">
+		<text>Аварійне скидання (Start+Back 5 с) відновило налаштування за замовчуванням і закрило майстер.</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_held_done">
+		<text>АВАРІЙНЕ СКИДАННЯ (утримання Start+Back 5 с): усі прив'язки повернуто до безпечних умовчань!</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_timeout">
+		<text>Час очікування введення минув (8 с); збережено попередню прив'язку.</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_cancelled">
+		<text>Захоплення кнопки скасовано з геймпада.</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_cancelled">
+		<text>Вирішення конфлікту скасовано; збережено попередню прив'язку.</text>
+	</string>
+	<string id="ui_gp_eng_remap_title">
+		<text>ПРИВ'ЯЗКА Й ПЕРЕПРИЗНАЧЕННЯ КНОПОК ГЕЙМПАДА</text>
+	</string>
+	<string id="ui_gp_eng_remap_inv_ok">
+		<text>ОК (захищено)</text>
+	</string>
+	<string id="ui_gp_eng_remap_inv_broken">
+		<text>ПОРУШЕНО</text>
+	</string>
+	<string id="ui_gp_eng_remap_subtitle_fmt">
+		<text>Профіль: %s (схема v%u) | Інваріант навігації меню: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_col_header_fmt">
+		<text>ДІЯ (%s — дій: %zu)                                               ПОТОЧНА ПРИВ'ЯЗКА</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_title_fmt">
+		<text>ЗАХОПЛЕННЯ ВВЕДЕННЯ ДЛЯ: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_release_all">
+		<text>Відпустіть усі кнопки для початку захоплення...</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_prompt_1">
+		<text>Натисніть кнопку (коротко = натискання, 0.45 с = утримання, Модифікатор + 2-га кнопка = сполучення)</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_prompt_2">
+		<text>Натисніть [Start / Guide / Esc] для скасування захоплення.</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_holding_fmt">
+		<text>Утримується [%s] (%u мс) — відпустіть для натискання, тримайте &gt;= 450 мс для утримання або натисніть 2-гу кнопку!</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_hold_reached">
+		<text>&gt;&gt; ПОРІГ УТРИМАННЯ ДОСЯГНУТО! Відпустіть кнопку для підтвердження утримання (300 мс) &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_title">
+		<text>ВИЯВЛЕНО КОНФЛІКТ У ПОТОЧНОМУ КОНТЕКСТІ!</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_prefix_fmt">
+		<text>Кандидат %s конфліктує з: </text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_prompt">
+		<text>Натисніть [A / Enter] для обміну місцями або [B / Esc] для скасування.</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_title_fmt">
+		<text>УТРИМАННЯ АВАРІЙНОГО СКИДАННЯ (Start + Back): %u / %u мс</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_body">
+		<text>Утримуйте Start + Back 5 секунд для скидання всіх прив'язок до безпечних умовчань...</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_title">
+		<text>ПРАВИЛА ЗАХИЩЕНОЇ НАВІГАЦІЇ ТА ЖЕСТІВ</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_body1">
+		<text>Дії Меню, Підтвердити й Назад захищені: їх не можна відв'язати, лише поміняти місцями з одиночною кнопкою.</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_body2">
+		<text>Аварійне скидання: утримуйте [Start + Back] 5 секунд на будь-якому екрані або введіть 'gp_bind_reset' у консолі.</text>
+	</string>
+	<string id="ui_gp_eng_remap_footer1">
+		<text>[Хрестовина] Вибір | [LB/RB] Контекст | [A/Enter] Призначити | [X/Del] Очистити | [R3/R] Скинути контекст | [B/Start/Esc] Зберегти</text>
+	</string>
+	<string id="ui_gp_eng_remap_footer2">
+		<text>[Y / F2] Майстер пристрою Class C | [F5] Експорт | [F6] Імпорт | [F8 / Start+Back 5 с] Аварійне скидання</text>
+	</string>
+	<string id="ui_gp_eng_wiz_title">
+		<text>МАЙСТЕР НАЛАШТУВАННЯ КОНТРОЛЕРА CLASS C (SDL_AddGamepadMapping)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_c">
+		<text>C (нерозпізнаний джойстик)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_b">
+		<text>B (налаштований геймпад)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_a">
+		<text>A (консольний геймпад)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_sub_device_fmt">
+		<text>Пристрій: id=%u '%s' (Клас=%s, Кнопок=%d, Осей=%d, Хат=%d, GUID=%s)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_sub_no_device">
+		<text>Джойстик або геймпад не виявлено. Підключіть контролер Class C.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_done_bar">
+		<text>&gt;&gt; МАЙСТЕР ЗАВЕРШЕНО — РОЗКЛАДКУ SDL ЗАСТОСОВАНО Й ЗБЕРЕЖЕНО &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_wiz_done_col">
+		<text>Збережено в $app_data_root$\gamepad\user_mappings.txt (gamecontrollerdb.txt не змінено):</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_bar_fmt">
+		<text>&gt;&gt; КРОК %s &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_skipped">
+		<text>[Пропущено]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_release">
+		<text>[Відпустіть усі кнопки...]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_waiting">
+		<text>[Очікування введення...]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_pending">
+		<text>[Очікує]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_gen_title">
+		<text>СФОРМОВАНИЙ РЯДОК РОЗКЛАДКИ SDL3</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_saved_fmt">
+		<text>Файл: %s | Натисніть [A / B / Start / Enter / Esc] для повернення до прив'язок.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw_title">
+		<text>ЖИВІ ПОКАЗНИКИ СИРОГО HID-ДЖОЙСТИКА</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw1_fmt">
+		<text>Маска кнопок: 0x%08X | Хрестовина Hat[0]: 0x%02X</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw2_fmt">
+		<text>Осі Axes[0..5]: [%d, %d, %d, %d, %d, %d]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_wait_title">
+		<text>ОЧІКУВАННЯ ПРИСТРОЮ</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_wait_body">
+		<text>Підключіть контролер Class C або натисніть [Esc] для повернення до екрана прив'язок.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_footer1">
+		<text>Керування майстром: [ПРОБІЛ / TAB] Пропустити крок | [BACKSPACE / ВЛІВО] Назад | [ENTER] Завершити й зберегти</text>
+	</string>
+	<string id="ui_gp_eng_wiz_footer2">
+		<text>[ESC] Назад до прив'язок | Користувацькі розкладки зберігаються в $app_data_root$\gamepad\user_mappings.txt</text>
+	</string>
+	<string id="ui_gp_eng_osk_default_zone">
+		<text>Зона</text>
+	</string>
+	<string id="ui_gp_eng_osk_default_day_time">
+		<text>День 1 12-00</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_loc_date">
+		<text>Локація — Дата</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_before_fight">
+		<text>Перед боєм</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_after_emission">
+		<text>Після викиду</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_campfire">
+		<text>Біля багаття</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_before_raid">
+		<text>Перед вилазкою</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_base_trade">
+		<text>База і торгівля</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_weapons">
+		<text>Зброя</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_parts">
+		<text>Деталі</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_meds">
+		<text>Медицина</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_ammo">
+		<text>Боєприпаси</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_armor">
+		<text>Броня</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_artefacts">
+		<text>Артефакти</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_stash">
+		<text>Схрон</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_danger">
+		<text>Небезпечно</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_check">
+		<text>Перевірити</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_camp">
+		<text>Табір</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_trader">
+		<text>Торговець</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_target">
+		<text>Ціль</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_stalker">
+		<text>Сталкер</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_marked_one">
+		<text>Мічений</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_strelok">
+		<text>Стрілець</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_degtyarev">
+		<text>Дегтярьов</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_scar">
+		<text>Шрам</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_strider">
+		<text>Бродяга</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_lang_ru">
+		<text>Мова: RU (R3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_lang_en">
+		<text>Мова: EN (R3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_case_upper">
+		<text>Регістр: АБВ (L3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_case_lower">
+		<text>Регістр: абв (L3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_space">
+		<text>Пробіл (Y)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_backspace">
+		<text>&lt;- Стерти (X)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_clear">
+		<text>Очистити</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_done">
+		<text>Готово (Start)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_save">
+		<text>Збереження гри (UISaveDialog)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_stash">
+		<text>Створення схрону (UICreateStash)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_waypoint">
+		<text>Мітка КПК / Шляхова точка (PAW)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_newgame">
+		<text>Ім'я персонажа (Нова гра)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_numeric">
+		<text>Числове значення (0..255)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_generic">
+		<text>Поле введення тексту</text>
+	</string>
+	<string id="ui_gp_eng_osk_title">
+		<text>ЕКРАННА КЛАВІАТУРА ГЕЙМПАДА</text>
+	</string>
+	<string id="ui_gp_eng_osk_layout_ru">
+		<text>RU (ЙЦУКЕН)</text>
+	</string>
+	<string id="ui_gp_eng_osk_layout_en">
+		<text>EN (QWERTY)</text>
+	</string>
+	<string id="ui_gp_eng_osk_case_hdr_upper">
+		<text>АБВ / ABC</text>
+	</string>
+	<string id="ui_gp_eng_osk_case_hdr_lower">
+		<text>абв / abc</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_caption">
+		<text>Шаблони в 1 клік (Вгору/Вниз — перехід до сітки, A — вставити):</text>
+	</string>
+	<string id="ui_gp_eng_osk_footer">
+		<text>[A] Ввід символу/шаблона  [X] Стерти  [Y] Пробіл  [L3/LT] Регістр  [R3/LB/RB] RU/EN  [Start] Застосувати  [B] Скасувати</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_equipment">
+		<text>СПОРЯДЖЕННЯ</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_backpack">
+		<text>РЮКЗАК</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_health">
+		<text>ЗДОРОВ'Я</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_magazines">
+		<text>МАГАЗИНИ</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_pda">
+		<text>КПК</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_skills">
+		<text>НАВИЧКИ</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_settings">
+		<text>НАЛАШТУВАННЯ</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_all">
+		<text>Усе</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_weapons">
+		<text>Зброя</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_ammo">
+		<text>Боєприпаси</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_meds">
+		<text>Медицина</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_food">
+		<text>Провізія</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_armor_af">
+		<text>Броня/Арт.</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_tools">
+		<text>Інструменти</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_misc">
+		<text>Різне</text>
+	</string>
+	<string id="ui_gp_eng_wid_view_grid">
+		<text>Сітка 4xN</text>
+	</string>
+	<string id="ui_gp_eng_wid_view_list">
+		<text>Список</text>
+	</string>
+	<string id="ui_gp_eng_wid_pause_on">
+		<text>[ПАУЗА АКТИВНА]</text>
+	</string>
+	<string id="ui_gp_eng_wid_pause_off">
+		<text>[СВІТ АКТИВНИЙ]</text>
+	</string>
+	<string id="ui_gp_eng_wid_topbar_telemetry_fmt">
+		<text> [RB]  | Вага: %.1f/%.1f кг | %u RU | %s</text>
+	</string>
+	<string id="ui_gp_eng_wid_catbar_suffix_fmt">
+		<text> [RT]   (Вигляд: %s, предм.: %zu)</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_focused">
+		<text> &gt; [Порожньо] У категорії немає предметів — натисніть [LT/RT] для зміни категорії</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_unfocused">
+		<text>   [Порожньо] У категорії немає предметів</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_short">
+		<text>[Порожньо]</text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_equipped">
+		<text>[Надягнуто] </text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_junk">
+		<text>[Мотлох] </text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_quest">
+		<text>[Квест] </text>
+	</string>
+	<string id="ui_gp_eng_wid_weight_kg_fmt">
+		<text>  %.2f кг</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_node_title">
+		<text>Картка порівняння (Accurate Defense Values)</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_empty_1">
+		<text>Немає вибраного предмета (порожня категорія)</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_empty_2">
+		<text>Використовуйте [LT/RT] для вибору категорії з предметами.</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_br_class">
+		<text>ADV Клас броні (BR)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_unit_class">
+		<text>кл.</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_fire_wound">
+		<text>ADV Балістика (FireWound)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_ap_res">
+		<text>ADV Стійкість до ББ (AP Res)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_wound">
+		<text>ADV Розрив (Wound)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_strike">
+		<text>ADV Удар (Strike)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_explosion">
+		<text>ADV Вибух (Explosion)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_burn">
+		<text>ADV Опік (Burn)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_shock">
+		<text>ADV Електрошок (Shock)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_acid">
+		<text>ADV Хім. опік (Acid)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_psi">
+		<text>ADV Псі-захист (Psi)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_radia">
+		<text>ADV Радіація (Radia)</text>
+	</string>
+	<string id="ui_gp_eng_wid_mode_100">
+		<text>[РЕЖИМ 100%]</text>
+	</string>
+	<string id="ui_gp_eng_wid_mode_cur">
+		<text>[ПОТОЧНИЙ]</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_hdr_fmt">
+		<text>%s (%s) | Стан: %d%% %s | Вага: %.2f кг | %u RU</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_cmp_item_fmt">
+		<text>Порівняння зі слотом #%u: %s (%d%%)  [R3 — змінити слот / 100%%]</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_slot_equipped">
+		<text>цей предмет уже надягнуто</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_slot_empty">
+		<text>слот вільний</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_cmp_slot_fmt">
+		<text>Порівняння: слот #%u (%s)</text>
+	</string>
+	<string id="ui_gp_eng_wid_wpo_prefix">
+		<text>Деталі WPO: </text>
+	</string>
+	<string id="ui_gp_eng_wid_actor_body_fmt">
+		<text>Актор ADV [Корпус]: BR %d (премітигація &lt;%d%%) | Вогнепал %.0f%% | Розрив %.0f%% | Хім %.0f%% | Псі %.0f%%</text>
+	</string>
+	<string id="ui_gp_eng_wid_actor_head_fmt">
+		<text>Актор ADV [Голова]: BR %d (премітигація &lt;%d%%) | Вогнепал %.0f%% | Псі %.0f%%</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_title">
+		<text>Вибір кількості</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_slider">
+		<text>Повзунок кількості [&lt; / &gt; +-1 | LB/RB +-10 | LT/RT Мін/Макс]</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_confirm">
+		<text>[A] Прийняти вибрану кількість</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_cancel">
+		<text>[B] Скасувати</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_summary_fmt">
+		<text>Вибір кількості: %s | %s %d / %d шт. | Вага: %.2f кг | Сума: %u RU</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_yes">
+		<text>[Так, підтвердити]</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_no">
+		<text>[Скасувати]</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_title">
+		<text>Підтвердження дії</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_mags_warn">
+		<text>Увага (mags_patches): при зміні броні магазини з розгрузки буде перенесено до рюкзака. Продовжити?</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_item_fmt">
+		<text>Підтвердити вибір предмета «%s» (read-only тест)?</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_confirm_choice">
+		<text>Підтвердити вибір</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_select_btn">
+		<text>Вибір кнопки</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cancel_back">
+		<text>Скасувати (назад)</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_qty_step">
+		<text>К-сть +-1 (утрим.)</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_step_10">
+		<text>Крок +-10</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_min_max">
+		<text>Мін / Макс</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_accept">
+		<text>Прийняти</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cancel">
+		<text>Скасувати</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_view_grid">
+		<text>Вигляд: Сітка 4xN</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_view_list">
+		<text>Вигляд: Список</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_confirm_dlg">
+		<text>Діалог підтвердження</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_select_qty">
+		<text>Вибір кількості</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_section">
+		<text>Розділ</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_category">
+		<text>Категорія</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cmp_slot2">
+		<text>Порівн.: Слот 2</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cmp_slot1">
+		<text>Порівн.: Слот 1</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_stats_cur">
+		<text>Стати: Поточні</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_stats_100">
+		<text>Стати: 100%</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_scroll_stats">
+		<text>Прокрутка статів</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_close">
+		<text>Закрити</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_switch_cat">
+		<text>Змінити категорію</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_type">
+		<text>Ввід</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_backspace">
+		<text>Стерти</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_space">
+		<text>Пробіл</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_lang">
+		<text>Мова</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_done">
+		<text>Готово</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_cancel">
+		<text>Скасувати</text>
+	</string>
+	<string id="ui_gp_eng_act_mouse_cursor">
+		<text>Режим курсора-миші</text>
+	</string>
+	<string id="ui_gp_eng_talk_repair">
+		<text>Ремонт</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_mask">
+		<text>Протерти маску (колесо)</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_laser">
+		<text>ЛЦВ (колесо)</text>
+	</string>
+</string_table>

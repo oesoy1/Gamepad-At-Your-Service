@@ -1,0 +1,73 @@
+<w>
+	<!-- UI-Settings-v2: gamepad pages inside the stock UIOptions window.
+	     Every element below is a copy of a stock element from ui_options_16.xml
+	     (tab_controls:* for the table, elements:* for sliders, lists and radio buttons). -->
+
+	<!-- Table caption and column headers (stock: tab_controls:cap_keyboardsetup / key_binding:header_N) -->
+	<cap x="0" y="0" width="573" height="15">
+		<texture a="150">ui_inGame2_servers_list_button</texture>
+	</cap>
+	<hdr_1 x="0" y="20" width="92" height="15">
+		<texture a="150">ui_inGame2_servers_list_button</texture>
+	</hdr_1>
+	<hdr_2 x="92" y="20" width="128" height="15">
+		<texture a="150">ui_inGame2_servers_list_button</texture>
+	</hdr_2>
+	<hdr_3 x="220" y="20" width="120" height="15">
+		<texture a="150">ui_inGame2_servers_list_button</texture>
+	</hdr_3>
+	<hdr_a1 x="0" y="20" width="164" height="15">
+		<texture a="150">ui_inGame2_servers_list_button</texture>
+	</hdr_a1>
+	<hdr_a2 x="164" y="20" width="176" height="15">
+		<texture a="150">ui_inGame2_servers_list_button</texture>
+	</hdr_a2>
+
+	<!-- Stock list frame (key_binding:frame) -->
+	<frame x="0" y="36" width="340" height="514">
+		<texture>ui_inGame2_servers_list_frame</texture>
+	</frame>
+
+	<!-- Text templates (stock fonts and colours) -->
+	<t_hdr x="0" y="0" width="100" height="15">
+		<text r="170" g="170" b="170" font="arial_14" align="l" vert_align="c" complex_mode="0"/>
+	</t_hdr>
+	<t16 x="0" y="0" width="100" height="18">
+		<text r="170" g="170" b="170" font="letterica16" align="l" vert_align="c" complex_mode="0"/>
+	</t16>
+	<t16c x="0" y="0" width="100" height="18">
+		<text r="200" g="200" b="250" font="letterica16" align="c" vert_align="c" complex_mode="0"/>
+	</t16c>
+	<t16w x="0" y="0" width="100" height="18">
+		<text r="170" g="170" b="170" font="letterica16" align="l" vert_align="t" complex_mode="1"/>
+	</t16w>
+	<t18 x="0" y="0" width="100" height="20">
+		<text r="250" g="250" b="250" font="letterica18" align="l" vert_align="c" complex_mode="0"/>
+	</t18>
+	<!-- Stock group title (key_binding:scroll_view:item_group) -->
+	<t_group x="0" y="0" width="160" height="20">
+		<text r="250" g="150" b="75" font="letterica18" align="l" vert_align="b" complex_mode="0"/>
+	</t_group>
+	<!-- Stock pending-changes colour (main:notify) -->
+	<t_status x="0" y="0" width="573" height="18">
+		<text r="250" g="150" b="75" font="letterica16" align="l" vert_align="c" complex_mode="0"/>
+	</t_status>
+
+	<!-- Invisible click area over a table row -->
+	<row_btn x="0" y="0" width="340" height="18" check_mode="0" stretch="1">
+		<text font="letterica16" align="l"/>
+	</row_btn>
+
+	<!-- Stock controls (elements:track / track_value / list / radio_horz:btn) -->
+	<track x="166" y="0" width="132" height="16" stretch="1" step="1.0"/>
+	<list x="166" y="0" width="170" height="9020" stretch="1" list_length="6">
+		<list_font r="170" g="170" b="170" font="letterica16"/>
+		<text_color>
+			<e r="170" g="170" b="170"/>
+			<d r="70" g="70" b="70"/>
+		</text_color>
+	</list>
+	<radio_btn x="0" y="0" width="26" height="22" stretch="1">
+		<texture>ui_radio</texture>
+	</radio_btn>
+</w>

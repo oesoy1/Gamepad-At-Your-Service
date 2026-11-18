@@ -1,0 +1,26 @@
+<w>
+    <hint_strip x="378" y="615" width="268" height="26" stretch="1">
+        <texture>ui\ui_gp_p16_strip</texture>
+    </hint_strip>
+    <hint_icon x="0" y="0" width="20" height="20" stretch="1"/>
+    <tab_frame x="0" y="0" width="22" height="22" stretch="1">
+        <texture>ui_gp_qaw_tab_frame</texture>
+    </tab_frame>
+    <tab_symbol x="0" y="0" width="16" height="16" stretch="1"/>
+    <preview x="477" y="306" width="70" height="54" stretch="1"/>
+    <hint x="0" y="0" width="107" height="18">
+        <text font="arial_14" r="205" g="205" b="205" align="l" vert_align="c"/>
+    </hint>
+    <settings_bg x="282" y="145" width="460" height="470" stretch="1">
+        <texture>ui_gp_panel_flat</texture>
+    </settings_bg>
+    <settings_title x="308" y="170" width="420" height="24">
+        <text font="letterica25" r="220" g="220" b="220" align="l"/>
+    </settings_title>
+    <settings_row x="308" y="207" width="420" height="19">
+        <text font="arial_14" r="220" g="220" b="220" align="l"/>
+    </settings_row>
+    <settings_hint x="308" y="582" width="420" height="19">
+        <text font="arial_14" r="200" g="200" b="200" align="l"/>
+    </settings_hint>
+</w>

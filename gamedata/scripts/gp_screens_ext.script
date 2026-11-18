@@ -1,0 +1,313 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- =============================================================================
+-- gp_screens_ext.script - Remaining Extended UI Screens Controller (G0.1/G0.2)
+--
+-- Sanitary cleanup (W4-MCM-GWIRE):
+--   All migrated screens now have dedicated adapters:
+--     * ui_gp_native / gp_options -> UIOptions, UIGpControlsWnd, UIGpAimWnd
+--     * gp_mcm                   -> UI_MCM, UIARGBControl, pos_previewer_mcm, kb_overview
+--     * gp_menu_dialogs / W5-MENU-> ui_main_menu, UISaveDialog, UILoadDialog, UINewGame
+--     * gp_companions_furn       -> UICompanionInv, UIWheelCompanion, QuickMenu, Light, Radio
+--     * gp_hideout               -> UIFurniturePiano, UITradingComputer, UIMapKit
+--     * gp_progression           -> UIHarukaSkills, UIExperienceMenu, LaserSettingsDialog
+--     * ui_gp_qaw_settings       -> Haru QAW settings (gp_wheel)
+--   Retained scope:
+--     1. Body Health System (bhs: zzz_player_injuries) targets & close action.
+--     2. Passive read-only detector detect_options_or_mcm_screen() for gp_ui_tune.
+--     3. Safe UI primitives & lifecycle stub exports for backwards compatibility.
+-- =============================================================================
+
+local BHS_LIMBS = { "head", "torso", "left_arm", "right_arm", "left_leg", "right_leg" }
+
+local state = {
+    last_action = "none",
+    active_options_dlg = nil,
+    active_mcm_dlg = nil,
+    active_argb_dlg = nil,
+}
+
+-- -----------------------------------------------------------------------------
+-- 1. Safe UI Primitives (rawequal + pcall)
+-- -----------------------------------------------------------------------------
+function ui_eq(a, b)
+    return rawequal(a, b)
+end
+
+function safe_get(obj, key)
+    if rawequal(obj, nil) then
+        return nil
+    end
+    local ok, val = pcall(function() return obj[key] end)
+    if ok then
+        return val
+    end
+    return nil
+end
+
+function safe_set(obj, key, val)
+    if rawequal(obj, nil) then
+        return false
+    end
+    local ok = pcall(function() obj[key] = val end)
+    return ok == true
+end
+
+function safe_call(obj, method_name, a, b, c, d, e)
+    if rawequal(obj, nil) then
+        return false, nil
+    end
+    local fn = safe_get(obj, method_name)
+    if type(fn) ~= "function" then
+        return false, nil
+    end
+    local ok, res = pcall(fn, obj, a, b, c, d, e)
+    if ok then
+        return true, res
+    end
+    return false, nil
+end
+
+function is_wnd_shown(wnd)
+    if rawequal(wnd, nil) then
+        return false
+    end
+    local ok, shown = safe_call(wnd, "IsShown")
+    if ok then
+        return shown == true
+    end
+    return false
+end
+
+function opt_mcm_cc(path, opt)
+    if path and path ~= "" then
+        return tostring(path) .. "/" .. tostring(opt or "")
+    end
+    return tostring(opt or "")
+end
+
+function get_last_action()
+    return state.last_action
+end
+
+function reset_options_mcm_state()
+    state.active_options_dlg = nil
+    state.active_mcm_dlg = nil
+    state.active_argb_dlg = nil
+end
+
+function reset_ext_state()
+    state.last_action = "none"
+    reset_options_mcm_state()
+end
+
+-- -----------------------------------------------------------------------------
+-- 2. Passive Lifecycle Tracking (for gp_ui_tune.detect_active_screen only)
+-- -----------------------------------------------------------------------------
+function set_active_options_dlg(dlg)
+    state.active_options_dlg = dlg
+end
+
+function set_active_mcm_dlg(dlg)
+    state.active_mcm_dlg = dlg
+end
+
+function set_active_argb_dlg(dlg)
+    state.active_argb_dlg = dlg
+end
+
+function on_ext_gui_show(name, wnd)
+    if name == "UIOptions" then
+        set_active_options_dlg(wnd)
+        state.last_action = "gui_show:UIOptions"
+        return true
+    elseif name == "UIMCM" or name == "UI_MCM" then
+        set_active_mcm_dlg(wnd)
+        state.last_action = "gui_show:" .. tostring(name)
+        return true
+    elseif name == "UIARGBControl" then
+        set_active_argb_dlg(wnd)
+        state.last_action = "gui_show:UIARGBControl"
+        return true
+    end
+    return false
+end
+
+function on_ext_gui_hide(name, wnd)
+    if name == "UIOptions" or ui_eq(wnd, state.active_options_dlg) then
+        state.active_options_dlg = nil
+    end
+    if name == "UIMCM" or name == "UI_MCM" or ui_eq(wnd, state.active_mcm_dlg) then
+        state.active_mcm_dlg = nil
+    end
+    if name == "UIARGBControl" or ui_eq(wnd, state.active_argb_dlg) then
+        state.active_argb_dlg = nil
+    end
+end
+
+function detect_active_argb_dlg(mcm_dlg)
+    if is_wnd_shown(state.active_argb_dlg) then
+        local chrome = safe_get(state.active_argb_dlg, "chrome")
+        if rawequal(chrome, nil) or is_wnd_shown(chrome) then
+            return state.active_argb_dlg
+        end
+    end
+    if not rawequal(mcm_dlg, nil) then
+        local embedded = safe_get(mcm_dlg, "argb_ctrl")
+        if is_wnd_shown(embedded) then
+            return embedded
+        end
+    end
+    local argb_mod = rawget(_G, "ui_mcm_argb_input")
+    if type(argb_mod) == "table" then
+        local gui = safe_get(argb_mod, "GUI")
+        if is_wnd_shown(gui) then
+            return gui
+        end
+    end
+    return nil
+end
+
+function detect_options_or_mcm_screen()
+    local mcm_dlg = state.active_mcm_dlg
+    if not is_wnd_shown(mcm_dlg) and type(rawget(_G, "ui_mcm")) == "table" then
+        mcm_dlg = rawget(_G.ui_mcm, "GUI")
+    end
+    if not is_wnd_shown(mcm_dlg) and type(rawget(_G, "_GUIs")) == "table" then
+        mcm_dlg = _G._GUIs["UI_MCM"]
+    end
+    local argb_dlg = detect_active_argb_dlg(mcm_dlg)
+    if not rawequal(argb_dlg, nil) then
+        return "mcm_argb", argb_dlg
+    end
+    if is_wnd_shown(mcm_dlg) then
+        return "mcm", mcm_dlg
+    end
+    local opt_dlg = state.active_options_dlg
+    if not is_wnd_shown(opt_dlg) and type(rawget(_G, "ui_options")) == "table" then
+        opt_dlg = safe_get(_G.ui_options, "GUI")
+    end
+    if not is_wnd_shown(opt_dlg) and type(rawget(_G, "_GUIs")) == "table" then
+        opt_dlg = _G._GUIs["UIOptions"]
+    end
+    if is_wnd_shown(opt_dlg) then
+        return "options", opt_dlg
+    end
+    return "none", nil
+end
+
+-- -----------------------------------------------------------------------------
+-- 3. Active Unmigrated Extended Screen Detection & Handlers (BHS only)
+-- -----------------------------------------------------------------------------
+function get_active_ext_screen()
+    local inj = rawget(_G, "zzz_player_injuries")
+    local bhs_gui = type(inj) == "table" and (safe_get(inj, "GUI") or safe_get(inj, "bhs_gui")) or nil
+    if is_wnd_shown(bhs_gui) then
+        return "bhs", bhs_gui
+    end
+    return "none", nil
+end
+
+function bhs_close(gui)
+    if not safe_call(gui, "Close") then
+        safe_call(gui, "HideDialog")
+    end
+    state.last_action = "bhs_close"
+    return true
+end
+
+function dispatch_ext_dpad(kind, gui, dir_code)
+    return false
+end
+
+function dispatch_ext_stick_scroll(kind, gui, wheel_dir)
+    return false
+end
+
+function dispatch_ext_btn_a(kind, gui)
+    return false
+end
+
+function dispatch_ext_btn_b(kind, gui)
+    if kind == "bhs" and not rawequal(gui, nil) then
+        return bhs_close(gui)
+    end
+    return false
+end
+
+function dispatch_ext_btn_x(kind, gui)
+    return false
+end
+
+function dispatch_ext_btn_y(kind, gui)
+    return false
+end
+
+function dispatch_ext_btn_lb_rb(kind, gui, step)
+    return false
+end
+
+function dispatch_ext_btn_view(kind, gui)
+    return false
+end
+
+function dispatch_ext_btn_start(kind, gui)
+    return false
+end
+
+-- -----------------------------------------------------------------------------
+-- 4. Virtual Cursor Targets (BHS only; migrated screens return empty table)
+-- -----------------------------------------------------------------------------
+function collect_ext_screen_targets(kind, gui, ox, oy)
+    local targets = {}
+    if kind ~= "bhs" or rawequal(gui, nil) or not _G.gp_screens then
+        return targets
+    end
+    local get_r = _G.gp_screens.get_wnd_rect
+    local make_r = _G.gp_screens.make_target_rect
+    if type(get_r) ~= "function" or type(make_r) ~= "function" then
+        return targets
+    end
+    ox = tonumber(ox) or 0
+    oy = tonumber(oy) or 0
+
+    for i = 1, #BHS_LIMBS do
+        local lname = BHS_LIMBS[i]
+        local wnd = safe_get(gui, "btn_" .. lname) or safe_get(gui, lname)
+        local tkind = "bhs_" .. lname
+        local primary = (i == 1)
+        local r = get_r(wnd, ox, oy, tkind, primary and 1 or 0)
+        if r then
+            if is_wnd_shown(wnd) then
+                local ok_p, pos = safe_call(wnd, "GetWndPos")
+                local px = (ok_p and pos and tonumber(pos.x)) or 0
+                local py = (ok_p and pos and tonumber(pos.y)) or 0
+                if px == 0 and py == 0 and math.abs(r.x1 - ox) < 1.0 and math.abs(r.y1 - oy) < 1.0 then
+                    local rw = (r.w and r.w ~= 100) and r.w or 180
+                    local rh = (r.h and r.h ~= 100) and r.h or 36
+                    r = make_r(80, 160 + (i - 1) * 48, rw, rh, tkind, wnd, primary and 1 or 0)
+                end
+                if r then
+                    r.primary = primary
+                    table.insert(targets, r)
+                end
+            end
+        else
+            local fr = make_r(80, 160 + (i - 1) * 48, 180, 36, tkind, wnd, primary and 1 or 0)
+            if fr then
+                fr.primary = primary
+                table.insert(targets, fr)
+            end
+        end
+    end
+    return targets
+end
+
+function selftest()
+    if not ui_eq(state, state) or ui_eq(state, {}) then
+        return "FAIL:ui_eq"
+    end
+    if opt_mcm_cc("video/basic", "fov") ~= "video/basic/fov" then
+        return "FAIL:opt_mcm_cc"
+    end
+    return "PASS"
+end

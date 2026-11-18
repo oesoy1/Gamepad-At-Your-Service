@@ -1,0 +1,681 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- E3.1 (D12, D13, D15, D16, D25, D46): field devices and world actions for the gamepad.
+-- Called from C++ CGamepadContextDispatcher (src/xrGame/GamepadContextDispatcher.cpp).
+--
+-- Key invariants (docs/kb/05-input-movement-camera-and-3dss.md par. 3.1-3.2, par. 8 item 7):
+-- 1. NVG power toggle (D-Pad Up Hold >= 300 ms outside ADS) calls item_device.set_nightvision
+--    directly (with z_beefs_nvgs.play_animation = true) and NEVER injects kNIGHT_VISION, bypassing
+--    the 250 ms hold timer in item_device.script:225-255 where a short pulse changes brightness.
+-- 2. NVG brightness adjustment is exposed only via gp_field.nvg_brightness_step() for the radial
+--    wheel "Devices" tab (E5.x) and is NOT bound to D-Pad Up/Down in ADS (which belong to 3DSS zoom).
+-- 3. Mask cleaning (D-Pad Down Hold >= 300 ms outside ADS) invokes actor_effects.Hit_MaskCleaning()
+--    directly (after wd_inspect.yield_for_action() when present) so DIK_T / kCAM_ZOOM_IN is not
+--    injected into liz_fdda_redone_headgear_animations_hotkey.
+-- 4. Companion orders (D46) are strictly reserved for the radial wheel tab (E5.x) and are never
+--    bound to field buttons.
+
+-- EInventorySlots (xrServerEntities/inventory_space.h):
+-- KNIFE_SLOT=1, INV_SLOT_2=2, INV_SLOT_3=3, GRENADE_SLOT=4, BINOCULAR_SLOT=5,
+-- BOLT_SLOT=6, OUTFIT_SLOT=7, PDA_SLOT=8, DETECTOR_SLOT=9, TORCH_SLOT=10.
+local SLOT_KNIFE    = 1
+local SLOT_GRENADE  = 4
+local SLOT_VISION   = 5  -- INV-REWORK-28: G.A.M.M.A. "VISION" cell (st_equ_binocular_cell): knife or binoculars
+local SLOT_BOLT     = 6
+local SLOT_PDA      = 8
+local SLOT_DETECTOR = 9
+local SLOT_TORCH    = 10
+
+local quick_lb_mode = "bolt" -- default short LB outside ADS: "bolt" (kWPN_6); E5.1 wheel can set "quick_use_1".."quick_use_4"
+
+local flat_pda_active = false
+local flat_pda_restore_3d_cvar = false
+
+local last = { op = "none", result = "none", time = 0 }
+
+local function remember(op, result)
+    last.op = op
+    last.result = result
+    last.time = time_global and time_global() or 0
+    return result
+end
+
+function get_last()
+    return last.op, last.result, last.time
+end
+
+function get_quick_lb_mode()
+    return quick_lb_mode
+end
+
+function set_quick_lb_mode(mode)
+    if mode == "bolt"
+        or mode == "quick_use_1"
+        or mode == "quick_use_2"
+        or mode == "quick_use_3"
+        or mode == "quick_use_4"
+    then
+        quick_lb_mode = mode
+        return remember("set_quick_lb_mode", "ok:" .. mode)
+    end
+    return remember("set_quick_lb_mode", "rejected:" .. tostring(mode))
+end
+
+-- D-Pad Up Hold (>= 300 ms) outside ADS: direct NVG power toggle without kNIGHT_VISION injection.
+function toggle_nvg()
+    local actor = db.actor
+    if not actor then
+        return remember("nvg_toggle", "blocked:no_actor")
+    end
+    if not (item_device and item_device.set_nightvision) then
+        return remember("nvg_toggle", "unavailable:item_device_missing")
+    end
+    local ok_d, dev = pcall(function() return actor:item_in_slot(SLOT_TORCH) end)
+    if not ok_d then dev = nil end
+    local ok_s, sec = pcall(function() return dev and dev:section() or nil end)
+    if not ok_s then sec = nil end
+    local before = false
+    pcall(function()
+        before = ((item_device.is_nv_active and item_device.is_nv_active()) or item_device.nv_state) and true or false
+    end)
+    local target = not before
+
+    if z_beefs_nvgs then
+        z_beefs_nvgs.play_animation = true
+    end
+    pcall(item_device.set_nightvision, sec, target)
+
+    local after = false
+    pcall(function()
+        after = ((item_device.is_nv_active and item_device.is_nv_active()) or item_device.nv_state) and true or false
+    end)
+    if after ~= before then
+        return remember("nvg_toggle", (after and "nvg_on:" or "nvg_off:") .. tostring(sec or "slot10"))
+    end
+    if not dev then
+        return remember("nvg_toggle", "blocked:no_device_slot10")
+    end
+    -- When FDDA headlamp/NVG animations are enabled, z_beefs_nvgs.set_nightvision_animated flips
+    -- item_device.nv_state inside its animation timer after starting the hand motion.
+    return remember("nvg_toggle", (target and "nvg_anim_or_checked_on:" or "nvg_anim_or_checked_off:") .. tostring(sec))
+end
+
+-- Entry point for the radial wheel "Devices" tab (E5.x). Never called from ADS buttons.
+function nvg_brightness_step()
+    local nv_on = false
+    if item_device then
+        pcall(function()
+            nv_on = ((item_device.is_nv_active and item_device.is_nv_active()) or item_device.nv_state) and true or false
+        end)
+    end
+    if not nv_on then
+        return remember("nvg_brightness", "blocked:nvg_off")
+    end
+    if z_beefs_nvgs and z_beefs_nvgs.brightness_adjust then
+        pcall(z_beefs_nvgs.brightness_adjust)
+        return remember("nvg_brightness", "adjusted:z_beefs_nvgs")
+    end
+    return remember("nvg_brightness", "unavailable:z_beefs_nvgs_missing")
+end
+
+local function is_headlamp_anim_active()
+    if actor_effects and tonumber(actor_effects.torch_anm_state) and tonumber(actor_effects.torch_anm_state) ~= 0 then
+        return true
+    end
+    if lam2 and type(lam2.is_running) == "function" then
+        local ok_r, running = pcall(lam2.is_running)
+        if ok_r and running and type(lam2.current_action) == "table" then
+            local ca = lam2.current_action
+            if ca.sec == "liz_headlamp_animation_hud" or ca.tag == "headlamp" or ca.name == "torch_toggle" then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function read_torch_active()
+    if item_device and type(item_device.is_torch_active) == "function" then
+        local ok_t, res_t = pcall(item_device.is_torch_active)
+        return (ok_t and res_t) and true or false
+    end
+    return false
+end
+
+-- D-Pad Up Short (< 300 ms) outside ADS: observer/fallback after C++ injects kTORCH tap
+-- (kTORCH tap triggers both actor_effects.Hit_TorchToggle and zzz_bas_laser_control short-tap when kTORCH is bound).
+-- If C++ synthetic kTORCH tap did not already start the headlamp animation or flip torch state (e.g. swallowed by
+-- zzz_bas_laser_control / liz_fdda_input_manager or called directly), invokes Hit_TorchToggle / toggle_torch directly.
+function on_torch_tap()
+    local actor = db.actor
+    if not actor then
+        return remember("torch_tap", "blocked:no_actor")
+    end
+    local ok_d, dev = pcall(function() return actor:item_in_slot(SLOT_TORCH) end)
+    if not ok_d or not dev then
+        return remember("torch_tap", "no_device:slot10_empty")
+    end
+    local ok_s, sec = pcall(function() return dev:section() end)
+    local sec_str = tostring((ok_s and sec) or "unknown")
+
+    local ktorch_bound = false
+    if bind_to_dik and key_bindings and key_bindings.kTORCH then
+        local ok_b, dik = pcall(bind_to_dik, key_bindings.kTORCH)
+        ktorch_bound = (ok_b and type(dik) == "number" and dik > 0 and dik < 0xFF) and true or false
+    end
+
+    if not ktorch_bound then
+        if actor_effects and actor_effects.Hit_TorchToggle then
+            local before_on = read_torch_active()
+            pcall(actor_effects.Hit_TorchToggle)
+            if not is_headlamp_anim_active() and read_torch_active() == before_on and item_device and type(item_device.toggle_torch) == "function" then
+                pcall(item_device.toggle_torch)
+            end
+            return remember("torch_tap", "fallback_hit_torch:" .. sec_str)
+        elseif item_device and item_device.toggle_torch then
+            pcall(item_device.toggle_torch)
+            return remember("torch_tap", "fallback_toggle_torch:" .. sec_str)
+        end
+    else
+        if not is_headlamp_anim_active() then
+            local before_on = read_torch_active()
+            if actor_effects and type(actor_effects.Hit_TorchToggle) == "function" then
+                pcall(actor_effects.Hit_TorchToggle)
+            end
+            if not is_headlamp_anim_active() and read_torch_active() == before_on and item_device and type(item_device.toggle_torch) == "function" then
+                pcall(item_device.toggle_torch)
+            end
+        end
+    end
+
+    local is_on = read_torch_active()
+    local active = is_on and "on" or "off"
+    return remember("torch_tap", "ktorch_sent:" .. sec_str .. "_state_" .. active)
+end
+
+-- Direct torch toggle helper for scripts/wheel.
+function toggle_torch()
+    local actor = db.actor
+    if not actor then
+        return remember("torch_toggle", "blocked:no_actor")
+    end
+    if actor_effects and actor_effects.Hit_TorchToggle then
+        local before_on = read_torch_active()
+        pcall(actor_effects.Hit_TorchToggle)
+        if not is_headlamp_anim_active() and read_torch_active() == before_on and item_device and type(item_device.toggle_torch) == "function" then
+            pcall(item_device.toggle_torch)
+        end
+        return remember("torch_toggle", "called:Hit_TorchToggle")
+    end
+    if item_device and item_device.toggle_torch then
+        pcall(item_device.toggle_torch)
+        return remember("torch_toggle", "called:item_device_toggle_torch")
+    end
+    return remember("torch_toggle", "unavailable:no_torch_fn")
+end
+
+local function restore_3d_pda_cvar()
+    if flat_pda_restore_3d_cvar then
+        flat_pda_restore_3d_cvar = false
+        if exec_console_cmd then
+            pcall(exec_console_cmd, "g_3d_pda 1")
+        end
+    end
+end
+
+-- G12 (PDA1): плоский 2D-КПК убран; оставляем безопасные заглушки для обратной совместимости.
+function is_flat_pda_active()
+    flat_pda_active = false
+    restore_3d_pda_cvar()
+    return false
+end
+
+function on_flat_pda_closed()
+    flat_pda_active = false
+    restore_3d_pda_cvar()
+    return remember("pda_3d", "flat_pda_already_closed")
+end
+
+-- D-Pad Down Short (< 300 ms) outside ADS (and radial wheel act:pda_3d):
+-- 1st tap: pulls out 3D PDA in hands (slot 8).
+-- 2nd tap (while PDA is open): puts away 3D PDA (G12 — no transition to flat 2D PDA).
+function on_3d_pda_tap(direct_call)
+    local actor = db.actor
+    if not actor then
+        return remember("pda_3d", "blocked:no_actor")
+    end
+    local ok_p, pda = pcall(function() return actor:item_in_slot(SLOT_PDA) end)
+    if not ok_p or not pda then
+        return remember("pda_3d", "blocked:no_pda_slot8")
+    end
+    local pda_menu = nil
+    local shown = false
+    if ActorMenu and ActorMenu.get_pda_menu then
+        pcall(function()
+            pda_menu = ActorMenu.get_pda_menu()
+            shown = (pda_menu and pda_menu:IsShown()) and true or false
+        end)
+    end
+    flat_pda_active = false
+    restore_3d_pda_cvar()
+
+    local ok_a, act_slot = pcall(function() return actor:active_slot() end)
+    local slot8_active = (ok_a and act_slot == SLOT_PDA) and true or false
+    local is_pda_open = (shown or slot8_active) and true or false
+
+    local ok_s, pda_sec = pcall(function() return pda:section() end)
+    local sec_str = tostring((ok_s and pda_sec) or "pda")
+
+    if demonized_time_events and demonized_time_events.RemoveTimeEvent then
+        pcall(demonized_time_events.RemoveTimeEvent, "grok_zoom_pda", "grok_zoom_pda_in")
+        pcall(demonized_time_events.RemoveTimeEvent, "grok_zoom_pda", "grok_zoom_pda_in2")
+    end
+
+    -- PDA is already open -> hide 3D PDA (G12: never switch to flat 2D PDA)
+    if is_pda_open then
+        if pda_to_previous_weapon and pda_to_previous_weapon.toggle_pda then
+            pcall(pda_to_previous_weapon.toggle_pda)
+        end
+        pcall(function() actor:activate_slot(0) end)
+        if pda_menu and pda_menu.HideDialog then
+            pcall(function() pda_menu:HideDialog() end)
+        end
+        return remember("pda_3d", "fallback_hide:slot0")
+    end
+
+    -- 1st tap: PDA is closed -> pull out 3D PDA in hands (slot 8)
+    local kcustom20_bound = false
+    if not direct_call and bind_to_dik and key_bindings and key_bindings.kCUSTOM20 then
+        local ok_b, dik = pcall(bind_to_dik, key_bindings.kCUSTOM20)
+        kcustom20_bound = (ok_b and type(dik) == "number" and dik > 0 and dik < 0xFF) and true or false
+    end
+
+    if kcustom20_bound and actor_effects then
+        return remember("pda_3d", "kcustom20_sent:" .. sec_str .. ":activating")
+    end
+
+    if pda_to_previous_weapon and pda_to_previous_weapon.toggle_pda then
+        pcall(pda_to_previous_weapon.toggle_pda)
+    end
+    if pda_menu and pda_menu.SetActiveSubdialog then
+        pcall(function() pda_menu:SetActiveSubdialog("eptTasks") end)
+    end
+    pcall(function() actor:activate_slot(SLOT_PDA) end)
+    return remember("pda_3d", "fallback_show:" .. sec_str)
+end
+
+-- K3 (D61): Resolve the button bound to a World_Gameplay action via gp_bridge profile bridge.
+function get_bound_button(action_name, fallback_btn)
+    if gp_bridge and type(gp_bridge.get_binding) == "function" then
+        local ok, trig = pcall(gp_bridge.get_binding, "World_Gameplay", tostring(action_name or ""))
+        if ok and type(trig) == "table" and type(trig.button) == "string" and trig.button ~= "" then
+            return trig.button
+        end
+    end
+    return fallback_btn
+end
+
+-- G6, G12: крестовина вниз внутри КПК больше не переводит в плоский КПК и не закрывает КПК.
+function on_pda_dpad_down(trigger_btn)
+    return false
+end
+
+-- MaskClean (default D-Pad Down Hold >= 300 ms) outside ADS: direct mask cleaning without raw DIK_T / kCAM_ZOOM_IN injection.
+function clean_mask()
+    local actor = db.actor
+    if not actor then
+        return remember("mask_clean", "blocked:no_actor")
+    end
+    if wd_hands_wipe and wd_inspect and wd_inspect.yield_for_action then
+        pcall(wd_inspect.yield_for_action)
+    end
+    if actor_effects and actor_effects.Hit_MaskCleaning then
+        pcall(actor_effects.Hit_MaskCleaning)
+        return remember("mask_clean", "called:Hit_MaskCleaning")
+    end
+    return remember("mask_clean", "fallback_kcam_zoom_in:actor_effects_missing")
+end
+
+-- DetectorToggle (default D-Pad Left Short < 300 ms): observer after C++ injects kDETECTOR tap.
+function on_detector_tap()
+    local actor = db.actor
+    if not actor then
+        return remember("detector_tap", "blocked:no_actor")
+    end
+    local ok_d, det = pcall(function() return actor:item_in_slot(SLOT_DETECTOR) end)
+    if not ok_d or not det then
+        return remember("detector_tap", "no_detector:slot9_empty")
+    end
+    local ok_a, act_det = pcall(function() return actor:active_detector() end)
+    local active = (ok_a and act_det ~= nil) and true or false
+    local ok_s, det_sec = pcall(function() return det:section() end)
+    return remember("detector_tap", "kdetector_sent:" .. tostring((ok_s and det_sec) or "detector") .. (active and ":active" or ":toggling"))
+end
+
+-- QuickBoltOrSlot (default LB Short < 250 ms) outside ADS: returns selected quick action ("bolt:kWPN_6" or "quick_use_1..4:slot")
+-- so C++ injects the corresponding action.
+function quick_bolt_or_slot()
+    local actor = db.actor
+    if not actor then
+        return remember("lb_short", "blocked:no_actor")
+    end
+    if quick_lb_mode == "quick_use_1"
+        or quick_lb_mode == "quick_use_2"
+        or quick_lb_mode == "quick_use_3"
+        or quick_lb_mode == "quick_use_4"
+    then
+        return remember("lb_short", quick_lb_mode .. ":selected")
+    end
+    local ok_b, bolt_sec = pcall(function()
+        local bolt = actor:item_in_slot(SLOT_BOLT)
+        return bolt and bolt:section() or nil
+    end)
+    return remember("lb_short", "bolt:kWPN_6_" .. tostring((ok_b and bolt_sec) or "slot6"))
+end
+
+-- INV-REWORK-28b (Misha 2026-11-13): hold RB. A knife may lie in MELEE (slot 1) or in VISION (slot 5,
+-- G.A.M.M.A. binocular cell). Knife wherever it is -> that slot; no knife -> whatever is in VISION (binoculars).
+-- Knife = IsMelee (G.A.M.M.A. _g, also used by on_quick_melee_tap) or ltx class WP_KNIFE.
+function is_knife_item(itm)
+    if not itm then return false end
+    if type(IsMelee) == "function" then
+        local ok, v = pcall(IsMelee, itm)
+        if ok and v then return true end
+    end
+    local ok_s, sec = pcall(function() return itm:section() end)
+    if not (ok_s and sec) then return false end
+    local cls = type(SYS_GetParam) == "function" and SYS_GetParam(0, sec, "class", "") or ""
+    return cls == "WP_KNIFE"
+end
+
+-- Returns "slot:5:knife", "slot:1:knife", "slot:5:vision" or "none:empty" / "blocked:no_actor".
+function vision_draw_slot()
+    local actor = db.actor
+    if not actor then return remember("vision_draw", "blocked:no_actor") end
+    local function in_slot(s)
+        local ok, itm = pcall(function() return actor:item_in_slot(s) end)
+        return ok and itm or nil
+    end
+    local v, m = in_slot(SLOT_VISION), in_slot(SLOT_KNIFE)
+    if is_knife_item(v) then return remember("vision_draw", "slot:5:knife") end
+    if is_knife_item(m) then return remember("vision_draw", "slot:1:knife") end
+    if v then return remember("vision_draw", "slot:5:vision") end
+    return remember("vision_draw", "none:empty")
+end
+
+-- K3 (D61): WeaponWheel hold/tap outside ADS (bound button resolved from profile, e.g. LB, RB, or Y).
+function on_wheel_hold(btn_name)
+    if liz_fdda_input_manager and liz_fdda_input_manager.is_input_disabled == true and lam2 and type(lam2.is_running) == "function" then
+        local ok_r, running = pcall(lam2.is_running)
+        if ok_r and not running then
+            liz_fdda_input_manager.is_input_disabled = false
+        end
+    end
+    local eff_btn = btn_name
+    if type(eff_btn) ~= "string" or eff_btn == "" then
+        eff_btn = get_bound_button("WeaponWheel", "LB")
+    elseif gp_bridge and type(gp_bridge.normalize_binding_button) == "function" then
+        eff_btn = gp_bridge.normalize_binding_button(eff_btn) or eff_btn
+    end
+    if gp_wheel then
+        local open_fn = gp_wheel.open_from_lb_hold or gp_wheel.open_from_wheel_hold
+        if type(open_fn) == "function" then
+            local ok, res = pcall(open_fn, eff_btn)
+            if ok then
+                return remember("lb_hold", "wheel_opened:" .. tostring(res or "gp_wheel"))
+            end
+            return remember("lb_hold", "wheel_error:" .. tostring(res))
+        end
+    end
+    return remember("lb_hold", "wheel_hold_ready:reserved_e5_1")
+end
+
+-- Backward-compatible alias called from C++ CGamepadContextDispatcher::ExecuteWorldGameplayAction(WeaponWheel).
+function lb_wheel_hold(btn_name)
+    return on_wheel_hold(btn_name)
+end
+
+-- GrenadeQuick (default RB Press) outside ADS: observer/fallback after C++ injects kCUSTOM19 tap.
+-- If actor_effects.Hit_GrenadeQuickthrow is unavailable, returns "fallback_slot4:..." so C++ injects kWPN_4.
+function on_quick_grenade()
+    local actor = db.actor
+    if not actor then
+        return remember("rb_grenade", "blocked:no_actor")
+    end
+    local ok_g, grn = pcall(function() return actor:item_in_slot(SLOT_GRENADE) end)
+    if not ok_g or not grn then
+        return remember("rb_grenade", "no_grenade:slot4_empty")
+    end
+    local ok_s, grn_sec = pcall(function() return grn:section() end)
+    local sec_str = tostring((ok_s and grn_sec) or "grenade")
+    if actor_effects and actor_effects.Hit_GrenadeQuickthrow then
+        return remember("rb_grenade", "quickthrow_kcustom19:" .. sec_str)
+    end
+    return remember("rb_grenade", "fallback_slot4:" .. sec_str)
+end
+
+-- Direct quick grenade helper for scripts/wheel.
+function quick_grenade()
+    local actor = db.actor
+    if not actor then
+        return remember("quick_grenade", "blocked:no_actor")
+    end
+    local ok_g, grn = pcall(function() return actor:item_in_slot(SLOT_GRENADE) end)
+    if not ok_g or not grn then
+        return remember("quick_grenade", "no_grenade:slot4_empty")
+    end
+    local ok_s, grn_sec = pcall(function() return grn:section() end)
+    local sec_str = tostring((ok_s and grn_sec) or "grenade")
+    if actor_effects and actor_effects.Hit_GrenadeQuickthrow then
+        pcall(actor_effects.Hit_GrenadeQuickthrow)
+        return remember("quick_grenade", "called:Hit_GrenadeQuickthrow_" .. sec_str)
+    end
+    pcall(function() actor:activate_slot(SLOT_GRENADE) end)
+    return remember("quick_grenade", "fallback_activate_slot4:" .. sec_str)
+end
+
+-- MeleeQuick (default R3 Short < 200 ms) outside ADS: observer/fallback after C++ injects kCUSTOM24 tap.
+-- Directly invokes quickdraw.hit_key() (or quickdraw.on_key_press) when quickdraw is idle so melee is reliable
+-- even if kCUSTOM24 is unbound or its synthetic tap was not caught.
+function on_quick_melee_tap()
+    local actor = db.actor
+    if not actor then
+        return remember("r3_melee", "blocked:no_actor")
+    end
+    local ok_k, knife_sec = pcall(function()
+        local knife = actor:item_in_slot(SLOT_KNIFE)
+        return knife and knife:section() or nil
+    end)
+    local qd = quickdraw
+    local has_qd = (type(qd) == "table" and (type(qd.hit_key) == "function" or type(qd.on_key_press) == "function")) and "quickdraw" or "no_quickdraw"
+    if ok_k and knife_sec and type(qd) == "table" and (qd.anm_state == nil or qd.anm_state == 0) then
+        local active_melee = false
+        if type(IsMelee) == "function" then
+            local ok_m, is_m = pcall(function()
+                local itm = actor:active_item()
+                return itm ~= nil and IsMelee(itm)
+            end)
+            active_melee = (ok_m and is_m) and true or false
+        end
+        if not active_melee then
+            if type(qd.hit_key) == "function" then
+                pcall(qd.hit_key)
+            elseif type(qd.on_key_press) == "function" then
+                local dik = 0
+                if type(bind_to_dik) == "function" and key_bindings and key_bindings.kCUSTOM24 then
+                    local ok_d, d = pcall(bind_to_dik, key_bindings.kCUSTOM24)
+                    if ok_d and type(d) == "number" then dik = d end
+                end
+                pcall(qd.on_key_press, dik)
+            end
+        end
+    end
+    return remember("r3_melee", "kcustom24_sent:" .. has_qd .. ":" .. tostring((ok_k and knife_sec) or "no_knife_slot1"))
+end
+
+-- NextWeapon (default Y Short) outside ADS: cycle occupied weapon slots 1..4 (Knife, Pistol/Secondary, Primary 1, Primary 2).
+function on_next_weapon()
+    if gp_weapon and type(gp_weapon.next_weapon_slot) == "function" then
+        return remember("next_weapon", gp_weapon.next_weapon_slot())
+    end
+    local actor = db.actor
+    if not actor then
+        return remember("next_weapon", "blocked:no_actor")
+    end
+    local ok_cur, cur_slot = pcall(function() return tonumber(actor:active_slot()) or 0 end)
+    if not ok_cur then cur_slot = 0 end
+    local start_slot = (cur_slot >= 1 and cur_slot <= 4) and cur_slot or 0
+    for step = 1, 4 do
+        local candidate = ((start_slot + step - 1) % 4) + 1
+        local ok_it, item = pcall(function() return actor:item_in_slot(candidate) end)
+        if ok_it and item then
+            pcall(function() actor:activate_slot(candidate) end)
+            local ok_s, sec = pcall(function() return item:section() end)
+            return remember("next_weapon", string.format("slot%d:%s", candidate, tostring((ok_s and sec) or "weapon")))
+        end
+    end
+    return remember("next_weapon", "none:no_weapon_slots")
+end
+
+-- GAYS v0.2: AmmoTypeNext tap (default D-Pad Down): next carried ammo type of the active barrel
+-- (grenade launcher ammo when it is active). Damaged "verybad" rounds are skipped like in the ammo wheel.
+function on_ammo_next()
+    local actor = db.actor
+    if not actor then
+        return remember("ammo_next", "blocked:no_actor")
+    end
+    local wpn = actor:active_item()
+    if not (wpn and gp_compat and type(gp_compat.get_weapon_ammo_summary) == "function"
+            and type(gp_compat.switch_ammo_type) == "function") then
+        return remember("ammo_next", "blocked:no_weapon_or_compat")
+    end
+    local list, counts, loaded = gp_compat.get_weapon_ammo_summary(wpn)
+    local n = #list
+    if n < 2 then
+        return remember("ammo_next", "none:single_ammo_type")
+    end
+    local cur = 0
+    for i, sec in ipairs(list) do
+        if sec == loaded then cur = i break end
+    end
+    local hide_damaged = (_G._NO_DAMAGED_AMMO ~= false)
+    for step = 1, n - 1 do
+        local idx = ((cur + step - 1) % n) + 1
+        local sec = list[idx]
+        local bad = hide_damaged and string.find(sec, "verybad", 1, true) ~= nil
+        if sec ~= loaded and not bad and (counts[sec] or 0) > 0 then
+            local ok, why = gp_compat.switch_ammo_type(wpn, idx, sec)
+            return remember("ammo_next", (ok and "switched:" or "failed:") .. tostring(why))
+        end
+    end
+    return remember("ammo_next", "none:no_other_carried_ammo")
+end
+
+-- AmmoTypeNext / AmmoWheel (default D-Pad Down Hold >= 300 ms): open native gamepad ammo wheel.
+function on_ammo_wheel()
+    local actor = db.actor
+    if not actor then
+        return remember("ammo_wheel", "blocked:no_actor")
+    end
+    if gp_wheel and type(gp_wheel.open_ammo_wheel) == "function" then
+        local ok, res = pcall(gp_wheel.open_ammo_wheel)
+        if ok and res then
+            return remember("ammo_wheel", "opened:item_weapon_ammo_wheel")
+        end
+    end
+    if item_weapon and type(item_weapon.start_ammo_wheel) == "function" then
+        pcall(item_weapon.start_ammo_wheel)
+        return remember("ammo_wheel", "opened:item_weapon_ammo_wheel")
+    end
+    return remember("ammo_wheel", "unavailable:no_ammo_wheel")
+end
+
+-- Jump (default A Press/Hold/Release): forward jump press/hold/release to gp_compat for demonized_ledge_grabbing.
+function on_jump_press(hold_window_ms)
+    if gp_compat and type(gp_compat.on_gamepad_jump_press) == "function" then
+        local _, why = gp_compat.on_gamepad_jump_press(hold_window_ms)
+        return remember("jump", tostring(why or "ledge_jump_press"))
+    end
+    return remember("jump", "jump_press:no_compat")
+end
+
+function on_jump_release()
+    if gp_compat and type(gp_compat.on_gamepad_jump_release) == "function" then
+        local _, why = gp_compat.on_gamepad_jump_release()
+        return remember("jump", tostring(why or "ledge_jump_release"))
+    end
+    return remember("jump", "jump_release:no_compat")
+end
+
+-- World item pickup observer (called when short ContextUseReload triggers world item pickup).
+function on_world_item_pickup(sect)
+    return remember("world_pickup", "item:" .. tostring(sect or "unknown"))
+end
+
+-- K3 (D61): Semantic world action router (listens to action names rather than physical buttons).
+function on_world_action(action_name, phase, button_name)
+    local act = tostring(action_name or "")
+    local ph = tostring(phase or "tap")
+    if act == "WeaponWheel" then
+        if ph == "release" or ph == "released" then
+            if gp_wheel and type(gp_wheel.on_gamepad_wheel_hold_released) == "function" then
+                return gp_wheel.on_gamepad_wheel_hold_released(button_name)
+            end
+            return "ignored:wheel_release"
+        end
+        return on_wheel_hold(button_name)
+    elseif act == "QuickBoltOrSlot" then
+        if gp_wheel and type(gp_wheel.on_quick_consumable) == "function" then
+            return remember("lb_short", gp_wheel.on_quick_consumable())
+        end
+        return remember("lb_short", "blocked:no_gp_wheel")
+    elseif act == "GrenadeQuick" then
+        return on_quick_grenade()
+    elseif act == "TorchToggle" then
+        return on_torch_tap()
+    elseif act == "NightVision" then
+        return toggle_nvg()
+    elseif act == "Pda3DToggle" then
+        return on_3d_pda_tap(ph == "direct")
+    elseif act == "MaskClean" then
+        return clean_mask()
+    elseif act == "DetectorToggle" then
+        return on_detector_tap()
+    elseif act == "MeleeQuick" then
+        return on_quick_melee_tap()
+    elseif act == "NextWeapon" then
+        return on_next_weapon()
+    elseif act == "AmmoTypeNext" and ph ~= "hold" then
+        return on_ammo_next()
+    elseif act == "AmmoTypeNext" or act == "AmmoWheel" or act == "AmmoType" then
+        return on_ammo_wheel()
+    -- GAYS v0.2 (2026-11-13)
+    elseif act == "KnifeDraw" then
+        -- INV-REWORK-28b: knife from MELEE or VISION, otherwise binoculars from VISION (vision_draw_slot).
+        local res = vision_draw_slot()
+        local slot = tonumber(res:match("^slot:(%d)"))
+        if slot then db.actor:activate_slot(slot) return "activated:slot" .. slot end
+        return res
+    elseif act == "WeaponSelect" then
+        return on_next_weapon()
+    elseif act == "ForceReload" then
+        if gp_weapon and type(gp_weapon.x_force_reload) == "function" then
+            return gp_weapon.x_force_reload()
+        end
+        return remember("force_reload", "unavailable:no_gp_weapon")
+    elseif act == "TutorialPrompt" then
+        if gp_tutorial_prompt then
+            if ph == "hold" then return gp_tutorial_prompt.on_gamepad_hold() end
+            return gp_tutorial_prompt.on_gamepad_tap()
+        end
+        return remember("tutorial_prompt", "unavailable:no_module")
+    elseif act == "WeaponLower" or act == "PdaFlat" or act == "BoltThrow" or act == "Freelook" then
+        -- key injections (kSAFEMODE / kACTIVE_JOBS / kWPN_6 / kFREELOOK) live in the engine dispatcher
+        return remember("world_action", "engine:" .. act)
+    elseif act == "Jump" then
+        if ph == "release" or ph == "released" then
+            return on_jump_release()
+        end
+        return on_jump_press()
+    end
+    return remember("world_action", "unhandled:" .. act)
+end

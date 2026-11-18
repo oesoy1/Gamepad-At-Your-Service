@@ -1,0 +1,929 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- =============================================================================
+-- gp_screens.script - Core Non-Combat Screen Router & Cursor Target Engine (G0.1/G0.2)
+--
+-- Sanitary cleanup (W4-MCM-GWIRE):
+--   All migrated screens now have dedicated modules:
+--     * gp_inv_rework    -> UIInventory (inventory, loot, trade, repair, item_sheet)
+--     * gp_workshop      -> UIWorkshop + field crafting/repair/cooking/melter/butcher/sleep
+--     * gp_sys_dialogs   -> UINumpad, UICreateStash, UIRecipe, UINewPlayerExperience
+--     * gp_menu_dialogs  -> ui_main_menu, UISaveDialog, UILoadDialog, LuaFatalErrorUI
+--     * gp_new_game      -> UINewGame
+--     * ui_gp_native     -> UIOptions, UIGpControlsWnd, UIGpAimWnd
+--     * gp_mcm           -> UI_MCM, UIARGBControl, pos_previewer_mcm, kb_overview
+--     * gp_pda           -> CUIPdaWnd + all PDA tabs
+--     * gp_companions_furn / gp_hideout / gp_progression -> companions, hideout, skills/perks/laser
+--     * C++ UITalkDialogWnd / StepMenuFocus -> NPC dialog & menu footer/focus
+--
+-- Retained active responsibilities:
+--   1. Engine cursor target contract: cursor_query_target() & cursor_dpad_snap()
+--      (called from C++ GamepadContextDispatcher.cpp & gp_bridge.script).
+--   2. MenuUI action mapping contract (get_screen_menu_action / dispatch_screen_menu_action).
+--   3. Passive GUI_on_show/hide forwarding for gp_screens_ext / gp_ui_tune.
+--   4. Zero on_before_key_press interception (always returns false).
+--   5. INV-REWORK-27 FDDA backpack stuck recovery (fix_stuck_backpack,
+--      watch_stuck_backpack, mark_backpack_drop, flush_backpack_drop).
+-- =============================================================================
+
+local DIR_UP    = 1
+local DIR_DOWN  = 2
+local DIR_LEFT  = 3
+local DIR_RIGHT = 4
+
+local MENU_BTN_DEFAULT = {
+    A = "Confirm",
+    B = "Back",
+    X = "ContextMenu",
+    Y = "QuickAction",
+    LB = "TabPrev",
+    RB = "TabNext",
+    LT = "PagePrev",
+    RT = "PageNext",
+    Back = "SwitchPanel",
+    Start = "Menu",
+}
+
+local COMMON_BTN_FIELDS = {
+    "btn_ok", "btn_cancel", "btn_back", "btn_close",
+    "button_ok", "button_cancel",
+}
+
+local state = {
+    last_action = "none",
+    trade_panel = "actor_trade_bag",
+    trade_cell_idx = 1,
+    auto_save_seq = 0,
+    backpack_fixes = 0,
+    backpack_recovers = 0,
+    backpack_drops = 0,
+    backpack_watch = nil,
+    backpack_drop_pending = nil,
+}
+
+-- -----------------------------------------------------------------------------
+-- 1. Safe UI Primitives (rawequal + pcall)
+-- -----------------------------------------------------------------------------
+function ui_eq(a, b)
+    return rawequal(a, b)
+end
+
+function safe_get(obj, key)
+    if rawequal(obj, nil) then
+        return nil
+    end
+    local ok, val = pcall(function() return obj[key] end)
+    if ok then
+        return val
+    end
+    return nil
+end
+
+function safe_set(obj, key, val)
+    if rawequal(obj, nil) then
+        return false
+    end
+    local ok = pcall(function() obj[key] = val end)
+    return ok == true
+end
+
+function safe_call(obj, method_name, a, b, c)
+    if rawequal(obj, nil) then
+        return false, nil
+    end
+    local fn = safe_get(obj, method_name)
+    if type(fn) ~= "function" then
+        return false, nil
+    end
+    local ok, res = pcall(fn, obj, a, b, c)
+    if ok then
+        return true, res
+    end
+    return false, nil
+end
+
+function is_wnd_shown(wnd)
+    if rawequal(wnd, nil) then
+        return false
+    end
+    local ok, shown = safe_call(wnd, "IsShown")
+    if ok then
+        return shown == true
+    end
+    return false
+end
+
+function make_target_rect(x, y, w, h, kind, wnd, prio)
+    x = tonumber(x) or 0
+    y = tonumber(y) or 0
+    w = tonumber(w) or 0
+    h = tonumber(h) or 0
+    if w <= 0 or h <= 0 then
+        return nil
+    end
+    return {
+        x1 = x,
+        y1 = y,
+        x2 = x + w,
+        y2 = y + h,
+        w = w,
+        h = h,
+        cx = x + w * 0.5,
+        cy = y + h * 0.5,
+        kind = kind or "btn",
+        prio = prio or 0,
+        wnd = wnd,
+    }
+end
+
+function get_wnd_rect(wnd, ox, oy, kind, prio)
+    if not is_wnd_shown(wnd) then
+        return nil
+    end
+    local ok_p, pos = safe_call(wnd, "GetWndPos")
+    local ok_w, w = safe_call(wnd, "GetWidth")
+    local ok_h, h = safe_call(wnd, "GetHeight")
+    if not (ok_p and pos and ok_w and ok_h) then
+        return nil
+    end
+    local px = tonumber(pos.x) or 0
+    local py = tonumber(pos.y) or 0
+    w = tonumber(w) or 0
+    h = tonumber(h) or 0
+    if w <= 0 or h <= 0 then
+        return nil
+    end
+    if px == 0 and py == 0 and (ox or 0) == 0 and (oy or 0) == 0 then
+        local ok_ar, ar = safe_call(wnd, "GetAbsoluteRect")
+        if ok_ar and type(ar) == "table" and ar.left and ar.top and ar.right and ar.bottom then
+            local aw = (tonumber(ar.right) or 0) - (tonumber(ar.left) or 0)
+            local ah = (tonumber(ar.bottom) or 0) - (tonumber(ar.top) or 0)
+            if aw > 0 and ah > 0 and ((tonumber(ar.left) or 0) ~= 0 or (tonumber(ar.top) or 0) ~= 0) then
+                return make_target_rect(ar.left, ar.top, aw, ah, kind, wnd, prio)
+            end
+        end
+    end
+    local x = px + (ox or 0)
+    local y = py + (oy or 0)
+    return make_target_rect(x, y, w, h, kind, wnd, prio)
+end
+
+function get_last_action()
+    return state.last_action
+end
+
+function reset_state()
+    state.last_action = "none"
+    state.trade_panel = "actor_trade_bag"
+    state.trade_cell_idx = 1
+    state.backpack_watch = nil
+    state.backpack_drop_pending = nil
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.reset_ext_state) == "function" then
+        _G.gp_screens_ext.reset_ext_state()
+    end
+end
+
+function generate_auto_save_name()
+    state.auto_save_seq = state.auto_save_seq + 1
+    local lvl = "zone"
+    if _G.level and type(_G.level.name) == "function" then
+        local ok_l, lname = pcall(_G.level.name)
+        if ok_l and type(lname) == "string" and lname ~= "" then
+            lvl = lname
+        end
+    end
+    return string.format("gp_save_%s_%02d", lvl, state.auto_save_seq)
+end
+
+-- -----------------------------------------------------------------------------
+-- 2. Shared Modal & Cell Container Utilities
+-- -----------------------------------------------------------------------------
+function handle_modal_message_box(dlg, is_confirm)
+    local mb = safe_get(dlg, "message_box")
+    if not is_wnd_shown(mb) then
+        mb = safe_get(dlg, "msg_box")
+    end
+    if not is_wnd_shown(mb) then
+        return false
+    end
+    if is_confirm then
+        if not safe_call(dlg, "OnMsgOk") then
+            safe_call(dlg, "OnMsgYes")
+        end
+        safe_call(dlg, "SendMessage_Yes")
+        if not safe_call(mb, "HideDialog") then
+            safe_call(mb, "Show", false)
+        end
+        state.last_action = "msgbox_confirm"
+    else
+        if not safe_call(dlg, "OnMsgCancel") then
+            safe_call(dlg, "OnMsgNo")
+        end
+        if not safe_call(mb, "HideDialog") then
+            safe_call(mb, "Show", false)
+        end
+        state.last_action = "msgbox_cancel"
+    end
+    return true
+end
+
+function get_cc_cells(cc)
+    local list = {}
+    if rawequal(cc, nil) then
+        return list, 5
+    end
+    local cols = tonumber(safe_get(cc, "cols")) or tonumber(safe_get(cc, "col_cnt")) or 5
+    if cols < 1 then
+        cols = 5
+    end
+    local raw_cells = safe_get(cc, "cell") or safe_get(cc, "cells")
+    if type(raw_cells) == "table" then
+        local max_idx = #raw_cells
+        for i = 1, max_idx do
+            local ci = raw_cells[i]
+            if not rawequal(ci, nil) then
+                local shown = true
+                local ok_s, s_val = safe_call(ci, "IsShown")
+                if ok_s then
+                    shown = (s_val == true)
+                end
+                if shown then
+                    table.insert(list, { idx = i, cell = ci })
+                end
+            end
+        end
+    end
+    return list, cols
+end
+
+function activate_cc_cell(gui, cc, cont_id, idx)
+    local called = false
+    if not rawequal(cc, nil) then
+        if safe_call(cc, "On_CC_Mouse1", idx) then
+            called = true
+        end
+    end
+    if not rawequal(gui, nil) then
+        if safe_call(gui, "On_CC_Mouse1", cont_id, idx) then
+            called = true
+        end
+    end
+    return called
+end
+
+-- -----------------------------------------------------------------------------
+-- 3. Headless Legacy Compatibility Shims (never active alongside real game UIs)
+-- -----------------------------------------------------------------------------
+function get_trade_gui()
+    local inv_rework = rawget(_G, "gp_inv_rework")
+    if type(inv_rework) == "table" and type(inv_rework.is_active) == "function" then
+        local ok_ir, active = pcall(inv_rework.is_active)
+        if ok_ir and active == true then
+            return nil
+        end
+    end
+    if type(rawget(_G, "_GUIs")) == "table" and _G._GUIs["UIInventory"] ~= nil then
+        return nil
+    end
+    local ui_inv = rawget(_G, "ui_inventory")
+    local inv_gui = type(ui_inv) == "table" and safe_get(ui_inv, "GUI") or nil
+    if is_wnd_shown(inv_gui) and safe_get(inv_gui, "mode") == "trade" then
+        return inv_gui
+    end
+    return nil
+end
+
+function is_trade_screen_active()
+    return not rawequal(get_trade_gui(), nil)
+end
+
+function trade_is_lb_held(gui)
+    local gp_b = rawget(_G, "gp_bridge")
+    if type(gp_b) == "table" and type(gp_b.inv_is_lb_modifier_active) == "function" then
+        local ok_lb, is_lb = pcall(gp_b.inv_is_lb_modifier_active)
+        if ok_lb and is_lb == true then
+            return true
+        end
+    end
+    if not rawequal(gui, nil) and safe_get(gui, "holding_ctrl") == true then
+        return true
+    end
+    return false
+end
+
+function trade_confirm_deal(gui)
+    gui = not rawequal(gui, nil) and gui or get_trade_gui()
+    if rawequal(gui, nil) then
+        return false
+    end
+    local sell_ok = safe_call(gui, "TMode_Sell")
+    local buy_ok = safe_call(gui, "TMode_Buy")
+    if not sell_ok and not buy_ok then
+        return false
+    end
+    state.last_action = "trade_confirm"
+    return true
+end
+
+function trade_close(gui)
+    gui = not rawequal(gui, nil) and gui or get_trade_gui()
+    if rawequal(gui, nil) then
+        return false
+    end
+    if not safe_call(gui, "Close") then
+        safe_call(gui, "HideDialog")
+        safe_call(gui, "Show", false)
+    end
+    state.last_action = "trade_close"
+    return true
+end
+
+-- -----------------------------------------------------------------------------
+-- 4. Lifecycle Hooks & Active Screen Resolution
+-- -----------------------------------------------------------------------------
+function on_gui_show(name, wnd)
+    mark_backpack_drop(name)
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.on_ext_gui_show) == "function" then
+        _G.gp_screens_ext.on_ext_gui_show(name, wnd)
+    end
+    state.last_action = "gui_show:" .. tostring(name or "unknown")
+end
+
+function on_gui_hide(name, wnd)
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.on_ext_gui_hide) == "function" then
+        _G.gp_screens_ext.on_ext_gui_hide(name, wnd)
+    end
+    if name ~= "UIInventory" then
+        flush_backpack_drop()
+    end
+    state.last_action = "gui_hide:" .. tostring(name or "unknown")
+end
+
+function get_active_screen()
+    local workshop = rawget(_G, "gp_workshop")
+    if workshop and workshop.field_modal_tag and workshop.field_modal_tag() then
+        return "none", nil
+    end
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.get_active_ext_screen) == "function" then
+        local ext_kind, ext_gui = _G.gp_screens_ext.get_active_ext_screen()
+        if ext_kind ~= "none" then
+            return ext_kind, ext_gui
+        end
+    end
+    -- Headless unregistered numpad mock shim (test_w5_sysdlg before UINumpad hook):
+    -- inactive in real game because ui_numpad.UINumpad class and _GUIs["UINumpad"] exist.
+    local ui_np = rawget(_G, "ui_numpad")
+    if type(ui_np) == "table" and rawget(ui_np, "UINumpad") == nil
+        and (type(rawget(_G, "_GUIs")) ~= "table" or _G._GUIs["UINumpad"] == nil) then
+        local np = safe_get(ui_np, "GUI")
+        if is_wnd_shown(np) and safe_get(np, "_gpsys") == nil then
+            return "numpad", np
+        end
+    end
+    local trade_gui = get_trade_gui()
+    if not rawequal(trade_gui, nil) then
+        return "trade", trade_gui
+    end
+    return "none", nil
+end
+
+function is_managed_screen_active()
+    local kind = get_active_screen()
+    return kind ~= "none"
+end
+
+-- -----------------------------------------------------------------------------
+-- 5. Unified MenuUI Action Dispatchers
+-- -----------------------------------------------------------------------------
+function get_screen_menu_action(btn_name)
+    local b = tostring(btn_name or "")
+    local gp_b = rawget(_G, "gp_bridge")
+    if type(gp_b) == "table" and type(gp_b.get_menu_action_for_button) == "function" then
+        local ok, act = pcall(gp_b.get_menu_action_for_button, b, "button")
+        if ok then
+            return act
+        end
+    end
+    return MENU_BTN_DEFAULT[b]
+end
+
+function exec_btn_confirm()
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    if handle_modal_message_box(gui, true) then
+        return true
+    end
+    if kind == "trade" then
+        if trade_is_lb_held(gui) then
+            return trade_confirm_deal(gui)
+        end
+        local cc_map = safe_get(gui, "CC")
+        local cc = type(cc_map) == "table" and cc_map[state.trade_panel] or nil
+        activate_cc_cell(gui, cc, state.trade_panel, state.trade_cell_idx)
+        state.last_action = "trade_select:" .. tostring(state.trade_panel) .. ":" .. tostring(state.trade_cell_idx)
+        return true
+    elseif _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_btn_a) == "function" then
+        local ok_a = _G.gp_screens_ext.dispatch_ext_btn_a(kind, gui)
+        state.last_action = _G.gp_screens_ext.get_last_action()
+        return ok_a
+    end
+    return false
+end
+
+function exec_btn_back()
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    if handle_modal_message_box(gui, false) then
+        return true
+    end
+    if kind == "trade" then
+        return trade_close(gui)
+    elseif _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_btn_b) == "function" then
+        local ok_b = _G.gp_screens_ext.dispatch_ext_btn_b(kind, gui)
+        state.last_action = _G.gp_screens_ext.get_last_action()
+        return ok_b
+    end
+    return false
+end
+
+function exec_btn_context_menu()
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    if kind == "trade" then
+        if trade_is_lb_held(gui) then
+            return trade_confirm_deal(gui)
+        end
+        return false
+    elseif _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_btn_x) == "function" then
+        local ok_x = _G.gp_screens_ext.dispatch_ext_btn_x(kind, gui)
+        state.last_action = _G.gp_screens_ext.get_last_action()
+        return ok_x
+    end
+    return false
+end
+
+function exec_btn_quick_action()
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    if kind == "trade" then
+        return trade_confirm_deal(gui)
+    elseif _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_btn_y) == "function" then
+        local ok_y = _G.gp_screens_ext.dispatch_ext_btn_y(kind, gui)
+        state.last_action = _G.gp_screens_ext.get_last_action()
+        return ok_y
+    end
+    return false
+end
+
+function exec_btn_tab_step(delta)
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    local step = (tonumber(delta) and tonumber(delta) < 0) and -1 or 1
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_btn_lb_rb) == "function" then
+        local ok_lr = _G.gp_screens_ext.dispatch_ext_btn_lb_rb(kind, gui, step)
+        state.last_action = _G.gp_screens_ext.get_last_action()
+        return ok_lr
+    end
+    return false
+end
+
+function exec_btn_switch_panel()
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_btn_view) == "function" then
+        local ok_v = _G.gp_screens_ext.dispatch_ext_btn_view(kind, gui)
+        state.last_action = _G.gp_screens_ext.get_last_action()
+        return ok_v
+    end
+    return false
+end
+
+function exec_btn_menu()
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_btn_start) == "function" then
+        local ok_st = _G.gp_screens_ext.dispatch_ext_btn_start(kind, gui)
+        state.last_action = _G.gp_screens_ext.get_last_action()
+        return ok_st
+    end
+    return false
+end
+
+function dispatch_screen_menu_action(action_name, arg)
+    if action_name == "Confirm" then
+        return exec_btn_confirm()
+    elseif action_name == "Back" then
+        return exec_btn_back()
+    elseif action_name == "ContextMenu" then
+        return exec_btn_context_menu()
+    elseif action_name == "QuickAction" then
+        return exec_btn_quick_action()
+    elseif action_name == "TabPrev" or action_name == "PagePrev" then
+        return exec_btn_tab_step(-1)
+    elseif action_name == "TabNext" or action_name == "PageNext" then
+        return exec_btn_tab_step(1)
+    elseif action_name == "SwitchPanel" then
+        return exec_btn_switch_panel()
+    elseif action_name == "Menu" then
+        return exec_btn_menu()
+    end
+    return false
+end
+
+function on_dpad(dir_code)
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_dpad) == "function" then
+        local ok_d = _G.gp_screens_ext.dispatch_ext_dpad(kind, gui, dir_code)
+        state.last_action = _G.gp_screens_ext.get_last_action()
+        return ok_d
+    end
+    return false
+end
+
+function on_stick_scroll(wheel_dir)
+    local kind, gui = get_active_screen()
+    if kind == "none" then
+        return false
+    end
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.dispatch_ext_stick_scroll) == "function" then
+        local ok_s = _G.gp_screens_ext.dispatch_ext_stick_scroll(kind, gui, wheel_dir)
+        if ok_s then
+            state.last_action = _G.gp_screens_ext.get_last_action()
+            return true
+        end
+    end
+    return false
+end
+
+function on_btn_a()
+    return dispatch_screen_menu_action(get_screen_menu_action("A"))
+end
+
+function on_btn_b()
+    return dispatch_screen_menu_action(get_screen_menu_action("B"))
+end
+
+function on_btn_x()
+    return dispatch_screen_menu_action(get_screen_menu_action("X"))
+end
+
+function on_btn_y()
+    return dispatch_screen_menu_action(get_screen_menu_action("Y"))
+end
+
+function on_btn_lb_rb(delta)
+    local step = (tonumber(delta) and tonumber(delta) < 0) and -1 or 1
+    local btn = (step < 0) and "LB" or "RB"
+    local act = get_screen_menu_action(btn)
+    if act then
+        return dispatch_screen_menu_action(act, step)
+    end
+    return false
+end
+
+function on_btn_view()
+    return dispatch_screen_menu_action(get_screen_menu_action("Back"))
+end
+
+function on_btn_start()
+    return dispatch_screen_menu_action(get_screen_menu_action("Start"))
+end
+
+-- -----------------------------------------------------------------------------
+-- 6. Virtual Cursor Targets & D-Pad Cone Snap
+-- -----------------------------------------------------------------------------
+function collect_screen_targets()
+    local targets = {}
+    local kind, gui = get_active_screen()
+    if kind == "none" or kind == "trade" or kind == "numpad" then
+        return targets
+    end
+    local mb = safe_get(gui, "message_box") or safe_get(gui, "msg_box")
+    if is_wnd_shown(mb) then
+        local mb_r = get_wnd_rect(mb, 0, 0, "dialog", 0)
+        local mox = (mb_r and (mb_r.x1 ~= 0 or mb_r.y1 ~= 0)) and mb_r.x1 or 312
+        local moy = (mb_r and (mb_r.x1 ~= 0 or mb_r.y1 ~= 0)) and mb_r.y1 or 260
+        local added_mb = false
+        for _, bname in ipairs({ "btn_ok", "btn_yes", "btn_no", "btn_cancel", "button_ok", "button_yes", "button_no", "button_cancel" }) do
+            local br = get_wnd_rect(safe_get(mb, bname), mox, moy, "btn", (bname == "btn_ok" or bname == "btn_yes") and 1 or 0)
+            if br then
+                table.insert(targets, br)
+                added_mb = true
+            end
+        end
+        if not added_mb then
+            table.insert(targets, (make_target_rect(412, 410, 96, 28, "btn", mb, 1)))
+            table.insert(targets, (make_target_rect(516, 410, 96, 28, "btn", mb, 0)))
+        end
+        return targets
+    end
+    local dlg = safe_get(gui, "dialog") or safe_get(gui, "form") or gui
+    local dlg_r = get_wnd_rect(dlg, 0, 0)
+    local ox = dlg_r and dlg_r.x1 or 0
+    local oy = dlg_r and dlg_r.y1 or 0
+    if _G.gp_screens_ext and type(_G.gp_screens_ext.collect_ext_screen_targets) == "function" then
+        local ext_kind = (type(kind) == "string" and string.sub(kind, 1, 4) == "ext:") and string.sub(kind, 5) or kind
+        local ok_ext, ext_targets = pcall(_G.gp_screens_ext.collect_ext_screen_targets, ext_kind, gui, ox, oy)
+        if ok_ext and type(ext_targets) == "table" and #ext_targets > 0 then
+            return ext_targets
+        end
+    end
+    for idx, fname in ipairs(COMMON_BTN_FIELDS) do
+        local r = get_wnd_rect(safe_get(gui, fname), ox, oy, "btn", idx == 1 and 1 or 0)
+        if r then
+            table.insert(targets, r)
+        end
+    end
+    return targets
+end
+
+function cursor_query_target(x, y)
+    x = tonumber(x) or 0
+    y = tonumber(y) or 0
+    local targets = collect_screen_targets()
+    for _, t in ipairs(targets) do
+        if x >= t.x1 and x <= t.x2 and y >= t.y1 and y <= t.y2 then
+            return string.format("1;%.1f;%.1f;%.1f;%.1f;%s", t.x1, t.y1, t.x2, t.y2, tostring(t.kind or "")), t
+        end
+    end
+    return "0;0;0;0;0", nil
+end
+
+function main_menu_wrap_target(targets, hovered, dir_y)
+    return nil
+end
+
+function cursor_dpad_snap(a, b, c)
+    local dir_code, cur_x, cur_y
+    local na = tonumber(a) or 0
+    local nb = tonumber(b) or 0
+    local nc = tonumber(c)
+    if (na < 1 or na > 4) and nc and nc >= 1 and nc <= 4 then
+        cur_x = na
+        cur_y = nb
+        dir_code = nc
+    else
+        dir_code = na
+        cur_x = tonumber(b) or 512
+        cur_y = tonumber(c) or 384
+    end
+    if dir_code < 1 or dir_code > 4 then
+        return "0;0;0", nil
+    end
+    local targets = collect_screen_targets()
+    if #targets == 0 then
+        return "0;0;0", nil
+    end
+    local hovered = nil
+    local min_dist = 1e18
+    local nearest_any = nil
+    local primary_target = targets[1]
+    for _, t in ipairs(targets) do
+        if (t.prio or 0) > (primary_target.prio or 0) then
+            primary_target = t
+        end
+        if cur_x >= t.x1 and cur_x <= t.x2 and cur_y >= t.y1 and cur_y <= t.y2 then
+            hovered = t
+        end
+        local dx = t.cx - cur_x
+        local dy = t.cy - cur_y
+        local d = math.sqrt(dx * dx + dy * dy)
+        if d < min_dist then
+            min_dist = d
+            nearest_any = t
+        end
+    end
+    local on_screen_edge = (cur_x <= 24 or cur_x >= 1000 or cur_y <= 24 or cur_y >= 744)
+    if not hovered and (on_screen_edge or min_dist > 340.0) then
+        local snap_t = primary_target or nearest_any
+        if snap_t then
+            return string.format("1;%.1f;%.1f", snap_t.cx, snap_t.cy), snap_t
+        end
+    end
+    local dir_x = (dir_code == DIR_LEFT and -1) or (dir_code == DIR_RIGHT and 1) or 0
+    local dir_y = (dir_code == DIR_UP and -1) or (dir_code == DIR_DOWN and 1) or 0
+    local best_aligned = nil
+    local best_aligned_score = 1e18
+    local best_cone = nil
+    local best_cone_score = 1e18
+    local best_halfplane = nil
+    local best_halfplane_score = 1e18
+    for _, t in ipairs(targets) do
+        if not (hovered and rawequal(t, hovered)) then
+            local dx = t.cx - cur_x
+            local dy = t.cy - cur_y
+            local dist = math.sqrt(dx * dx + dy * dy)
+            if dist >= 2.0 then
+                local pri = dx * dir_x + dy * dir_y
+                local sec = math.abs(dx * (-dir_y) + dy * dir_x)
+                if pri > 2.0 then
+                    local aligned = false
+                    if dir_y ~= 0 then
+                        aligned = (cur_x >= (t.x1 - 24) and cur_x <= (t.x2 + 24)) or (sec <= 28.0)
+                    else
+                        aligned = (cur_y >= (t.y1 - 18) and cur_y <= (t.y2 + 18)) or (sec <= 24.0)
+                    end
+                    if aligned then
+                        local a_score = pri + sec * 0.65
+                        if a_score < best_aligned_score then
+                            best_aligned_score = a_score
+                            best_aligned = t
+                        end
+                    end
+                    if sec <= pri * 1.85 + 32.0 then
+                        local c_score = pri + sec * 2.2
+                        if c_score < best_cone_score then
+                            best_cone_score = c_score
+                            best_cone = t
+                        end
+                    end
+                    local h_score = pri + sec * 2.6
+                    if h_score < best_halfplane_score then
+                        best_halfplane_score = h_score
+                        best_halfplane = t
+                    end
+                end
+            end
+        end
+    end
+    local best = best_aligned or best_cone or best_halfplane
+    if not best and not hovered then
+        best = nearest_any or primary_target
+    end
+    if best then
+        return string.format("1;%.1f;%.1f", best.cx, best.cy), best
+    end
+    return "0;0;0", nil
+end
+
+-- -----------------------------------------------------------------------------
+-- 7. Self-Test, Passive KBM Hook, & INV-REWORK-27 FDDA Backpack Recovery
+-- -----------------------------------------------------------------------------
+function selftest()
+    if not ui_eq(state, state) or ui_eq(state, {}) then
+        return "FAIL:ui_eq"
+    end
+    local snap_empty = cursor_dpad_snap(DIR_DOWN, 512, 384)
+    if snap_empty ~= "0;0;0" then
+        return "FAIL:snap_empty"
+    end
+    local q_empty = cursor_query_target(100, 100)
+    if q_empty ~= "0;0;0;0;0" then
+        return "FAIL:query_empty"
+    end
+    local sname = generate_auto_save_name()
+    if type(sname) ~= "string" or not string.find(sname, "^gp_save_") then
+        return "FAIL:auto_save_name"
+    end
+    return "PASS"
+end
+
+function on_before_key_press(key, bind, dis, flags)
+    return false
+end
+
+-- REWORK-5: clear liz_fdda_redone_backpack.is_ui_inventory_open if inventory closed past GUI_on_hide.
+function fix_stuck_backpack()
+    local fdda = rawget(_G, "liz_fdda_redone_backpack")
+    if type(fdda) ~= "table" or fdda.is_ui_inventory_open ~= true then
+        return false
+    end
+    local inv = rawget(_G, "ui_inventory")
+    local gui = type(inv) == "table" and inv.GUI or nil
+    if gui and is_wnd_shown(gui) then
+        return false
+    end
+    fdda.is_ui_inventory_open = false
+    state.backpack_fixes = (state.backpack_fixes or 0) + 1
+    return true
+end
+
+BACKPACK_STUCK_MS = 3000
+
+function watch_stuck_backpack()
+    local inv = rawget(_G, "ui_inventory")
+    local gui = type(inv) == "table" and inv.GUI or nil
+    local l = rawget(_G, "lam2")
+    local cur = nil
+    if not (gui and is_wnd_shown(gui)) and type(l) == "table" and type(l.get_current_action) == "function" then
+        local ok, a = pcall(l.get_current_action)
+        if ok and type(a) == "table" then
+            cur = a
+        end
+    end
+    local tag = cur and tostring(cur.tag or "") or ""
+    if tag ~= "backpack_open" and tag ~= "backpack_try_open" then
+        state.backpack_watch = nil
+        return false
+    end
+    local now = (time_global and time_global()) or 0
+    local w = state.backpack_watch
+    if not w or not rawequal(w.action, cur) then
+        state.backpack_watch = { action = cur, since = now }
+        return false
+    end
+    if now - w.since < BACKPACK_STUCK_MS then
+        return false
+    end
+    state.backpack_watch = nil
+    local running = type(l.is_running) == "function" and l.is_running() or nil
+    if printf then
+        printf("! [gp_screens] backpack stuck: action=%s tag=%s running=%s queued=%s -> recover",
+            tostring(cur.name), tag, tostring(running),
+            tostring(type(l.has_queued_actions) == "function" and l.has_queued_actions() or nil))
+    end
+    local lc = rawget(_G, "gp_lifecycle")
+    if type(lc) == "table" and type(lc.recover_stuck_hands) == "function" then
+        pcall(lc.recover_stuck_hands, "backpack_stuck")
+    end
+    state.backpack_recovers = (state.backpack_recovers or 0) + 1
+    return true
+end
+
+BACKPACK_TAGS = { backpack_open = true, backpack_try_open = true }
+
+function backpack_action()
+    local l = rawget(_G, "lam2")
+    if type(l) ~= "table" or type(l.get_current_action) ~= "function" then
+        return nil
+    end
+    local ok, a = pcall(l.get_current_action)
+    if not (ok and type(a) == "table" and BACKPACK_TAGS[tostring(a.tag or "")]) then
+        return nil
+    end
+    return a
+end
+
+function inventory_on_screen()
+    local inv = rawget(_G, "ui_inventory")
+    local gui = type(inv) == "table" and inv.GUI or nil
+    return gui ~= nil and is_wnd_shown(gui)
+end
+
+function backpack_drop_pending()
+    return state.backpack_drop_pending
+end
+
+function mark_backpack_drop(name)
+    if name == "UIInventory" or inventory_on_screen() or not backpack_action() then
+        return false
+    end
+    state.backpack_drop_pending = tostring(name or "?")
+    return true
+end
+
+function flush_backpack_drop()
+    local why = state.backpack_drop_pending
+    if not why then
+        return false
+    end
+    state.backpack_drop_pending = nil
+    fix_stuck_backpack()
+    if inventory_on_screen() then
+        return false
+    end
+    local a = backpack_action()
+    if not a then
+        return false
+    end
+    if printf then
+        printf("! [gp_screens] backpack over window %s: action=%s -> recover", why, tostring(a.name))
+    end
+    local lc = rawget(_G, "gp_lifecycle")
+    if type(lc) == "table" and type(lc.recover_stuck_hands) == "function" then
+        pcall(lc.recover_stuck_hands, "backpack_window")
+    end
+    state.backpack_drops = (state.backpack_drops or 0) + 1
+    return true
+end
+
+function on_actor_update()
+    flush_backpack_drop()
+    fix_stuck_backpack()
+    watch_stuck_backpack()
+end
+
+function on_game_start()
+    if RegisterScriptCallback then
+        RegisterScriptCallback("GUI_on_show", on_gui_show)
+        RegisterScriptCallback("GUI_on_hide", on_gui_hide)
+        RegisterScriptCallback("on_before_key_press", on_before_key_press)
+        RegisterScriptCallback("actor_on_update", on_actor_update)
+    end
+end

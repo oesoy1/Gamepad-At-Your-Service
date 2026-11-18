@@ -1,0 +1,162 @@
+<w>
+  <!-- D5.1 (D38 / D09) + FG.6k1: Clean-room tactical minimalism gamepad button glyphs & inventory action pictograms -->
+  <file name="ui\ui_gamepad_glyphs">
+    <texture id="ui_gp_ps_south" x="2" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_east" x="54" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_west" x="106" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_north" x="158" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_back" x="210" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_guide" x="262" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_start" x="314" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_lstick" x="366" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_rstick" x="418" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_lshoulder" x="470" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_rshoulder" x="522" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_dpup" x="574" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_dpdown" x="626" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_dpleft" x="678" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_dpright" x="730" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_ltrigger" x="782" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_rtrigger" x="834" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_ls" x="886" y="72" width="48" height="48" />
+    <texture id="ui_gp_ps_rs" x="938" y="72" width="48" height="48" />
+    <texture id="ui_gp_nintendo_south" x="2" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_east" x="54" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_west" x="106" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_north" x="158" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_back" x="210" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_guide" x="262" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_start" x="314" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_lstick" x="366" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_rstick" x="418" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_lshoulder" x="470" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_rshoulder" x="522" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_dpup" x="574" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_dpdown" x="626" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_dpleft" x="678" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_dpright" x="730" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_ltrigger" x="782" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_rtrigger" x="834" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_ls" x="886" y="136" width="48" height="48" />
+    <texture id="ui_gp_nintendo_rs" x="938" y="136" width="48" height="48" />
+    <texture id="ui_gp_generic_south" x="2" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_east" x="54" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_west" x="106" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_north" x="158" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_back" x="210" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_guide" x="262" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_start" x="314" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_lstick" x="366" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_rstick" x="418" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_lshoulder" x="470" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_rshoulder" x="522" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_dpup" x="574" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_dpdown" x="626" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_dpleft" x="678" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_dpright" x="730" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_ltrigger" x="782" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_rtrigger" x="834" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_ls" x="886" y="200" width="48" height="48" />
+    <texture id="ui_gp_generic_rs" x="938" y="200" width="48" height="48" />
+    <texture id="ui_gp_act_hand" x="2" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_grab" x="54" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_bolt" x="106" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_list" x="158" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_back" x="210" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_swap" x="262" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_stack" x="314" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_eye" x="366" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_med" x="418" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_sort" x="470" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_all" x="522" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_slot_up" x="574" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_slot_right" x="626" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_slot_down" x="678" y="264" width="48" height="48" />
+    <texture id="ui_gp_act_slot_left" x="730" y="264" width="48" height="48" />
+    <texture id="ui_gp_hint_pill" x="2" y="336" width="96" height="48" />
+    <texture id="ui_gp_hint_pill_sm" x="106" y="336" width="64" height="48" />
+    <texture id="ui_gp_hint_pill_wide" x="178" y="336" width="192" height="48" />
+  </file>
+  <file name="ui\ui_gp_xbox_graphite_p12">
+    <texture id="ui_gp_xbox_south" x="0" y="512" width="128" height="128" />
+    <texture id="ui_gp_xbox_west" x="128" y="512" width="128" height="128" />
+    <texture id="ui_gp_xbox_north" x="256" y="512" width="128" height="128" />
+    <texture id="ui_gp_xbox_east" x="384" y="512" width="128" height="128" />
+    <texture id="ui_gp_xbox_ltrigger" x="512" y="512" width="128" height="128" />
+    <texture id="ui_gp_xbox_rtrigger" x="640" y="512" width="128" height="128" />
+    <texture id="ui_gp_xbox_lshoulder" x="768" y="512" width="128" height="128" />
+    <texture id="ui_gp_xbox_rshoulder" x="896" y="512" width="128" height="128" />
+    <texture id="ui_gp_xbox_ls" x="0" y="640" width="128" height="128" />
+    <texture id="ui_gp_xbox_rs" x="128" y="640" width="128" height="128" />
+    <texture id="ui_gp_xbox_lstick" x="256" y="640" width="128" height="128" />
+    <texture id="ui_gp_xbox_rstick" x="384" y="640" width="128" height="128" />
+    <texture id="ui_gp_xbox_back" x="512" y="640" width="128" height="128" />
+    <texture id="ui_gp_xbox_start" x="640" y="640" width="128" height="128" />
+    <texture id="ui_gp_xbox_share" x="768" y="640" width="128" height="128" />
+    <texture id="ui_gp_xbox_guide" x="896" y="640" width="128" height="128" />
+    <texture id="ui_gp_xbox_dpad" x="0" y="768" width="128" height="128" />
+    <texture id="ui_gp_xbox_dpup" x="128" y="768" width="128" height="128" />
+    <texture id="ui_gp_xbox_dpright" x="256" y="768" width="128" height="128" />
+    <texture id="ui_gp_xbox_dpdown" x="384" y="768" width="128" height="128" />
+    <texture id="ui_gp_xbox_dpleft" x="512" y="768" width="128" height="128" />
+    <texture id="ui_gp_xbox_view_round" x="640" y="768" width="128" height="128" />
+  </file>
+  <file name="ui\ui_gp_xbox_hold_p12">
+    <texture id="ui_gp_xbox_south_hold_50" x="0" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_west_hold_50" x="64" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_north_hold_50" x="128" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_east_hold_50" x="192" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_ltrigger_hold_50" x="256" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_rtrigger_hold_50" x="320" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_lshoulder_hold_50" x="384" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_rshoulder_hold_50" x="448" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_ls_hold_50" x="512" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_rs_hold_50" x="576" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_lstick_hold_50" x="640" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_rstick_hold_50" x="704" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_back_hold_50" x="768" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_start_hold_50" x="832" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_share_hold_50" x="896" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_guide_hold_50" x="960" y="0" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpad_hold_50" x="0" y="64" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpup_hold_50" x="64" y="64" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpright_hold_50" x="128" y="64" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpdown_hold_50" x="192" y="64" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpleft_hold_50" x="256" y="64" width="64" height="64" />
+    <texture id="ui_gp_xbox_south_hold_100" x="0" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_west_hold_100" x="64" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_north_hold_100" x="128" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_east_hold_100" x="192" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_ltrigger_hold_100" x="256" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_rtrigger_hold_100" x="320" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_lshoulder_hold_100" x="384" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_rshoulder_hold_100" x="448" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_ls_hold_100" x="512" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_rs_hold_100" x="576" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_lstick_hold_100" x="640" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_rstick_hold_100" x="704" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_back_hold_100" x="768" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_start_hold_100" x="832" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_share_hold_100" x="896" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_guide_hold_100" x="960" y="128" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpad_hold_100" x="0" y="192" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpup_hold_100" x="64" y="192" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpright_hold_100" x="128" y="192" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpdown_hold_100" x="192" y="192" width="64" height="64" />
+    <texture id="ui_gp_xbox_dpleft_hold_100" x="256" y="192" width="64" height="64" />
+  </file>
+  <file name="ui\ui_gp_focus_controls_p12">
+    <texture id="ui_gp_menu_focus_slider" x="2" y="2" width="21" height="16" />
+    <texture id="ui_gp_menu_focus_check_off" x="27" y="2" width="88" height="58" />
+    <texture id="ui_gp_menu_focus_check_on" x="119" y="2" width="88" height="58" />
+  </file>
+  <file name="ui\ui_gp_focus_controls_p13">
+    <texture id="ui_gp_menu_focus_slider_p13" x="2" y="2" width="21" height="16" />
+    <texture id="ui_gp_menu_focus_radio_off" x="211" y="2" width="94" height="56" />
+    <texture id="ui_gp_menu_focus_radio_on" x="309" y="2" width="94" height="56" />
+  </file>
+  <file name="ui\ui_gp_focus_controls_p14">
+    <texture id="ui_gp_menu_focus_radio_e_p14" x="211" y="2" width="94" height="56" />
+    <texture id="ui_gp_menu_focus_radio_t_p14" x="309" y="2" width="94" height="56" />
+  </file>
+</w>

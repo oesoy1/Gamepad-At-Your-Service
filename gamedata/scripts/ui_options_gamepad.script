@@ -1,0 +1,380 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- D2.2 / D4.2 (D39): Options menu extension for the "Gamepad" tab (control/gamepad)
+-- Wraps ui_options.init_opt_base modeled after ui_options_modded_exes.script:4-8
+-- without modifying ui_options.script or any existing G.A.M.M.A. script.
+
+local installed = false
+
+local function exec_cmd(cmd)
+	if type(_G.exec_console_cmd) == "function" then
+		_G.exec_console_cmd(cmd)
+	elseif type(_G.get_console) == "function" then
+		local con = _G.get_console()
+		if con and con.execute then con:execute(cmd) end
+	end
+end
+
+local function open_wheel_settings()
+	if _G.ui_gp_qaw_settings and type(_G.ui_gp_qaw_settings.open) == "function" then
+		_G.ui_gp_qaw_settings.open()
+	end
+end
+
+function get_active_gamepad_name()
+	if _G.game and type(_G.game.gamepad_get_active_name) == "function" then
+		local ok, name = pcall(_G.game.gamepad_get_active_name)
+		if ok and type(name) == "string" and name ~= "" then
+			return name
+		end
+	end
+	return nil
+end
+
+function get_active_gamepad_power()
+	if _G.game and type(_G.game.gamepad_get_power_info) == "function" then
+		local ok, a, b = pcall(_G.game.gamepad_get_power_info)
+		if ok then
+			local st, pct
+			if type(a) == "table" then
+				st = tostring(a.state or "unknown")
+				pct = tonumber(a.percent or a.pct or -1) or -1
+			else
+				st = tostring(a or "unknown")
+				pct = tonumber(b) or -1
+			end
+			if st ~= "" and st ~= "disconnected" and st ~= "unknown" then
+				return st, pct
+			end
+		end
+	end
+	return nil, -1
+end
+
+function get_gamepad_source_mode()
+	if _G.game and type(_G.game.get_gamepad_source_mode) == "function" then
+		local ok, mode = pcall(_G.game.get_gamepad_source_mode)
+		if ok and (mode == "auto" or mode == "gamepad_only" or mode == "kbm_only") then
+			return mode
+		end
+	end
+	return nil
+end
+
+function set_gamepad_source_mode(mode)
+	if _G.game and type(_G.game.set_gamepad_source_mode) == "function" then
+		if mode == "auto" or mode == "gamepad_only" or mode == "kbm_only" then
+			local ok, res = pcall(_G.game.set_gamepad_source_mode, mode)
+			return ok and res ~= false
+		end
+	end
+	return false
+end
+
+function start_gamepad_calibration_ui(self)
+	if self and self.On_Cancel then
+		pcall(self.On_Cancel, self)
+	end
+	exec_cmd("gp_calib open")
+end
+
+function reset_gamepad_calibration_defaults()
+	exec_cmd("gp_calib reset")
+	exec_cmd("gp_calib save")
+end
+
+function start_gamepad_controls_ui(self)
+	if _G.ui_gp_native and type(_G.ui_gp_native.show_tab) == "function" and self and self.dialog then
+		_G.ui_gp_native.show_tab(self, "world")
+		return
+	end
+	if _G.ui_gp_controls and type(_G.ui_gp_controls.start_gamepad_controls_ui) == "function" then
+		_G.ui_gp_controls.start_gamepad_controls_ui(self)
+		return
+	end
+	if self and self.On_Cancel then
+		pcall(self.On_Cancel, self)
+	end
+	if _G.ui_gp_controls and type(_G.ui_gp_controls.open) == "function" then
+		_G.ui_gp_controls.open("world")
+	else
+		exec_cmd("gp_remap open")
+	end
+end
+
+function start_gamepad_remap_ui(self)
+	if self and self.On_Cancel then
+		pcall(self.On_Cancel, self)
+	end
+	exec_cmd("gp_remap open")
+end
+
+function start_gamepad_class_c_wizard_ui(self)
+	if self and self.On_Cancel then
+		pcall(self.On_Cancel, self)
+	end
+	exec_cmd("gp_remap wizard")
+end
+
+function reset_gamepad_bindings_defaults()
+	exec_cmd("gp_bind_reset")
+end
+
+-- UIDBG (docs/ui/debug-menu, R3b): "Reset interface" button next to the "UI editor" check box.
+-- Keeps the current user layout as user.bak.ltx, writes an empty one and redraws the open screen.
+function reset_ui_layout()
+	if gp_ui_tune and gp_ui_tune.reset_interface then
+		return gp_ui_tune.reset_interface()
+	end
+	return false
+end
+
+function open_gamepad_wheel_settings(self)
+	if self and self.On_Cancel then
+		pcall(self.On_Cancel, self)
+	end
+	if _G.ui_gp_qaw_settings and type(_G.ui_gp_qaw_settings.open) == "function" then
+		_G.ui_gp_qaw_settings.open()
+	end
+end
+
+function start_gamepad_button_test_ui(host, close_cb)
+	if _G.ui_gp_button_test and type(_G.ui_gp_button_test.open) == "function" then
+		local dlg = host and host.dialog or nil
+		return _G.ui_gp_button_test.open(dlg, close_cb)
+	end
+	return false
+end
+
+function cycle_gamepad_wheel_time_mode()
+	if gp_wheel and gp_wheel.cycle_time_mode then
+		pcall(gp_wheel.cycle_time_mode)
+	else
+		exec_cmd("gp_wheel mode cycle")
+	end
+end
+
+function on_ammo_wheel_max_types_changed()
+	if gp_wheel and gp_wheel.on_option_change then
+		pcall(gp_wheel.on_option_change)
+	end
+end
+
+local mod_status_desc_item = nil
+
+function refresh_gamepad_mod_status_desc()
+	if mod_status_desc_item and gp_compat and type(gp_compat.get_options_status_text) == "function" then
+		local ok, txt = pcall(gp_compat.get_options_status_text)
+		if ok and type(txt) == "string" and txt ~= "" then
+			mod_status_desc_item.text = txt
+		end
+	end
+	return true
+end
+
+local function inject_gamepad_tab()
+	if not (ui_options and ui_options.options) then
+		return false
+	end
+
+	local control_group = nil
+	for _, top in ipairs(ui_options.options) do
+		if top.id == "control" and top.gr then
+			control_group = top
+			break
+		end
+	end
+	if not control_group then
+		return false
+	end
+
+	local keybind_idx = nil
+	for i, sub in ipairs(control_group.gr) do
+		if sub.id == "gamepad" then
+			return false
+		end
+		if sub.id == "keybind" then
+			keybind_idx = i
+		end
+	end
+
+	local gamepad_tab = {
+		id = "gamepad",
+		sh = true,
+		gr = {
+			{
+				id = "slide_gamepad",
+				type = "slide",
+				link = "ui_options_slider_control",
+				text = "ui_mm_title_gamepad",
+				size = { 512, 50 },
+			},
+			{
+				id = "desc_gamepad_calib",
+				type = "desc",
+				text = "ui_mm_desc_gamepad_calib",
+				clr = { 255, 190, 205, 220 },
+			},
+			{
+				id = "open_calibration",
+				type = "button",
+				functor_ui = { start_gamepad_calibration_ui },
+				hint = "control_gamepad_open_calibration",
+			},
+			{
+				id = "reset_calibration",
+				type = "button",
+				functor = { reset_gamepad_calibration_defaults },
+				hint = "control_gamepad_reset_calibration",
+			},
+			{
+				id = "line_gamepad_remap",
+				type = "line",
+			},
+			{
+				id = "desc_gamepad_remap",
+				type = "desc",
+				text = "ui_mm_desc_gamepad_remap",
+				clr = { 255, 190, 205, 220 },
+			},
+			{
+				id = "open_remap",
+				type = "button",
+				functor_ui = { start_gamepad_remap_ui },
+				hint = "control_gamepad_open_remap",
+			},
+			{
+				id = "open_wizard_class_c",
+				type = "button",
+				functor_ui = { start_gamepad_class_c_wizard_ui },
+				hint = "control_gamepad_open_wizard_class_c",
+			},
+			{
+				id = "reset_bindings",
+				type = "button",
+				functor = { reset_gamepad_bindings_defaults },
+				hint = "control_gamepad_reset_bindings",
+			},
+			-- FIX-LIVE2 24: protection from accidental reload when a Dot Marks mark is aimed at (default ON)
+			{
+				id = "gp_reload_guard",
+				type = "check",
+				val = 1,
+				def = true,
+				hint = "control_gamepad_reload_guard",
+			},
+			-- INV-REWORK-16 (Misha 2026-11-12): inventory selection colour, variant 2 "deep blue" (gp_inv_rework.hl_deep)
+			{
+				id = "gp_inv_hl_deep",
+				type = "check",
+				val = 1,
+				def = false,
+				hint = "control_gamepad_inv_hl_deep",
+			},
+			-- MENU-FOCUS-1 (2026-11-10, Misha): cursor size/brightness options removed from the menu; in menus the cursor is replaced by a white focus frame.
+			{
+				id = "line_gamepad_wheel",
+				type = "line",
+			},
+			{
+				id = "desc_gamepad_wheel",
+				type = "desc",
+				text = "ui_mm_desc_gamepad_wheel",
+				clr = { 255, 190, 205, 220 },
+			},
+			{
+				id = "open_wheel",
+				type = "button",
+				functor_ui = { open_wheel_settings },
+				hint = "control_gamepad_open_wheel",
+			},
+			{
+				id = "cycle_wheel_time_mode",
+				type = "button",
+				functor = { cycle_gamepad_wheel_time_mode },
+				hint = "control_gamepad_cycle_wheel_time_mode",
+			},
+			{
+				id = "line_gamepad_x_target",
+				type = "line",
+			},
+			{
+				id = "gp_x_target_angle",
+				type = "track",
+				val = 2,
+				cmd = "gp_x_target_angle",
+				min = 0,
+				max = 30,
+				step = 1,
+				def = 10,
+				hint = "control_gamepad_x_target_angle",
+			},
+			{
+				id = "line_gamepad_ui_editor",
+				type = "line",
+			},
+			{
+				id = "gp_ui_editor",
+				type = "check",
+				val = 1,
+				def = false,
+				hint = "control_gamepad_ui_editor",
+			},
+			{
+				id = "reset_ui_layout",
+				type = "button",
+				functor = { reset_ui_layout },
+				hint = "control_gamepad_reset_ui_layout",
+			},
+			{
+				id = "line_gamepad_mod_status",
+				type = "line",
+			},
+			{
+				id = "desc_gamepad_mod_status",
+				type = "desc",
+				text = "ui_mm_desc_gamepad_mod_status_header",
+				clr = { 255, 190, 205, 220 },
+				precondition = { refresh_gamepad_mod_status_desc },
+			},
+		},
+	}
+
+	mod_status_desc_item = gamepad_tab.gr[#gamepad_tab.gr]
+
+	local insert_pos = keybind_idx and (keybind_idx + 1) or (#control_group.gr + 1)
+	table.insert(control_group.gr, insert_pos, gamepad_tab)
+	return true
+end
+
+function on_xml_read()
+	if installed then
+		return
+	end
+	if not (ui_options and ui_options.init_opt_base) then
+		return
+	end
+	installed = true
+	if ui_gp_native and ui_gp_native.install then ui_gp_native.install() end
+
+	local ui_options_base = ui_options.init_opt_base
+	ui_options.init_opt_base = function(...)
+		ui_options_base(...)
+		local ok_inj, added = pcall(inject_gamepad_tab)
+		if ok_inj and added and ui_options.init_opt_coder then
+			pcall(ui_options.init_opt_coder)
+		end
+	end
+
+	if ui_options.options and #ui_options.options > 0 then
+		local ok_inj, added = pcall(inject_gamepad_tab)
+		if ok_inj and added and ui_options.init_opt_coder then
+			pcall(ui_options.init_opt_coder)
+		end
+	else
+		pcall(ui_options.init_opt_base)
+	end
+end
+
+function on_game_start()
+	on_xml_read()
+end

@@ -1,0 +1,255 @@
+-- gp_dotmarks.script - кнопки геймпада в подсказках мода Interaction Dot Marks (INV-REWORK-21, ICONS-1).
+-- Решение Миши 2026-11-14 (ICONS-1): в мире рисуется форма "key" набора «клавиша Dot Marks»
+-- по текущей марке и стилю (gp_icons.tex("west"/"north", "key")), видимой высотой как родная клавиша «F»
+-- (с учётом масштаба gp_icons.scale_k()). Кольцо fit_ring убрано — работает родной индикатор Dot Marks
+-- (args.argb_prog = HOLD_ARGB), смещённый на прозрачное поле клавиши. В режимах подсказок "menu" / "off"
+-- всплывающая подсказка у предмета скрывается, но кнопки X/Y продолжают работать как прежде.
+
+ENABLED = true
+ICON_SIZE = 20
+HOLD_ARGB = "215,196,196,196"
+POLL_MS = 250
+KEY_H = 20
+KEY_GAP_K = 0.57
+
+local orig_parse = nil
+local orig_build = nil
+local last_pad = nil
+local last_rev = nil
+local next_poll = 0
+
+function is_gamepad()
+    if gp_bridge and gp_bridge.is_gamepad_active then
+        local ok, res = pcall(gp_bridge.is_gamepad_active)
+        return ok and res == true
+    end
+    return false
+end
+
+function dm_cfg()
+    local m = _G.ui_hud_dotmarks
+    local cfg = m and m.cfg
+    if type(cfg) ~= "table" then
+        local dmain = _G.dotmarks_main
+        cfg = dmain and dmain.cfg
+    end
+    return type(cfg) == "table" and cfg or nil
+end
+
+function use_dik()
+    if bind_to_dik and key_bindings and key_bindings.kUSE then
+        local ok, d = pcall(bind_to_dik, key_bindings.kUSE)
+        if ok then return d end
+    end
+    return nil
+end
+
+function tex_use()
+    return (_G.gp_icons and _G.gp_icons.tex("west", "key")) or "ui_gp_xbox_west"
+end
+
+function tex_mod()
+    return (_G.gp_icons and _G.gp_icons.tex("north", "key")) or "ui_gp_xbox_north"
+end
+
+-- Значок геймпада и позиционный слот ("west"/"north") для пары "клавиша + модификатор" или nil
+function icon_for(key, mod)
+    key = tonumber(key)
+    if not key then return nil, nil end
+    local cfg = dm_cfg()
+    local sec = cfg and tonumber(cfg.bind_sec_interact)
+    if key ~= use_dik() and key ~= sec then return nil, nil end
+    if (tonumber(mod) or 0) ~= 0 then
+        return tex_mod(), "north"
+    end
+    return tex_use(), "west"
+end
+
+function apply_icon(args)
+    if not (ENABLED and type(args) == "table" and is_gamepad()) then return false end
+    local tex, slot = icon_for(args.key, args.mod)
+    if not tex then return false end
+    local m = _G.ui_hud_dotmarks
+    local ic = _G.gp_icons
+    args.bind_icon = tex
+    args._gp_slot = slot
+    args._gp_hide_world = (ic and ic.hints_visible and not ic.hints_visible("world")) or false
+    args.style = nil
+    args.argb_prog = HOLD_ARGB
+    args.bind_icon_w = ICON_SIZE
+    args.bind_icon_h = (m and m.fontscale_h) and m.fontscale_h(ICON_SIZE) or ICON_SIZE
+    return true
+end
+
+function parse_args_hook(self, args)
+    orig_parse(self, args)
+    apply_icon(self.args)
+end
+
+-- Подогнать позицию родного индикатора удержания Dot Marks (дочернего к self.prompt) на прозрачное поле клавиши
+function align_native_hold(self, inset_w, prompt_h)
+    local lp = self and self.longpress
+    if not (lp and lp.wnd) then return false end
+    local ox = (type(lp.flags) == "table" and tonumber(lp.flags.offset_x)) or -20
+    local oy = (type(lp.flags) == "table" and tonumber(lp.flags.offset_y)) or 0
+    local lh = (lp.wnd.GetHeight and lp.wnd:GetHeight()) or tonumber(lp.height) or 20
+    lp.wnd:SetWndPos(vector2():set(inset_w + ox, (prompt_h - lh) * 0.5 + oy))
+    return true
+end
+
+-- Клавиша Dot Marks видимой высотой с родную плашку F (KEY_H * user_scale) и пропорциями PNG из gp_icons.dims
+function fit_prompt(self)
+    local a = _G.gp_hint_align
+    if not (a and self and self.prompt and self.label and type(self.args) == "table") then
+        return false
+    end
+    local tex = self.args.bind_icon
+    local slot = self.args._gp_slot
+    if not slot then
+        if tex == tex_use() then
+            slot = "west"
+        elseif tex == tex_mod() then
+            slot = "north"
+        else
+            return false
+        end
+    end
+
+    local ic = _G.gp_icons
+    local hide_world = self.args._gp_hide_world or (ic and ic.hints_visible and not ic.hints_visible("world"))
+    if hide_world then
+        self.prompt:Show(false)
+        self.label:Show(false)
+        if self.label_sh then self.label_sh:Show(false) end
+        if self.drop then self.drop:Show(false) end
+        if self.line then self.line:Show(false) end
+        return true
+    end
+
+    local m = _G.ui_hud_dotmarks
+    local kh = KEY_H
+    if m and m.uiscale and m.fontscale_h then kh = m.uiscale(m.fontscale_h(KEY_H)) end
+    local _, sh = a.screen()
+    local kpx = kh * sh / 768
+    local user_k = (ic and ic.scale_k and ic.scale_k()) or 1.0
+    local vis_w, vis_h, tex_w, tex_h = 30, 23, 36, 29
+    if ic and ic.dims then
+        vis_w, vis_h, tex_w, tex_h = ic.dims(slot, "key")
+    end
+
+    local vis_px_h = math.max(8, math.floor(kpx * user_k + 0.5))
+    local vis_px_w = math.max(8, math.floor(vis_px_h * vis_w / vis_h + 0.5))
+    local full_px_h = math.max(vis_px_h, math.floor(vis_px_h * tex_h / vis_h + 0.5))
+    local full_px_w = math.max(vis_px_w, math.floor(vis_px_h * tex_w / vis_h + 0.5))
+    local inset_px_x = (full_px_w - vis_px_w) * 0.5
+
+    local w, h = a.px_w(full_px_w), a.px_h(full_px_h)
+    local inset_w = a.px_w(inset_px_x)
+    local gap_px = math.floor(kpx * KEY_GAP_K + 0.5)
+    local lp = self.label:GetWndPos()
+    local vis_right = lp.x - a.px_w(gap_px)
+    local x = a.snap_x(vis_right + inset_w - w)
+    local y = a.snap_y((kh - h) * 0.5)
+
+    self.prompt:SetWndSize(vector2():set(w, h))
+    self.prompt:SetWndPos(vector2():set(x, y))
+    align_native_hold(self, inset_w, h)
+    return true
+end
+
+function build_ui_hook(self, ...)
+    local r = orig_build(self, ...)
+    pcall(fit_prompt, self)
+    return r
+end
+
+function install()
+    local m = _G.ui_hud_dotmarks
+    local cls = m and m.InteractPrompt
+    if not (cls and cls.ParseArgs) or orig_parse then return false end
+    orig_parse = cls.ParseArgs
+    cls.ParseArgs = parse_args_hook
+    if cls.BuildUI and not orig_build then
+        orig_build = cls.BuildUI
+        cls.BuildUI = build_ui_hook
+    end
+    return true
+end
+
+-- Смена устройства ввода или марки/стиля/масштаба/режима подсказок (gp_icons.revision) -> пересоздать метки
+function poll(now)
+    now = now or (time_global and time_global()) or 0
+    if now < next_poll then return false end
+    next_poll = now + POLL_MS
+    local pad = is_gamepad()
+    local rev = (_G.gp_icons and _G.gp_icons.revision and _G.gp_icons.revision()) or 0
+    if last_pad == nil then
+        last_pad = pad
+        last_rev = rev
+        return false
+    end
+    if pad == last_pad and rev == last_rev then return false end
+    last_pad = pad
+    last_rev = rev
+    local m = _G.ui_hud_dotmarks
+    if m and m.on_option_change then pcall(m.on_option_change) end
+    return true
+end
+
+function actor_on_update()
+    if ENABLED then poll() end
+end
+
+-- FIX-LIVE1 п.6: после ящика/обыска/торговли подсказки Dot Marks пересобираются с нашими значками
+-- (пока окно открыто, Dot Marks перестраивает метки ящика без ParseArgs, и клавиша могла остаться чужой).
+function on_gui_hide(name)
+    if not (ENABLED and name == "UIInventory" and is_gamepad()) then return false end
+    local m = _G.ui_hud_dotmarks
+    if not (m and m.on_option_change) then return false end
+    pcall(m.on_option_change)
+    return true
+end
+
+-- FIX-LIVE2 24 (24.1a): is a Dot Marks mark of the object under the crosshair visible right now,
+-- even far beyond the interaction distance? Read-only, used by gp_weapon.x_reload.
+function aimed_mark_visible()
+    local m = _G.ui_hud_dotmarks
+    if not (m and type(m.get_mark) == "function") then return false end
+    if type(m.is_system_active) == "function" then
+        local ok_a, act = pcall(m.is_system_active)
+        if ok_a and act == false then return false end
+    end
+    if not (level and type(level.get_target_obj) == "function") then return false end
+    local ok_o, obj = pcall(level.get_target_obj)
+    if not (ok_o and obj) then return false end
+    local ok_i, id = pcall(function() return obj:id() end)
+    if not ok_i or id == nil then return false end
+    local ok_m, mark = pcall(m.get_mark, id)
+    if not (ok_m and mark) then return false end
+    local ok_v, vis = pcall(function()
+        if mark.suspended or mark.is_offscreen or mark.no_update_loop then return false end
+        local dist = type(level.get_target_dist) == "function" and level.get_target_dist() or nil
+        if type(m.is_in_visible_range) == "function" then
+            return m.is_in_visible_range(id, dist, mark) == true
+        end
+        return true
+    end)
+    return ok_v and vis == true
+end
+
+function reset_state()
+    orig_parse = nil
+    orig_build = nil
+    last_pad = nil
+    last_rev = nil
+    next_poll = 0
+end
+
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_game_start()
+    if _G.gp_compat and _G.gp_compat.is_engine_compatible and not _G.gp_compat.is_engine_compatible() then return end
+    install()
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("GUI_on_hide", on_gui_hide)
+end

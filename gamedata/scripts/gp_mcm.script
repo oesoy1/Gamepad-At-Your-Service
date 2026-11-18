@@ -1,0 +1,1408 @@
+-- =============================================================================
+-- gp_mcm.script - Mod Configuration Menu (UI_MCM) Gamepad Adapter (W4-MCM-GWIRE)
+-- Pure-Lua non-destructive hook adapter for G.A.M.M.A. / Anomaly MCM (G7.2):
+--   1. Clean Anomaly (PORT-A) guard: silently sleeps when `ui_mcm` is absent.
+--   2. Live `ui_mcm.GUI` mirror while `UI_MCM` is open (fixes `ui_mcm.GUI == nil`
+--      trap for `gp_bridge` keybind capture hint without calling `get_gui()` closed).
+--   3. `key_bind` (`k_binder`) protection: prevents A-release >500ms from aborting
+--      capture, maps gamepad B (`DIK_ESCAPE` in TextEntry) to cancel without
+--      unbinding, adds inline `[x]` clear-bind button, and pulses `deny` on blocked keys.
+--   4. `mod_search` & `input` + OSK (`F5.1`): auto-clears `"Поиск..."` placeholder,
+--      fixes empty `search_filter` bug, adds 1-click `[x]` search reset button,
+--      validates numeric `val == 2` & `[min, max]` bounds with `deny` feedback.
+--   5. Pure-info pages (`line`/`image`/`slide`/`title`/`desc`) scroll anchor &
+--      gamepad hover tooltips + `CUITrackBar` value sync in `UI_MCM:Update`.
+--   6. MCM plugins: `UIARGBControl` (4 channels, +/-1 & +/-15 step, NumericArgb OSK,
+--      accept/cancel), `UIMCMPosPreview` (2D step + `UI_MCM.Reset_opt` fix),
+--      `kb_overview_mcm` (2D keyboard diagram step, filter step, panel scroll).
+-- =============================================================================
+
+_GP_FILE_MARKER = "gp_mcm.script"
+
+local DIK_ESCAPE_CODE = 1
+local MOUSE_1_CODE    = 337
+local KEY_PRESSED_EV  = 2
+local KEY_RELEASED_EV = 3
+local BTN_CLICKED_EV  = 1
+local EDIT_COMMIT_EV  = 4
+
+local ARGB_CHANNELS = { "a", "r", "g", "b" }
+
+-- Standard 6-row physical DIK layout for `kb_overview_mcm` 2D D-pad stepping (В19)
+local KBO_KEY_ROWS = {
+    { 1, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 87, 88 },
+    { 41, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 },
+    { 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 43 },
+    { 58, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 28 },
+    { 42, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54 },
+    { 29, 56, 57, 184, 157, 203, 200, 208, 205 },
+}
+
+local BLOCKED_BIND_DIKS = {
+    [1]   = true, -- DIK_ESCAPE
+    [41]  = true, -- DIK_GRAVE (console)
+    [219] = true, -- DIK_LWIN
+    [220] = true, -- DIK_RWIN
+}
+
+local state = {
+    hooked_mcm         = false,
+    hooked_argb        = false,
+    hooked_pos_preview = false,
+    deny_count         = 0,
+    osk_open_count     = 0,
+    last_action        = "none",
+    kbo_row            = 2,
+    kbo_col            = 2,
+    kbo_filter_idx     = 1,
+}
+
+-- -----------------------------------------------------------------------------
+-- 1. Environment & Safety Helpers
+-- -----------------------------------------------------------------------------
+
+function is_mcm_available()
+    local m = rawget(_G, "ui_mcm")
+    if type(m) ~= "table" then
+        return false
+    end
+    local cls = rawget(m, "UI_MCM")
+    return cls ~= nil and (type(cls) == "table" or type(cls) == "userdata")
+end
+
+function is_gamepad_active()
+    local b = rawget(_G, "gp_bridge")
+    if type(b) == "table" and type(b.is_gamepad_active) == "function" then
+        local ok, res = pcall(b.is_gamepad_active)
+        if ok then
+            return res == true
+        end
+    end
+    local g = rawget(_G, "game")
+    if type(g) == "table" and type(g.is_gamepad_active_source) == "function" then
+        local ok, res = pcall(g.is_gamepad_active_source)
+        if ok then
+            return res == true
+        end
+    end
+    return false
+end
+
+function is_russian()
+    local g = rawget(_G, "game")
+    if type(g) == "table" and type(g.translate_string) == "function" then
+        local ok, s = pcall(g.translate_string, "ui_mm_apply")
+        if ok and type(s) == "string" then
+            -- CP1251 bytes >= 192 indicate Cyrillic translation table
+            for i = 1, #s do
+                if string.byte(s, i) >= 192 then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+function safe_shown(wnd)
+    if rawequal(wnd, nil) then
+        return false
+    end
+    local ok, fn = pcall(function() return wnd.IsShown end)
+    if ok and type(fn) == "function" then
+        local ok_s, res = pcall(fn, wnd)
+        return ok_s and res == true
+    end
+    return false
+end
+
+function safe_cursor_over(wnd)
+    if not safe_shown(wnd) then
+        return false
+    end
+    local ok, fn = pcall(function() return wnd.IsCursorOverWindow end)
+    if ok and type(fn) == "function" then
+        local ok_c, res = pcall(fn, wnd)
+        return ok_c and res == true
+    end
+    return false
+end
+
+local function move_cursor_to_wnd(wnd)
+    if rawequal(wnd, nil) or type(_G.SetCursorPosition) ~= "function" or type(_G.vector2) ~= "function" then
+        return false
+    end
+    if type(_G.Frect) == "function" then
+        local ok_ar, r = pcall(function()
+            local fr = _G.Frect():set(0, 0, 0, 0)
+            wnd:GetAbsoluteRect(fr)
+            return fr
+        end)
+        if ok_ar and r and r.x2 and r.x1 and (r.x2 - r.x1) > 0 then
+            local cx = (r.x1 + r.x2) * 0.5
+            local cy = (r.y1 + r.y2) * 0.5
+            _G.SetCursorPosition(_G.vector2():set(cx, cy))
+            return true
+        end
+    end
+    local ok_p, pos = pcall(function() return wnd:GetWndPos() end)
+    local ok_w, w = pcall(function() return wnd:GetWidth() end)
+    local ok_h, h = pcall(function() return wnd:GetHeight() end)
+    if ok_p and pos and ok_w and ok_h then
+        _G.SetCursorPosition(_G.vector2():set((tonumber(pos.x) or 0) + (tonumber(w) or 0) * 0.5, (tonumber(pos.y) or 0) + (tonumber(h) or 0) * 0.5))
+        return true
+    end
+    return false
+end
+
+function deny()
+    state.deny_count = state.deny_count + 1
+    state.last_action = "deny"
+    local g = rawget(_G, "game")
+    if type(g) == "table" and type(g.gamepad_inv_focus_deny) == "function" then
+        pcall(g.gamepad_inv_focus_deny)
+        return true
+    end
+    local rw = rawget(_G, "gp_inv_rework")
+    if type(rw) == "table" and type(rw.deny) == "function" then
+        pcall(rw.deny)
+        return true
+    end
+    return false
+end
+
+function open_osk(ctrl)
+    if rawequal(ctrl, nil) then
+        return false
+    end
+    state.osk_open_count = state.osk_open_count + 1
+    state.last_action = "open_osk"
+    local g = rawget(_G, "game")
+    if type(g) == "table" and type(g.gamepad_new_game_keyboard) == "function" then
+        local ok, res = pcall(g.gamepad_new_game_keyboard, ctrl)
+        if ok and res ~= false then
+            return true
+        end
+    end
+    pcall(function() ctrl:CaptureFocus(true) end)
+    return true
+end
+
+-- -----------------------------------------------------------------------------
+-- 2. Live `ui_mcm.GUI` Mirror (Fixes `ui_mcm.GUI == nil` Trap)
+-- -----------------------------------------------------------------------------
+
+function sync_gui_mirror(gui, force_open)
+    local m = rawget(_G, "ui_mcm")
+    if type(m) ~= "table" then
+        return nil
+    end
+    if force_open == false then
+        m.GUI = nil
+        return nil
+    end
+    if not rawequal(gui, nil) and (force_open == true or safe_shown(gui)) then
+        m.GUI = gui
+        return gui
+    end
+    if not rawequal(m.GUI, nil) and not safe_shown(m.GUI) then
+        m.GUI = nil
+    end
+    return m.GUI
+end
+
+function get_gui()
+    local m = rawget(_G, "ui_mcm")
+    if type(m) ~= "table" then
+        return nil
+    end
+    local g = rawget(m, "GUI")
+    if safe_shown(g) then
+        return g
+    end
+    local guis = rawget(_G, "_GUIs")
+    if type(guis) == "table" then
+        local reg = guis["UI_MCM"] or guis["UIMCM"]
+        local inst = (type(reg) == "table" and reg.instance) or reg
+        if safe_shown(inst) then
+            m.GUI = inst
+            return inst
+        end
+    end
+    if not rawequal(g, nil) then
+        m.GUI = nil
+    end
+    return nil
+end
+
+-- -----------------------------------------------------------------------------
+-- 3. `mod_search` (В15) & `input` Validation (В16)
+-- -----------------------------------------------------------------------------
+
+function get_search_placeholder()
+    local g = rawget(_G, "game")
+    if type(g) == "table" and type(g.translate_string) == "function" then
+        local ok, s = pcall(g.translate_string, "ui_mcm_menu_search")
+        if ok and type(s) == "string" and s ~= "" then
+            return s
+        end
+    end
+    return "Search..."
+end
+
+local function is_search_placeholder_text(s)
+    if type(s) ~= "string" then
+        return false
+    end
+    return s == get_search_placeholder()
+        or s == "Search..."
+        or s == "Поиск..."
+        or s == "Поиск…"
+        or s == "ui_mcm_menu_search"
+end
+
+function is_search_active(gui)
+    if rawequal(gui, nil) then
+        return false
+    end
+    local sf = gui.search_filter
+    return type(sf) == "string" and sf ~= "" and not is_search_placeholder_text(sf)
+end
+
+function clear_search(gui)
+    if rawequal(gui, nil) or rawequal(gui.mod_search, nil) then
+        return false
+    end
+    local ph = get_search_placeholder()
+    gui.search_filter = nil
+    gui._gp_search_editing = false
+    pcall(function() gui.mod_search:SetText(ph) end)
+    if not rawequal(gui._gp_btn_clear_search, nil) then
+        pcall(function() gui._gp_btn_clear_search:Show(false) end)
+    end
+    if type(gui.Reset_last_opt) == "function" then
+        pcall(gui.Reset_last_opt, gui)
+    end
+    if is_gamepad_active() then
+        move_cursor_to_wnd(gui.mod_search)
+    end
+    state.last_action = "clear_search"
+    return true
+end
+
+function ensure_search_clear_btn(gui)
+    if rawequal(gui, nil) or not rawequal(gui._gp_btn_clear_search, nil) then
+        return gui and gui._gp_btn_clear_search or nil
+    end
+    if rawequal(gui.xml, nil) or rawequal(gui.dialog, nil) then
+        return nil
+    end
+    local ok, btn = pcall(function()
+        local b = gui.xml:Init3tButton("elements:btn_all", gui.dialog)
+        b:SetWndPos(_G.vector2():set(124, 22))
+        b:SetWndSize(_G.vector2():set(22, 20))
+        b:TextControl():SetText("x")
+        b:Show(is_search_active(gui))
+        return b
+    end)
+    if not ok or rawequal(btn, nil) then
+        return nil
+    end
+    gui._gp_btn_clear_search = btn
+    local cb_id = "_gp_mcm_clear_search"
+    local ev_click = (_G.ui_events and _G.ui_events.BUTTON_CLICKED) or BTN_CLICKED_EV
+    local function on_clear_click()
+        clear_search(gui)
+    end
+    pcall(function()
+        gui:Register(btn, cb_id)
+        gui:AddCallback(cb_id, ev_click, on_clear_click, gui)
+    end)
+    return btn
+end
+
+function prepare_search_input(gui)
+    if rawequal(gui, nil) or rawequal(gui.mod_search, nil) then
+        return false
+    end
+    local cur = ""
+    pcall(function() cur = gui.mod_search:GetText() or "" end)
+    if is_search_placeholder_text(cur) then
+        pcall(function() gui.mod_search:SetText("") end)
+    end
+    gui._gp_search_editing = true
+    open_osk(gui.mod_search)
+    state.last_action = "prepare_search_input"
+    return true
+end
+
+function format_input_range_hint(v)
+    if type(v) ~= "table" or v.val ~= 2 then
+        return ""
+    end
+    if v.min == nil and v.max == nil then
+        return ""
+    end
+    local lo = v.min ~= nil and tostring(v.min) or "-inf"
+    local hi = v.max ~= nil and tostring(v.max) or "+inf"
+    local prefix = is_russian() and "Диапазон: " or "Range: "
+    return prefix .. "[" .. lo .. " .. " .. hi .. "]"
+end
+
+function validate_input_text(raw, v)
+    local s = type(raw) == "string" and raw or tostring(raw or "")
+    if s == "" then
+        return false, nil, "empty"
+    end
+    if type(v) == "table" and v.val == 2 then
+        local n = tonumber(s)
+        if n == nil then
+            return false, nil, "nan"
+        end
+        if v.min ~= nil and n < v.min then
+            return false, v.min, "clamped_min"
+        end
+        if v.max ~= nil and n > v.max then
+            return false, v.max, "clamped_max"
+        end
+        return true, n, "ok"
+    end
+    return true, s, "ok"
+end
+
+-- -----------------------------------------------------------------------------
+-- 4. `key_bind` (`k_binder`) Capture & Clear Support
+-- -----------------------------------------------------------------------------
+
+function cancel_keybind_capture(gui)
+    if rawequal(gui, nil) or type(gui.k_binder) ~= "function" then
+        return false
+    end
+    local binder = gui.k_binder
+    gui.k_binder = nil
+    gui._gp_ignore_mouse1_release = false
+    pcall(binder, nil)
+    state.last_action = "cancel_keybind_capture"
+    return true
+end
+
+local function format_unbound_label()
+    local m = rawget(_G, "ui_mcm")
+    if type(m) == "table" and type(m.display_key) == "function" then
+        local ok, s = pcall(m.display_key, -1)
+        if ok and type(s) == "string" then
+            return s
+        end
+    end
+    return "---"
+end
+
+function clear_keybind_row(gui, row)
+    if rawequal(gui, nil) or type(row) ~= "table" then
+        return false
+    end
+    if type(gui.k_binder) == "function" then
+        local kb = gui.k_binder
+        gui.k_binder = nil
+        pcall(kb, -1)
+    else
+        pcall(gui.CacheValue, gui, row.path, row.opt, -1, row.v)
+        if not rawequal(row.txt, nil) then
+            pcall(function() row.txt:TextControl():SetText(format_unbound_label()) end)
+        end
+    end
+    if not rawequal(row.clear_btn, nil) then
+        pcall(function() row.clear_btn:Show(false) end)
+    end
+    if is_gamepad_active() and not rawequal(row.ctrl, nil) then
+        move_cursor_to_wnd(row.ctrl)
+    end
+    state.last_action = "clear_keybind:" .. tostring(row.opt or "")
+    return true
+end
+
+function clear_active_keybind(gui)
+    if rawequal(gui, nil) then
+        return false
+    end
+    if type(gui.k_binder) == "function" then
+        local kb = gui.k_binder
+        gui.k_binder = nil
+        gui._gp_ignore_mouse1_release = false
+        pcall(kb, -1)
+        if type(gui._gp_active_kb_row) == "table" and not rawequal(gui._gp_active_kb_row.clear_btn, nil) then
+            pcall(function() gui._gp_active_kb_row.clear_btn:Show(false) end)
+        end
+        state.last_action = "clear_active_keybind"
+        return true
+    end
+    for _, row in ipairs(gui._gp_opt_rows or {}) do
+        if row.etype == "key_bind" and (safe_cursor_over(row.ctrl) or safe_cursor_over(row.clear_btn)) then
+            return clear_keybind_row(gui, row)
+        end
+    end
+    return false
+end
+
+local function attach_keybind_clear_btn(gui, xml, handler, row)
+    if rawequal(gui, nil) or rawequal(xml, nil) or rawequal(handler, nil) then
+        return nil
+    end
+    local cur_val = -1
+    pcall(function() cur_val = gui:GetValue(row.path, row.opt, row.v, row.flags) end)
+    local ok, btn = pcall(function()
+        local b = xml:Init3tButton("elements:btn_all", handler)
+        b:SetWndPos(_G.vector2():set(398, 7))
+        b:SetWndSize(_G.vector2():set(26, 26))
+        b:TextControl():SetText("x")
+        b:Show(cur_val ~= -1 and cur_val ~= nil)
+        return b
+    end)
+    if not ok or rawequal(btn, nil) then
+        return nil
+    end
+    row.clear_btn = btn
+    row.ctrls[#row.ctrls + 1] = btn
+    local cb_id = "_gp_kb_clr_" .. tostring(#(gui._gp_opt_rows or {}) + 1) .. "_" .. tostring(row.opt or "")
+    local ev_click = (_G.ui_events and _G.ui_events.BUTTON_CLICKED) or BTN_CLICKED_EV
+    local function on_clr()
+        clear_keybind_row(gui, row)
+    end
+    pcall(function()
+        gui:Register(btn, cb_id)
+        gui:AddCallback(cb_id, ev_click, on_clr, gui)
+    end)
+    return btn
+end
+
+-- -----------------------------------------------------------------------------
+-- 5. Pure-Info Page Scroll Anchor & Gamepad Hint / Track Sync
+-- -----------------------------------------------------------------------------
+
+function ensure_scroll_anchor(gui)
+    if rawequal(gui, nil) or rawequal(gui.scroll_opt, nil) or rawequal(gui.xml, nil) then
+        return false
+    end
+    if (gui._gp_interactive_count or 0) > 0 then
+        return false
+    end
+    local ok, anchor = pcall(function()
+        local st = gui.xml:InitStatic("main:st", nil)
+        st:SetWndSize(_G.vector2():set(573, 24))
+        local btn = gui.xml:Init3tButton("elements:btn_all", st)
+        btn:SetWndPos(_G.vector2():set(10, 2))
+        btn:SetWndSize(_G.vector2():set(24, 18))
+        btn:TextControl():SetText("")
+        btn:SetTextureColor(_G.GetARGB and _G.GetARGB(0, 255, 255, 255) or 0)
+        gui.scroll_opt:AddWindow(st, true)
+        st:SetAutoDelete(true)
+        return btn
+    end)
+    if ok and not rawequal(anchor, nil) then
+        gui._gp_scroll_anchor = anchor
+        gui._gp_interactive_count = 1
+        return true
+    end
+    return false
+end
+
+local function round_track_val(num, prec)
+    local mult = 10 ^ (tonumber(prec) or 2)
+    return math.floor((tonumber(num) or 0) * mult + 0.5) / mult
+end
+
+function update_gamepad_hints_and_tracks(gui)
+    if rawequal(gui, nil) then
+        return false
+    end
+    -- 1. Ensure all CUITrackBar changes commit even if _Cap hover returned early or cursor stepped
+    if type(gui._Track) == "table" and type(gui.Callback_Track) == "function" then
+        for id, e in pairs(gui._Track) do
+            if type(e) == "table" and not rawequal(e.ctrl, nil) then
+                local ok_f, fval = pcall(function() return e.ctrl:GetFValue() end)
+                if ok_f and type(fval) == "number" then
+                    local v = type(gui.GetOption) == "function" and gui:GetOption(id) or nil
+                    local prec = (type(v) == "table" and v.prec) or 2
+                    local rounded = round_track_val(fval, prec)
+                    if rounded ~= e.value and type(v) == "table" then
+                        e.value = rounded
+                        pcall(gui.Callback_Track, gui, e.txt, e.path, e.opt, v, rounded)
+                    end
+                end
+            end
+        end
+    end
+    -- 2. Restore mod_search placeholder if editing ended empty without an active filter
+    if gui._gp_search_editing and not is_search_active(gui) and not rawequal(gui.mod_search, nil) then
+        if not safe_cursor_over(gui.mod_search) then
+            local cur = ""
+            pcall(function() cur = gui.mod_search:GetText() or "" end)
+            if cur == "" then
+                pcall(function() gui.mod_search:SetText(get_search_placeholder()) end)
+                gui._gp_search_editing = false
+            end
+        end
+    end
+    -- 3. Show option description tooltip (`_desc`) + numeric range when gamepad focuses right-column widget
+    if not is_gamepad_active() or rawequal(gui.hint_wnd, nil) then
+        return false
+    end
+    local g = rawget(_G, "game")
+    for _, row in ipairs(gui._gp_opt_rows or {}) do
+        local hovered = false
+        for _, c in ipairs(row.ctrls or {}) do
+            if safe_cursor_over(c) then
+                hovered = true
+                break
+            end
+        end
+        if hovered then
+            local hint_key = (type(gui._Hint) == "table" and gui._Hint[row.id_cap]) or row.id_cap
+            local desc_id = "ui_mcm_" .. tostring(hint_key or "") .. "_desc"
+            local tip = ""
+            if type(g) == "table" and type(g.translate_string) == "function" then
+                local ok_t, tr = pcall(g.translate_string, desc_id)
+                if ok_t and type(tr) == "string" and tr ~= desc_id then
+                    tip = tr
+                end
+            end
+            local range_str = (row.etype == "input") and format_input_range_hint(row.v) or ""
+            if range_str ~= "" then
+                tip = (tip ~= "") and (tip .. "\n" .. range_str) or range_str
+            end
+            if tip ~= "" then
+                pcall(function() gui.hint_wnd:Update(tip) end)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- -----------------------------------------------------------------------------
+-- 6. Plugin 1: `UIARGBControl` (`ui_mcm_argb_input.script`, В17)
+-- -----------------------------------------------------------------------------
+
+function decorate_argb_control(ctrl_id, argb_wnd, open_btn, close_btn)
+    if rawequal(argb_wnd, nil) or type(argb_wnd.ctrl) ~= "table" then
+        return nil
+    end
+    local entry = {
+        id        = ctrl_id,
+        wnd       = argb_wnd,
+        open_btn  = open_btn,
+        close_btn = close_btn,
+        chan_idx  = 1,
+    }
+    for _, ch in ipairs(ARGB_CHANNELS) do
+        local eb = argb_wnd.ctrl[ch]
+        if not rawequal(eb, nil) then
+            -- Name `fld_input_<a>` so C++ GamepadOnScreenKeyboard selects NumericArgb (0..255)
+            pcall(function() eb:SetWindowName("fld_input_" .. ch) end)
+        end
+    end
+    if not argb_wnd._gp_setcolor_wrapped and type(argb_wnd.SetColor) == "function" then
+        argb_wnd._gp_setcolor_wrapped = true
+        local orig_set_color = argb_wnd.SetColor
+        local function wrapped_argb_set_color(self, color, value)
+            local n = tonumber(value)
+            if n == nil or n < 0 or n > 255 then
+                deny()
+            end
+            return orig_set_color(self, color, value)
+        end
+        argb_wnd.SetColor = wrapped_argb_set_color
+    end
+    local gui = get_gui()
+    if not rawequal(gui, nil) then
+        gui._gp_argb_controls = gui._gp_argb_controls or {}
+        gui._gp_argb_controls[#gui._gp_argb_controls + 1] = entry
+    end
+    return entry
+end
+
+function get_active_argb(gui)
+    local target_gui = gui or get_gui()
+    if rawequal(target_gui, nil) or type(target_gui._gp_argb_controls) ~= "table" then
+        return nil
+    end
+    for _, entry in ipairs(target_gui._gp_argb_controls) do
+        local is_open = (type(entry.open_btn) == "table" and entry.open_btn.open == true)
+            or safe_shown(entry.wnd and entry.wnd.dialog)
+        if is_open then
+            return entry
+        end
+    end
+    return nil
+end
+
+function argb_select_channel(entry, delta)
+    if type(entry) ~= "table" or rawequal(entry.wnd, nil) then
+        return false
+    end
+    local step = (tonumber(delta) or 0) < 0 and -1 or 1
+    local idx = ((entry.chan_idx or 1) - 1 + step) % #ARGB_CHANNELS + 1
+    entry.chan_idx = idx
+    local ch = ARGB_CHANNELS[idx]
+    local eb = entry.wnd.ctrl and entry.wnd.ctrl[ch] or nil
+    if not rawequal(eb, nil) then
+        move_cursor_to_wnd(eb)
+    end
+    state.last_action = "argb_chan:" .. ch
+    return true, ch
+end
+
+function argb_step_value(entry, delta)
+    if type(entry) ~= "table" or rawequal(entry.wnd, nil) or type(entry.wnd.argb) ~= "table" then
+        return false
+    end
+    local ch = ARGB_CHANNELS[entry.chan_idx or 1] or "a"
+    local cur = tonumber(entry.wnd.argb[ch]) or 0
+    local raw_next = cur + (tonumber(delta) or 0)
+    local clamped = raw_next
+    if clamped < 0 then
+        clamped = 0
+    elseif clamped > 255 then
+        clamped = 255
+    end
+    if clamped ~= raw_next then
+        deny()
+    end
+    if type(entry.wnd.SetColor) == "function" then
+        local prev_wrapped = entry.wnd._gp_setcolor_wrapped
+        -- Call SetColor with already-clamped value so deny() only fires once above
+        entry.wnd:SetColor(ch, clamped)
+        entry.wnd._gp_setcolor_wrapped = prev_wrapped
+    else
+        entry.wnd.argb[ch] = clamped
+    end
+    state.last_action = "argb_val:" .. ch .. ":" .. tostring(clamped)
+    return true, clamped
+end
+
+function argb_open_channel_osk(entry)
+    if type(entry) ~= "table" or rawequal(entry.wnd, nil) or type(entry.wnd.ctrl) ~= "table" then
+        return false
+    end
+    local ch = ARGB_CHANNELS[entry.chan_idx or 1] or "a"
+    local eb = entry.wnd.ctrl[ch]
+    if rawequal(eb, nil) then
+        return false
+    end
+    return open_osk(eb)
+end
+
+function argb_accept(entry)
+    if type(entry) ~= "table" or rawequal(entry.wnd, nil) then
+        return false
+    end
+    if type(entry.open_btn) == "table" and entry.open_btn.open == true and type(entry.open_btn.OnClick) == "function" then
+        pcall(entry.open_btn.OnClick, entry.open_btn)
+    elseif type(entry.wnd.MCMSetCachedValue) == "function" then
+        pcall(entry.wnd.MCMSetCachedValue, entry.wnd)
+        if type(entry.wnd.ShowControls) == "function" then
+            pcall(entry.wnd.ShowControls, entry.wnd, false)
+        end
+    end
+    state.last_action = "argb_accept"
+    return true
+end
+
+function argb_cancel(entry)
+    if type(entry) ~= "table" or rawequal(entry.wnd, nil) then
+        return false
+    end
+    if type(entry.close_btn) == "table" and type(entry.close_btn.OnClick) == "function" then
+        pcall(entry.close_btn.OnClick, entry.close_btn)
+    elseif type(entry.wnd.MCMRevertCachedValue) == "function" then
+        pcall(entry.wnd.MCMRevertCachedValue, entry.wnd)
+        if type(entry.wnd.ShowControls) == "function" then
+            pcall(entry.wnd.ShowControls, entry.wnd, false)
+        end
+    end
+    state.last_action = "argb_cancel"
+    return true
+end
+
+function install_argb_hooks()
+    local mod = rawget(_G, "ui_mcm_argb_input")
+    if type(mod) ~= "table" or state.hooked_argb then
+        return false
+    end
+    if type(mod.init_mcm_argb_control) ~= "function" then
+        return false
+    end
+    state.hooked_argb = true
+    local orig_init = mod.init_mcm_argb_control
+    local function wrapped_init_argb(anchor, handlers, opts, flags)
+        local res = orig_init(anchor, handlers, opts, flags)
+        if type(flags) == "table" and type(mod.wnds) == "table" then
+            local cid = tostring(flags.path or "") .. "/" .. tostring(flags.opt or "")
+            local w = mod.wnds[cid]
+            local ob = mod.wnds[cid .. "_open"]
+            local cb = mod.wnds[cid .. "_close"]
+            decorate_argb_control(cid, w, ob, cb)
+        end
+        return res
+    end
+    mod.init_mcm_argb_control = wrapped_init_argb
+    return true
+end
+
+-- -----------------------------------------------------------------------------
+-- 7. Plugin 2: `UIMCMPosPreview` (`pos_previewer_mcm.script`, В18)
+-- -----------------------------------------------------------------------------
+
+function pos_preview_step(gui, dx, dy)
+    local target_gui = gui or get_gui()
+    if rawequal(target_gui, nil) or type(target_gui._gp_pos_previewers) ~= "table" then
+        return false
+    end
+    local prev = target_gui._gp_pos_previewers[1]
+    if rawequal(prev, nil) then
+        return false
+    end
+    local path = prev.mcmpath or target_gui.last_path or ""
+    local opt_x = prev.opt_changex or "preview_pos_x"
+    local opt_y = prev.opt_changey or "preview_pos_y"
+    local id_x = path ~= "" and (path .. "/" .. opt_x) or opt_x
+    local id_y = path ~= "" and (path .. "/" .. opt_y) or opt_y
+    local vx = type(target_gui.GetOption) == "function" and target_gui:GetOption(id_x) or { val = 2, min = 0, max = 1024 }
+    local vy = type(target_gui.GetOption) == "function" and target_gui:GetOption(id_y) or { val = 2, min = 0, max = 768 }
+    local cur_x = tonumber(type(target_gui.GetValue) == "function" and target_gui:GetValue(path, opt_x, vx) or prev.def_x) or 0
+    local cur_y = tonumber(type(target_gui.GetValue) == "function" and target_gui:GetValue(path, opt_y, vy) or prev.def_y) or 0
+    local min_x = (type(vx) == "table" and vx.min) or 0
+    local max_x = (type(vx) == "table" and vx.max) or 1024
+    local min_y = (type(vy) == "table" and vy.min) or 0
+    local max_y = (type(vy) == "table" and vy.max) or 768
+
+    local raw_x = cur_x + (tonumber(dx) or 0)
+    local raw_y = cur_y + (tonumber(dy) or 0)
+    local nx = math.max(min_x, math.min(max_x, raw_x))
+    local ny = math.max(min_y, math.min(max_y, raw_y))
+    if nx ~= raw_x or ny ~= raw_y then
+        deny()
+    end
+
+    if type(target_gui.CacheValue) == "function" then
+        pcall(target_gui.CacheValue, target_gui, path, opt_x, nx, vx)
+        pcall(target_gui.CacheValue, target_gui, path, opt_y, ny, vy)
+    end
+    if type(target_gui._Track) == "table" then
+        local tx = target_gui._Track[id_x]
+        if type(tx) == "table" and not rawequal(tx.ctrl, nil) then
+            tx.value = nx
+            pcall(function() tx.ctrl:SetFValue(nx) end)
+            if not rawequal(tx.txt, nil) then pcall(function() tx.txt:SetText(tostring(nx)) end) end
+        end
+        local ty = target_gui._Track[id_y]
+        if type(ty) == "table" and not rawequal(ty.ctrl, nil) then
+            ty.value = ny
+            pcall(function() ty.ctrl:SetFValue(ny) end)
+            if not rawequal(ty.txt, nil) then pcall(function() ty.txt:SetText(tostring(ny)) end) end
+        end
+    end
+    for _, row in ipairs(target_gui._gp_opt_rows or {}) do
+        if row.etype == "input" and row.path == path then
+            if row.opt == opt_x then
+                pcall(function() row.ctrl:SetText(tostring(nx)) end)
+            elseif row.opt == opt_y then
+                pcall(function() row.ctrl:SetText(tostring(ny)) end)
+            end
+        end
+    end
+    if type(prev.SetWidgetPos) == "function" then
+        pcall(prev.SetWidgetPos, prev, nx, ny)
+    end
+    state.last_action = string.format("pos_preview:%s,%s", tostring(nx), tostring(ny))
+    return true, nx, ny
+end
+
+function install_pos_preview_hooks()
+    local mod = rawget(_G, "pos_previewer_mcm")
+    if type(mod) ~= "table" or state.hooked_pos_preview then
+        return false
+    end
+    local cls = mod.UIMCMPosPreview
+    if not cls or type(cls.__init) ~= "function" then
+        return false
+    end
+    state.hooked_pos_preview = true
+    local orig_init = cls.__init
+    local function wrapped_pos_preview_init(self, anchor, ...)
+        orig_init(self, anchor, ...)
+        local gui = get_gui()
+        if not rawequal(gui, nil) then
+            gui._gp_pos_previewers = gui._gp_pos_previewers or {}
+            gui._gp_pos_previewers[#gui._gp_pos_previewers + 1] = self
+        end
+    end
+    cls.__init = wrapped_pos_preview_init
+    if type(cls.CheckSelectedValue) == "function" then
+        local orig_check = cls.CheckSelectedValue
+        local function wrapped_pos_preview_check(self, path, opt, value)
+            local gui = get_gui()
+            if not rawequal(gui, nil) and gui._gp_in_reset_opt == true then
+                return
+            end
+            return orig_check(self, path, opt, value)
+        end
+        cls.CheckSelectedValue = wrapped_pos_preview_check
+    end
+    return true
+end
+
+-- -----------------------------------------------------------------------------
+-- 8. Plugin 3: `kb_overview_mcm` (`mcm/kb_overview`, В19)
+-- -----------------------------------------------------------------------------
+
+function kbo_step_key(gui, dir_code)
+    local target_gui = gui or get_gui()
+    if rawequal(target_gui, nil) then
+        return false
+    end
+    local r = state.kbo_row or 2
+    local c = state.kbo_col or 2
+    if dir_code == 1 then
+        r = math.max(1, r - 1)
+    elseif dir_code == 2 then
+        r = math.min(#KBO_KEY_ROWS, r + 1)
+    elseif dir_code == 3 then
+        c = c - 1
+    elseif dir_code == 4 then
+        c = c + 1
+    end
+    local row_keys = KBO_KEY_ROWS[r]
+    if c < 1 then
+        c = #row_keys
+    elseif c > #row_keys then
+        c = 1
+    end
+    state.kbo_row = r
+    state.kbo_col = c
+    local dik = row_keys[c]
+    local ev_press = (_G.ui_events and _G.ui_events.WINDOW_KEY_PRESSED) or KEY_PRESSED_EV
+    if type(target_gui.OnKeyboard) == "function" then
+        pcall(target_gui.OnKeyboard, target_gui, dik, ev_press)
+    end
+    state.last_action = "kbo_key:" .. tostring(dik)
+    return true, dik
+end
+
+function kbo_step_filter(gui, delta)
+    local target_gui = gui or get_gui()
+    if rawequal(target_gui, nil) then
+        return false
+    end
+    local step = (tonumber(delta) or 0) < 0 and -1 or 1
+    local idx = ((state.kbo_filter_idx or 1) - 1 + step) % 5 + 1
+    state.kbo_filter_idx = idx
+    -- Header pills sit along top of scroll_opt (`pos.x + 12..460, pos.y + 12`)
+    if not rawequal(target_gui.scroll_opt, nil) and type(_G.SetCursorPosition) == "function" and type(_G.vector2) == "function" then
+        local ok_p, sp = pcall(function() return target_gui.scroll_opt:GetWndPos() end)
+        local ok_d, dp = pcall(function() return target_gui.dialog:GetWndPos() end)
+        local bx = ((ok_d and dp and tonumber(dp.x)) or 51) + ((ok_p and sp and tonumber(sp.x)) or 340) + (idx - 1) * 90 + 36
+        local by = ((ok_d and dp and tonumber(dp.y)) or 23) + ((ok_p and sp and tonumber(sp.y)) or 60) + 12
+        _G.SetCursorPosition(_G.vector2():set(bx, by))
+        local cap_hover = type(target_gui._Cap) == "table" and target_gui._Cap["kbo_hover"] or nil
+        if type(cap_hover) == "table" and type(cap_hover.IsCursorOverWindow) == "function" then
+            pcall(cap_hover.IsCursorOverWindow, cap_hover)
+        end
+        local m1 = (_G.DIK_keys and _G.DIK_keys.MOUSE_1) or MOUSE_1_CODE
+        local ev_press = (_G.ui_events and _G.ui_events.WINDOW_KEY_PRESSED) or KEY_PRESSED_EV
+        if type(target_gui.OnKeyboard) == "function" then
+            pcall(target_gui.OnKeyboard, target_gui, m1, ev_press)
+        end
+    end
+    state.last_action = "kbo_filter:" .. tostring(idx)
+    return true, idx
+end
+
+function kbo_scroll_panel(gui, wheel_dir)
+    local target_gui = gui or get_gui()
+    if rawequal(target_gui, nil) then
+        return false
+    end
+    local sv = target_gui._gp_kbo_panel or target_gui.scroll_opt
+    if rawequal(sv, nil) then
+        return false
+    end
+    local ok_cur, cur = pcall(function() return sv:GetCurrentScrollPos() end)
+    local ok_min, lo  = pcall(function() return sv:GetMinScrollPos() end)
+    local ok_max, hi  = pcall(function() return sv:GetMaxScrollPos() end)
+    if not ok_cur or type(cur) ~= "number" then
+        return false
+    end
+    local step = ((tonumber(wheel_dir) or -1) < 0) and 45 or -45
+    local next_pos = cur + step
+    if ok_min and type(lo) == "number" and next_pos < lo then next_pos = lo end
+    if ok_max and type(hi) == "number" and next_pos > hi then next_pos = hi end
+    pcall(function() sv:SetScrollPos(next_pos) end)
+    state.last_action = "kbo_scroll:" .. tostring(next_pos)
+    return true, next_pos
+end
+
+function setup_kb_overview_bar(gui)
+    if rawequal(gui, nil) or gui.last_path ~= "mcm/kb_overview" then
+        return false
+    end
+    if rawequal(gui.scroll_opt, nil) or rawequal(gui.xml, nil) then
+        return false
+    end
+    local ru = is_russian()
+    local specs = {
+        { id = "prev",   txt = "<",                  fn = function() kbo_step_key(gui, 3) end },
+        { id = "next",   txt = ">",                  fn = function() kbo_step_key(gui, 4) end },
+        { id = "up",     txt = "^",                  fn = function() kbo_step_key(gui, 1) end },
+        { id = "down",   txt = "v",                  fn = function() kbo_step_key(gui, 2) end },
+        { id = "filter", txt = ru and "Фильтр" or "Filter", fn = function() kbo_step_filter(gui, 1) end },
+    }
+    local ok, created = pcall(function()
+        local st = gui.xml:InitStatic("main:st", nil)
+        st:SetWndSize(_G.vector2():set(573, 30))
+        local ev_click = (_G.ui_events and _G.ui_events.BUTTON_CLICKED) or BTN_CLICKED_EV
+        local btns = {}
+        for i, sp in ipairs(specs) do
+            local b = gui.xml:Init3tButton("elements:btn_all", st)
+            b:SetWndPos(_G.vector2():set(8 + (i - 1) * 70, 3))
+            b:SetWndSize(_G.vector2():set(64, 24))
+            b:TextControl():SetText(sp.txt)
+            local cid = "_gp_kbo_btn_" .. sp.id
+            gui:Register(b, cid)
+            gui:AddCallback(cid, ev_click, sp.fn, gui)
+            btns[#btns + 1] = b
+        end
+        gui.scroll_opt:AddWindow(st, true)
+        st:SetAutoDelete(true)
+        return btns
+    end)
+    if ok and type(created) == "table" and #created > 0 then
+        gui._gp_kbo_btns = created
+        gui._gp_interactive_count = (gui._gp_interactive_count or 0) + #created
+        return true
+    end
+    return false
+end
+
+-- -----------------------------------------------------------------------------
+-- 9. Core `UI_MCM` Method Wrappers
+-- -----------------------------------------------------------------------------
+
+local function make_id_cap(path, opt)
+    local id = (path and path ~= "") and (tostring(path) .. "/" .. tostring(opt)) or tostring(opt or "")
+    return string.gsub(id, "[/\\-]", "_")
+end
+
+local function record_opt_row(gui, etype, ctrls, path, opt, v, flags, extra)
+    if rawequal(gui, nil) then
+        return nil
+    end
+    gui._gp_opt_rows = gui._gp_opt_rows or {}
+    gui._gp_interactive_count = (gui._gp_interactive_count or 0) + 1
+    local row = {
+        etype  = etype,
+        ctrls  = ctrls or {},
+        ctrl   = ctrls and ctrls[1] or nil,
+        path   = path,
+        opt    = opt,
+        v      = v,
+        flags  = flags,
+        id_cap = make_id_cap(path, opt),
+    }
+    if type(extra) == "table" then
+        for k, val in pairs(extra) do
+            row[k] = val
+        end
+    end
+    gui._gp_opt_rows[#gui._gp_opt_rows + 1] = row
+    return row
+end
+
+function install_mcm_hooks()
+    if not is_mcm_available() then
+        return false
+    end
+    install_argb_hooks()
+    install_pos_preview_hooks()
+    if state.hooked_mcm then
+        return true
+    end
+    local m = _G.ui_mcm
+    local cls = m.UI_MCM
+    state.hooked_mcm = true
+
+    -- Mirror `Register` on instance during `Register_*` builders (never assign `cls.Register` on Luabind `class_rep`,
+    -- because `cls.Register` reads `m_default_table_ref` with `force_static=1`, causing `pure virtual function called`).
+    local function wrapped_register(self, wnd, name, ...)
+        self._gp_reg_capture = self._gp_reg_capture or {}
+        self._gp_reg_capture[#self._gp_reg_capture + 1] = wnd
+        local orig_reg = self._gp_orig_register
+        if type(orig_reg) == "function" then
+            return orig_reg(self, wnd, name, ...)
+        end
+    end
+
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        local function wrapped_init(self, ...)
+            orig_init(self, ...)
+            sync_gui_mirror(self, true)
+            ensure_search_clear_btn(self)
+        end
+        cls.__init = wrapped_init
+    end
+
+    local orig_open_to = cls.Open_to
+    if type(orig_open_to) == "function" then
+        local function wrapped_open_to(self, ...)
+            local res = orig_open_to(self, ...)
+            sync_gui_mirror(self, true)
+            ensure_search_clear_btn(self)
+            return res
+        end
+        cls.Open_to = wrapped_open_to
+    end
+
+    local orig_reset_last = cls.Reset_last_opt
+    if type(orig_reset_last) == "function" then
+        local function wrapped_reset_last_opt(self, ...)
+            local res = orig_reset_last(self, ...)
+            sync_gui_mirror(self, safe_shown(self))
+            if not rawequal(self._gp_btn_clear_search, nil) then
+                pcall(function() self._gp_btn_clear_search:Show(is_search_active(self)) end)
+            end
+            return res
+        end
+        cls.Reset_last_opt = wrapped_reset_last_opt
+    end
+
+    local orig_reset_opt = cls.Reset_opt
+    if type(orig_reset_opt) == "function" then
+        local function wrapped_reset_opt(self, curr_tree, path, flags)
+            install_argb_hooks()
+            install_pos_preview_hooks()
+            self._gp_opt_rows = {}
+            self._gp_interactive_count = 0
+            self._gp_argb_controls = {}
+            self._gp_pos_previewers = {}
+            self._gp_scroll_anchor = nil
+            self._gp_kbo_btns = nil
+            self._gp_active_kb_row = nil
+            -- Guard `UIMCMPosPreview:CheckSelectedValue` during `Reset_opt` (fixes `pos_previewer_mcm.script:391` `UIMCM` typo)
+            self._gp_in_reset_opt = true
+            local res = orig_reset_opt(self, curr_tree, path, flags)
+            self._gp_in_reset_opt = false
+            setup_kb_overview_bar(self)
+            ensure_scroll_anchor(self)
+            return res
+        end
+        cls.Reset_opt = wrapped_reset_opt
+    end
+
+    -- Wrap interactive widget builders so all 9 interactive MCM widget types are tracked
+    local function wrap_builder(method_name, etype)
+        local orig_fn = cls[method_name]
+        if type(orig_fn) ~= "function" then
+            return
+        end
+        local function wrapped_builder(self, xml, handler, path, opt, v, a6, a7)
+            self._gp_reg_capture = {}
+            local prev_orig = self._gp_orig_register
+            local orig_reg = self.Register
+            self._gp_orig_register = orig_reg
+            self.Register = wrapped_register
+            local ok_b, h = pcall(orig_fn, self, xml, handler, path, opt, v, a6, a7)
+            self.Register = orig_reg
+            self._gp_orig_register = prev_orig
+            local captured = self._gp_reg_capture or {}
+            self._gp_reg_capture = nil
+            if not ok_b then error(h, 0) end
+            local flags = (etype == "radio") and a7 or a6
+            local row = record_opt_row(self, etype, captured, path, opt, v, flags)
+            if etype == "key_bind" and row then
+                attach_keybind_clear_btn(self, xml, handler, row)
+            end
+            return h
+        end
+        cls[method_name] = wrapped_builder
+    end
+
+    wrap_builder("Register_Check",      "check")
+    wrap_builder("Register_Button",     "button")
+    wrap_builder("Register_List",       "list")
+    wrap_builder("Register_Preset_New", "preset")
+    wrap_builder("Register_Input",      "input")
+    wrap_builder("Register_Radio",      "radio")
+    wrap_builder("Register_Key_Bind",   "key_bind")
+
+    local orig_reg_track = cls.Register_Track
+    if type(orig_reg_track) == "function" then
+        local function wrapped_reg_track(self, xml, handler, path, opt, v, flags)
+            local h = orig_reg_track(self, xml, handler, path, opt, v, flags)
+            local id = (path and path ~= "") and (tostring(path) .. "/" .. tostring(opt)) or tostring(opt or "")
+            local te = type(self._Track) == "table" and self._Track[id] or nil
+            local ctrls = (type(te) == "table" and not rawequal(te.ctrl, nil)) and { te.ctrl } or {}
+            record_opt_row(self, "track", ctrls, path, opt, v, flags)
+            return h
+        end
+        cls.Register_Track = wrapped_reg_track
+    end
+
+    local orig_cb_input = cls.Callback_Input
+    if type(orig_cb_input) == "function" then
+        local function wrapped_cb_input(self, ctrl, path, opt, v)
+            local raw = ""
+            pcall(function() raw = ctrl:GetText() or "" end)
+            local ok_v = validate_input_text(raw, v)
+            local res = orig_cb_input(self, ctrl, path, opt, v)
+            if not ok_v then
+                deny()
+            end
+            return res
+        end
+        cls.Callback_Input = wrapped_cb_input
+    end
+
+    local orig_cb_kb = cls.Callback_Key_Bind
+    if type(orig_cb_kb) == "function" then
+        local function wrapped_cb_kb(self, ctrl, path, opt, v, txt)
+            local res = orig_cb_kb(self, ctrl, path, opt, v, txt)
+            sync_gui_mirror(self, true)
+            if is_gamepad_active() then
+                self._gp_ignore_mouse1_release = true
+            end
+            for _, row in ipairs(self._gp_opt_rows or {}) do
+                if row.etype == "key_bind" and rawequal(row.ctrl, ctrl) then
+                    row.txt = txt
+                    self._gp_active_kb_row = row
+                    break
+                end
+            end
+            state.last_action = "start_keybind_capture:" .. tostring(opt or "")
+            return res
+        end
+        cls.Callback_Key_Bind = wrapped_cb_kb
+    end
+
+    local orig_key_binder = cls.Key_Binder
+    if type(orig_key_binder) == "function" then
+        local function wrapped_key_binder(self, ctrl, path, opt, v, key, txt)
+            local res = orig_key_binder(self, ctrl, path, opt, v, key, txt)
+            self._gp_ignore_mouse1_release = false
+            for _, row in ipairs(self._gp_opt_rows or {}) do
+                if row.etype == "key_bind" and rawequal(row.ctrl, ctrl) and not rawequal(row.clear_btn, nil) then
+                    local cur_val = -1
+                    pcall(function() cur_val = self:GetValue(path, opt, v) end)
+                    pcall(function() row.clear_btn:Show(cur_val ~= -1 and cur_val ~= nil) end)
+                    break
+                end
+            end
+            return res
+        end
+        cls.Key_Binder = wrapped_key_binder
+    end
+
+    local orig_on_search = cls.OnSearch
+    if type(orig_on_search) == "function" then
+        local function wrapped_on_search(self)
+            ensure_search_clear_btn(self)
+            local val = ""
+            if not rawequal(self.mod_search, nil) then
+                pcall(function() val = self.mod_search:GetText() or "" end)
+            end
+            local ph = get_search_placeholder()
+            if val == "" or is_search_placeholder_text(val) then
+                self.search_filter = nil
+                self._gp_search_editing = false
+                if not rawequal(self.mod_search, nil) then
+                    pcall(function() self.mod_search:SetText(ph) end)
+                end
+                local res = orig_on_search(self)
+                -- Fix `ui_mcm.script:2558` setting `self.search_filter = ph` when empty!
+                self.search_filter = nil
+                if type(self.Reset_last_opt) == "function" then
+                    pcall(self.Reset_last_opt, self)
+                end
+                if not rawequal(self._gp_btn_clear_search, nil) then
+                    pcall(function() self._gp_btn_clear_search:Show(false) end)
+                end
+                return res
+            end
+            self._gp_search_editing = false
+            local res = orig_on_search(self)
+            if not rawequal(self._gp_btn_clear_search, nil) then
+                pcall(function() self._gp_btn_clear_search:Show(true) end)
+            end
+            state.last_action = "search:" .. tostring(val)
+            return res
+        end
+        cls.OnSearch = wrapped_on_search
+    end
+
+    local orig_update = cls.Update
+    if type(orig_update) == "function" then
+        local function wrapped_update(self, ...)
+            sync_gui_mirror(self)
+            orig_update(self, ...)
+            update_gamepad_hints_and_tracks(self)
+        end
+        cls.Update = wrapped_update
+    end
+
+    local orig_on_cancel = cls.On_Cancel
+    if type(orig_on_cancel) == "function" then
+        local function wrapped_on_cancel(self, ...)
+            if type(self.k_binder) == "function" then
+                cancel_keybind_capture(self)
+            end
+            local res = orig_on_cancel(self, ...)
+            sync_gui_mirror(self, false)
+            return res
+        end
+        cls.On_Cancel = wrapped_on_cancel
+    end
+
+    local orig_on_keyboard = cls.OnKeyboard
+    if type(orig_on_keyboard) == "function" then
+        local function wrapped_on_keyboard(self, dik, keyboard_action)
+            sync_gui_mirror(self)
+            local m1 = (_G.DIK_keys and _G.DIK_keys.MOUSE_1) or MOUSE_1_CODE
+            local esc = (_G.DIK_keys and _G.DIK_keys.DIK_ESCAPE) or DIK_ESCAPE_CODE
+            local ev_press = (_G.ui_events and _G.ui_events.WINDOW_KEY_PRESSED) or KEY_PRESSED_EV
+            local ev_rel   = (_G.ui_events and _G.ui_events.WINDOW_KEY_RELEASED) or KEY_RELEASED_EV
+            local gp = is_gamepad_active()
+
+            -- 1. Active `k_binder` capture guards:
+            if type(self.k_binder) == "function" then
+                if keyboard_action == ev_rel and dik == m1 and self._gp_ignore_mouse1_release then
+                    self._gp_ignore_mouse1_release = false
+                    return true
+                end
+                if gp and keyboard_action == ev_press and dik == esc then
+                    -- Gamepad B injects DIK_ESCAPE in TextEntry: cancel capture instead of unbinding (-1)
+                    cancel_keybind_capture(self)
+                    return true
+                end
+                if keyboard_action == ev_press and BLOCKED_BIND_DIKS[dik] and not (not gp and dik == esc) then
+                    deny()
+                    return true
+                end
+            end
+
+            -- 2. Open `UIARGBControl` escape/cancel guard on gamepad B:
+            if gp and keyboard_action == ev_press and dik == esc then
+                local argb_entry = get_active_argb(self)
+                if argb_entry then
+                    argb_cancel(argb_entry)
+                    return true
+                end
+            end
+
+            -- 3. Gamepad A (`MOUSE_1` press) on `mod_search` or `input` `CUIEditBox`:
+            local open_search_osk = false
+            local open_input_ctrl = nil
+            if gp and keyboard_action == ev_press and dik == m1 then
+                if safe_cursor_over(self.mod_search) then
+                    local cur = ""
+                    pcall(function() cur = self.mod_search:GetText() or "" end)
+                    if is_search_placeholder_text(cur) then
+                        pcall(function() self.mod_search:SetText("") end)
+                    end
+                    self._gp_search_editing = true
+                    open_search_osk = true
+                else
+                    for _, row in ipairs(self._gp_opt_rows or {}) do
+                        if row.etype == "input" and safe_cursor_over(row.ctrl) then
+                            open_input_ctrl = row.ctrl
+                            break
+                        end
+                    end
+                end
+            end
+
+            local res = orig_on_keyboard(self, dik, keyboard_action)
+
+            if open_search_osk then
+                open_osk(self.mod_search)
+            elseif not rawequal(open_input_ctrl, nil) then
+                open_osk(open_input_ctrl)
+            end
+            return res
+        end
+        cls.OnKeyboard = wrapped_on_keyboard
+    end
+
+    return true
+end
+
+-- -----------------------------------------------------------------------------
+-- 10. Engine Callbacks & Diagnostics
+-- -----------------------------------------------------------------------------
+
+function on_gui_show(name, wnd)
+    if not is_mcm_available() then
+        return false
+    end
+    install_mcm_hooks()
+    if name == "UI_MCM" or name == "UIMCM" then
+        local g = (not rawequal(wnd, nil) and type(wnd) ~= "string") and wnd
+            or (type(_G._GUIs) == "table" and (_G._GUIs["UI_MCM"] or _G._GUIs["UIMCM"]))
+            or nil
+        if not rawequal(g, nil) then
+            sync_gui_mirror(g, true)
+            ensure_search_clear_btn(g)
+        end
+        state.last_action = "gui_show:UI_MCM"
+        return true
+    end
+    return false
+end
+
+function on_gui_hide(name, wnd)
+    if not is_mcm_available() then
+        return false
+    end
+    if name == "UI_MCM" or name == "UIMCM" then
+        local g = rawget(_G.ui_mcm, "GUI")
+        if not rawequal(g, nil) and type(g.k_binder) == "function" then
+            cancel_keybind_capture(g)
+        end
+        sync_gui_mirror(wnd, false)
+        state.last_action = "gui_hide:UI_MCM"
+        return true
+    end
+    return false
+end
+
+function get_state()
+    return state
+end
+
+function reset_state()
+    state.hooked_mcm         = false
+    state.hooked_argb        = false
+    state.hooked_pos_preview = false
+    state.deny_count         = 0
+    state.osk_open_count     = 0
+    state.last_action        = "none"
+    state.kbo_row            = 2
+    state.kbo_col            = 2
+    state.kbo_filter_idx     = 1
+    local m = rawget(_G, "ui_mcm")
+    if type(m) == "table" then
+        m.GUI = nil
+    end
+end
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    if not is_mcm_available() then
+        return false
+    end
+    install_mcm_hooks()
+    if type(_G.RegisterScriptCallback) == "function" then
+        _G.RegisterScriptCallback("GUI_on_show", on_gui_show)
+        _G.RegisterScriptCallback("GUI_on_hide", on_gui_hide)
+    end
+    return true
+end

@@ -1,0 +1,482 @@
+-- gp_new_game.script — W5-MENU (docs/ui/concept/00-windows-concept.md §4.1, §4.8, §4.9, §10; 02-new-game.md)
+-- Полное управление окном «Новая игра / Создание персонажа» (ui_mm_faction_select.UINewGame) с геймпада:
+--   * В4: кнопка «Случайно» (footer.random) защищена удержанием A 0,3 + 0,7 с с кольцом на значке (раннее отпускание — отказ).
+--   * В10 [решено без Миши]: при нехватке очков снаряжения (cost > points_left) — тряска рамки + вибрация (w.deny)
+--     и красная вспышка счётчика g.text_points_left на 550 мс.
+--   * В16: выпадающие списки (list_map, list_difficulty, list_economy, list_hardcore_*) открываются по A и закрываются по B без смены.
+--   * Значки Dot Marks через провайдер gp_icons (стиль/масштаб/режим подсказок gp_icons.hints_visible("menu") + gp_hint_align).
+
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+local w = gp_workshop
+local PANELS = {"character", "equipment", "available", "modes"}
+local MODE_FIELDS = {
+    {"list_difficulty"}, {"list_economy"}, {"ck_story", "OnCheckSetStory"},
+    {"ck_azazel_mode", "OnCheckSetAzazel"}, {"ck_survival", "OnCheckSetSurvival"},
+    {"ck_soulslike_mode", "OnCheckSetSoulslike"}, {"ck_hardcore", "OnCheckHardcore"}, {"ck_warfare", "OnCheckSetWarfare"},
+    {"ck_campfire"}, {"ck_routes"}, {"ck_conditions"}, {"list_hardcore_lives"},
+    {"list_hardcore_regen"}, {"list_timer"},
+}
+local POINTS_FLASH_MS = 550
+local POINTS_RED = GetARGB(255, 235, 75, 75)
+-- FIX-LIVE1 п.2 (Миша 2026-11-15): подсказки — нижняя полоса как в главном меню (ui_gp_pause.build_strip),
+-- значки больше не стоят внутри кнопок «Начать»/«Случайно» и не висят над «Назад».
+local STRIP = {
+    { slot = "south", text = "st_gp_hint_select" },                      -- 1 A
+    { slot = "east", text = "st_gp_hint_back" },                         -- 2 B
+    { slot = "back", text = "st_gp_hint_panel" },                        -- 3 View (next block; FIX-LIVE2 p.4)
+    { slot = "back", text = "st_gp_hint_to_buttons" },                   -- 4 View (панели -> кнопки)
+    { slot = "back", text = "st_gp_hint_to_panels" },                    -- 5 View (кнопки -> панели)
+    { slot = "west", text = "st_gp_hint_start_game" },                   -- 6 X (удержание)
+}
+local STRIP_GAP = 18       -- от нижнего края окна до середины полосы
+local STRIP_MAX_Y = 752
+
+function current()
+    local m = _G.ui_mm_faction_select
+    local g = m and m.gamepad_dialog
+    if w.shown(g) and game.gamepad_is_top_dialog and game.gamepad_is_top_dialog(g) then return g end
+end
+
+-- FIX-LIVE3 п.3: модуль gp_inv_rework грузится лениво (через __index _G); в главном меню он ещё
+-- не загружен, и rawget(_G, ...) возвращал nil -> узкая карточка и скрытие по Y не ставились.
+local function inv_mod()
+    local ok, m = pcall(function() return gp_inv_rework end)
+    if ok and type(m) == "table" then return m end
+end
+
+-- FIX-LIVE3 п.4: подсказки режимов («Война группировок» и т. п., g.hint_wnd = utils_ui.UIHint)
+-- скрываются тем же Y, что и карточка предмета: при s.desc_hidden Update зовётся без текста (окно прячется).
+function hook_hint(g, s)
+    local h = g and g.hint_wnd
+    if not h or h._gp_ng_hooked or type(h.Update) ~= "function" then return false end
+    h._gp_ng_hooked = true
+    local orig = h.Update
+    h.Update = function(self, str, ...)
+        if s.desc_hidden and w.is_gamepad() then return orig(self) end
+        return orig(self, str, ...)
+    end
+    return true
+end
+
+local function state(g)
+    if not g._gp_character then
+        g._gp_character = {panel = 1, memory = {}, queue = {}}
+    end
+    return g._gp_character
+end
+
+local function active_layer(g, s)
+    if w.shown(g.dialog_1) then return "faction" end
+    if w.shown(g.dialog_2) then return "profile" end
+    if s.combo and s.combo:GamepadIsExpanded() then return "combo" end
+    s.combo = nil
+    return s.footer and "footer" or PANELS[s.panel]
+end
+
+local function collect(g, s, layer)
+    local list = {}
+    local function add(id, control, action, clip, extra)
+        if not w.shown(control) or not w.enabled(control) then return end
+        local t = extra or {}
+        t.action, t.clip = action, clip
+        w.add_target(list, id, layer, control, w.abs_rect(control), "btn", t)
+    end
+    local controls = g.gp_controls
+    if layer == "character" then
+        add("character.faction", controls.faction, "OnFactionClicked")
+        add("character.profile", controls.icon, "OnIconClicked")
+        add("character.location", g.list_map, "combo")
+        add("character.name", g.character_name, "keyboard")
+    elseif layer == "footer" then
+        add("footer.back", controls.back, "OnQuit")
+        add("footer.random", controls.random, "OnRandomize")
+        add("footer.start", controls.start, "OnStartGame")
+    elseif layer == "modes" then
+        for _, entry in ipairs(MODE_FIELDS) do
+            local field = entry[1]
+            local clip = field ~= "list_difficulty" and field ~= "list_economy" and g.scroll_options or nil
+            add("modes." .. field, g[field], field:sub(1, 5) == "list_" and "combo" or "check",
+                clip, {callback = entry[2]})
+        end
+    elseif layer == "faction" then
+        for key, control in pairs(g.btn_faction) do
+            add("faction." .. key, control, "OnFactionSelect", g.scroll_faction, {value = key})
+        end
+    elseif layer == "profile" then
+        for i = 1, #g.table_icon do
+            add("profile." .. i, g.btn_icon[i], "OnIconSelect", g.scroll_icon, {value = i})
+        end
+    elseif layer == "combo" then
+        local scroll = s.combo:GamepadList()
+        local i = 0
+        while true do
+            local row = s.combo:GamepadListItem(i)
+            if not row then break end
+            add("combo." .. i, row, "select", scroll, {value = i})
+            i = i + 1
+        end
+    else
+        local container = layer == "equipment" and "inventory" or "loadout"
+        local cc, counts = g.CC[container], {}
+        w.cc_targets(list, cc, layer)
+        for _, target in ipairs(list) do
+            local section = target.ci.section
+            counts[section] = (counts[section] or 0) + 1
+            target.id = layer .. ".item." .. section .. "." .. counts[section]
+            target.action, target.container = "item", container
+        end
+        if layer == "equipment" then add("equipment.reset", g.ck_reset, "OnCheckResetList") end
+    end
+    return list
+end
+
+local function focus(g, s, layer, list)
+    local target = w.by_id(list, s.memory[layer])
+    if target then return target end
+    if layer == "footer" then return w.by_id(list, "footer.start") end
+    if layer == "faction" then
+        return w.by_id(list, "faction." .. tostring(g.selected_faction)) or w.reading_first(list)
+    end
+    if layer == "profile" then
+        for i, icon in ipairs(g.table_icon) do
+            if icon == g.selected_icon then return w.by_id(list, "profile." .. i) or list[1] end
+        end
+    elseif layer == "combo" then
+        return w.by_id(list, "combo." .. s.combo:GetCurrentIdx()) or list[1]
+    end
+    if layer == "equipment" or layer == "available" then
+        local previous = s.last_rect and s.last_rect[layer]
+        if previous then
+            local x, y = w.center(previous)
+            local nearest, distance
+            for _, item in ipairs(list) do
+                local ix, iy = w.center(item.r)
+                local d = (x - ix)^2 + (y - iy)^2
+                if not distance or d < distance then nearest, distance = item, d end
+            end
+            if nearest then return nearest end
+        end
+    end
+    return list[1]
+end
+
+local function clipped(t)
+    local view = t.view or (t.clip and w.abs_rect(t.clip))
+    local r = t.r
+    if not view then return r end
+    local result = {x1 = math.max(r.x1, view.x1), y1 = math.max(r.y1, view.y1),
+        x2 = math.min(r.x2, view.x2), y2 = math.min(r.y2, view.y2)}
+    if result.x1 < result.x2 and result.y1 < result.y2 then return result end
+end
+
+local function reveal(t)
+    local view = t.view or (t.clip and w.abs_rect(t.clip))
+    if not view then return end
+    local r, dy = t.r, 0
+    if r.y1 < view.y1 then dy = r.y1 - view.y1
+    elseif r.y2 > view.y2 then dy = r.y2 - view.y2 end
+    if dy == 0 then return end
+    if t.cc then
+        t.cc:Scroll_SetPos(t.cc.scroll_pos + dy)
+    else
+        local scroll = t.clip
+        local value = scroll:GetCurrentScrollPos() + dy
+        scroll:SetScrollPos(math.floor(math.max(scroll:GetMinScrollPos(), math.min(scroll:GetMaxScrollPos(), value)) + 0.5))
+    end
+end
+
+function query(g, x, y)
+    local s = state(g)
+    local layer = active_layer(g, s)
+    local target = focus(g, s, layer, collect(g, s, layer))
+    local r = target and clipped(target)
+    if not r then return w.no_hit(x, y) end
+    local cx, cy = w.center(r)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s",
+        cx, cy, r.x2 - r.x1, r.y2 - r.y1, target.kind)
+end
+
+-- FIX-LIVE2 p.4 (Misha 2026-11-16, 4a): LS moves the frame freely over the whole window. Inside the current
+-- block first; at its edge the nearest visible target in that direction in another block (or the bottom buttons).
+local function layer_of(id)
+    return id and id:match("^([%a_]+)%.") or nil
+end
+
+local function enter_layer(s, layer)
+    if layer == "footer" then
+        s.footer = true
+        return
+    end
+    for i, name in ipairs(PANELS) do
+        if name == layer then s.panel, s.footer = i, nil end
+    end
+end
+
+function snap(g, x, y, dir)
+    local s = state(g)
+    local layer = active_layer(g, s)
+    if layer == "combo" and dir > 2 then return w.stay(x, y) end
+    local list = collect(g, s, layer)
+    local cur = focus(g, s, layer, list)
+    local target = cur and w.best_dir(list, cur.r, dir)
+    if not target and cur and (layer == "footer" or layer == PANELS[s.panel]) then
+        local others = {}
+        for _, name in ipairs({ "character", "equipment", "available", "modes", "footer" }) do
+            if name ~= layer then
+                for _, t in ipairs(collect(g, s, name)) do
+                    if clipped(t) then others[#others + 1] = t end
+                end
+            end
+        end
+        local cr = clipped(cur) or cur.r
+        target = w.best_dir(others, cr, dir)
+        if target then
+            local to = layer_of(target.id)
+            enter_layer(s, to)
+            s.memory[to], s.reveal, s.hold = target.id, true, nil
+            return w.stay(x, y)
+        end
+    end
+    if target then
+        s.memory[layer], s.reveal, s.hold = target.id, true, nil
+    end
+    return w.stay(x, y)
+end
+
+local function queue(s, name, layer, id)
+    s.queue[#s.queue + 1] = {name = name, layer = layer, id = id}
+    return "used"
+end
+
+function button(g, name, phase)
+    local s = state(g)
+    local layer = active_layer(g, s)
+    if phase ~= "press" then
+        local hold = s.hold
+        s.hold = nil
+        if phase == "hold" and name == "X" and hold == layer then
+            return queue(s, "start", layer)
+        end
+        if hold == "footer.random" and name == "A" then
+            if phase == "hold" and layer == "footer" then
+                return queue(s, "random_hold", layer, "footer.random")
+            end
+            return w.deny()
+        end
+        return "used"
+    end
+    if name == "X" and (layer == "footer" or layer == PANELS[s.panel]) then
+        s.hold = layer
+        local ring = w.ring_suffix(s.start_icon)
+        if ring == "" then ring = w.ring_suffix(g.gp_controls and g.gp_controls.start) end
+        return "hold:300:400" .. ring
+    end
+    -- FIX-LIVE2 p.4: LB/RB no longer switch blocks (swallowed, nothing happens)
+    if name ~= "A" and name ~= "B" and name ~= "View" and name ~= "Y" then
+        return "used"
+    end
+    local cur = focus(g, s, layer, collect(g, s, layer))
+    -- В4: «Случайно» в подвале Новой игры требует удержания 0,3 + 0,7 с с белым кольцом.
+    if name == "A" and layer == "footer" and cur and cur.id == "footer.random" then
+        s.hold = "footer.random"
+        local ring = w.ring_suffix(s.random_icon)
+        if ring == "" then ring = w.ring_suffix(cur.w) end
+        return "hold:300:700" .. ring
+    end
+    return queue(s, name, layer, cur and cur.id)
+end
+
+local function start(g, s)
+    local name = g.character_name:GetText()
+    if not name or not name:match("%S") then
+        s.panel, s.footer = 1, nil
+        s.memory.character = "character.name"
+        return w.deny()
+    end
+    g:OnStartGame()
+end
+
+local function execute(g, s, e)
+    local layer = active_layer(g, s)
+    if layer ~= e.layer then return end
+    if e.name == "B" then
+        s.hold = nil
+        if layer == "combo" then s.combo:GamepadShowList(false); s.combo = nil
+        elseif layer == "faction" then g:PopupFaction_Show(false)
+        elseif layer == "profile" then g:PopupIcon_Show(false)
+        elseif layer == "footer" then s.footer = nil
+        else g:OnQuit() end
+    elseif e.name == "start" then
+        start(g, s)
+    elseif e.name == "random_hold" then
+        s.memory.equipment, s.memory.available, s.last_rect = nil, nil, nil
+        if g.OnRandomize then g:OnRandomize() end
+        s.reveal = true
+    elseif e.name == "A" then
+        local target = w.by_id(collect(g, s, layer), e.id)
+        if not target then return end
+        local action = target.action
+        if action == "combo" then
+            s.combo, s.memory.combo, s.reveal = target.w, nil, true
+            s.combo:GamepadShowList(true)
+        elseif action == "select" then
+            s.combo:GamepadSelect(target.value)
+            s.combo = nil
+        elseif action == "keyboard" then
+            game.gamepad_new_game_keyboard(g.character_name)
+        elseif action == "item" then
+            local cost = target.ci.flags.value
+            if not cost or cost <= 0 or (layer == "available" and cost > g.points_left) then
+                -- В10 [без Миши]: при нехватке очков снаряжения — тряска рамки + вибрация + красная вспышка счётчика.
+                if layer == "available" and cost and g.points_left and cost > g.points_left then
+                    s.points_flash_until = w.now() + POINTS_FLASH_MS
+                    local lbl = g.text_points_left
+                    if lbl and lbl.SetTextColor then
+                        if not s.points_base_color and lbl.GetTextColor then
+                            s.points_base_color = lbl:GetTextColor()
+                        end
+                        lbl:SetTextColor(POINTS_RED)
+                    end
+                end
+                return w.deny()
+            end
+            g:On_CC_Mouse1(target.container, target.idx)
+        elseif action == "check" then
+            target.w:SetCheck(not target.w:GetCheck())
+            if target.callback and g[target.callback] then g[target.callback](g) end
+        elseif action == "OnStartGame" then
+            start(g, s)
+        else
+            if action == "OnCheckResetList" or action == "OnFactionSelect" then
+                s.memory.equipment, s.memory.available, s.last_rect = nil, nil, nil
+            end
+            g[action](g, target.value)
+            s.reveal = true
+        end
+    elseif layer == "footer" and e.name == "View" then
+        -- FIX-LIVE2 p.4: View goes round: blocks 1..4 -> bottom buttons -> block 1
+        s.footer, s.hold, s.panel, s.reveal = nil, nil, 1, true
+    elseif layer == PANELS[s.panel] then
+        if e.name == "View" then
+            if s.panel < #PANELS then s.panel, s.reveal = s.panel + 1, true
+            else s.footer = true end
+            s.hold = nil
+        elseif e.name == "Y" then
+            -- FIX-LIVE3 п.3/4: Y во всех блоках скрывает/показывает и карточку предмета, и подсказки режимов
+            -- FIX-LIVE2 p.30 (30a): own flag for this opening; the card hook keeps it hidden on every Update
+            s.desc_hidden = not s.desc_hidden
+            local info = g.item_info
+            if info then
+                info._gp_own_hide = s.desc_hidden
+                if s.desc_hidden then pcall(info.Update, info)
+                else info.timer = -1000000 end
+            end
+        end
+    end
+end
+
+function scroll(g, y, dt)
+    local s = state(g)
+    local layer = active_layer(g, s)
+    if layer == "character" then
+        if w.shown(g.scroll_desc) then w.sv_scroll(g.scroll_desc, "new_game_desc", y, dt, 260) end
+    elseif layer == "modes" then
+        if w.shown(g.scroll_options) then w.sv_scroll(g.scroll_options, "new_game_opts", y, dt, 260) end
+    elseif layer == "faction" then
+        if w.shown(g.scroll_faction) then w.sv_scroll(g.scroll_faction, "new_game_fac", y, dt, 260) end
+    elseif layer == "profile" then
+        if w.shown(g.scroll_icon) then w.sv_scroll(g.scroll_icon, "new_game_ico", y, dt, 260) end
+    elseif layer == "equipment" or layer == "available" then
+        -- FIX-LIVE2 p.30/31 (31a): RS scrolls the item card first; hidden (Y) or short card -> the list under the frame
+        local m = inv_mod()
+        if not (m and m.info_scroll and m.info_scroll(g.item_info, y, dt)) then
+            local cc = g.CC[layer == "equipment" and "inventory" or "loadout"]
+            if cc and cc.scroll then
+                w.sv_scroll(cc.scroll, "new_game_items", y, dt, 260)
+                cc.scroll_pos = cc.scroll:GetCurrentScrollPos()
+            end
+        end
+    end
+    return true
+end
+
+function update(g)
+    local s = state(g)
+    if s.points_flash_until and w.now() >= s.points_flash_until then
+        s.points_flash_until = nil
+        if g.text_points_left and g.text_points_left.SetTextColor and s.points_base_color then
+            g.text_points_left:SetTextColor(s.points_base_color)
+        end
+    end
+    if not w.shown(g) then
+        -- FIX-LIVE2 p.30: cards hidden by Y come back on the next opening of the window
+        s.desc_hidden = nil
+        if g.item_info then g.item_info._gp_own_hide = false end
+    end
+    if not rawequal(current(), g) or not w.is_gamepad() then
+        s.queue, s.hold = {}, nil
+        if s.points_flash_until and g.text_points_left and g.text_points_left.SetTextColor and s.points_base_color then
+            s.points_flash_until = nil
+            g.text_points_left:SetTextColor(s.points_base_color)
+        end
+        if s.strip then
+            ui_gp_pause.hide_strip(s.strip)
+            s.marker:Show(false)
+        end
+        return
+    end
+    -- FIX-LIVE2 p.30: the same card as in the inventory (width, clip, block layout, RS scroll)
+    hook_hint(g, s)
+    local info = g.item_info
+    if info and not info._rw_hooked then
+        local m = inv_mod()
+        if m and m.install_info_hook then
+            info._gp_own_hide = s.desc_hidden == true
+            pcall(m.install_info_hook, info)
+        end
+    end
+    local q = s.queue
+    s.queue = {}
+    for _, event in ipairs(q) do
+        if not rawequal(current(), g) then return end
+        execute(g, s, event)
+    end
+    if not rawequal(current(), g) then return end
+    local layer = active_layer(g, s)
+    if layer ~= s.layer then s.layer, s.hold, s.reveal = layer, nil, true end
+    local t = focus(g, s, layer, collect(g, s, layer))
+    if t then
+        if s.reveal then reveal(t); s.reveal = nil end
+        local r = clipped(t)
+        if r then
+            w.move_cursor(w.center(r))
+            s.memory[layer] = t.id
+            s.last_rect = s.last_rect or {}
+            s.last_rect[layer] = t.r
+        end
+    end
+
+    local ic = rawget(_G, "gp_icons")
+    local hints_on = (not ic or not ic.hints_visible) or ic.hints_visible("menu")
+    if not s.strip then
+        s.strip = ui_gp_pause.build_strip(g, STRIP)
+        s.start_icon = ui_gp_pause.strip_icon(s.strip, 6)
+        s.random_icon = ui_gp_pause.strip_icon(s.strip, 1)
+        s.marker = w.xmlh():InitTextWnd("measure16", g.dialog)
+        s.marker:SetText(">")
+    end
+    local panel = layer == PANELS[s.panel]
+    local vis = {
+        hints_on, hints_on, hints_on and panel and s.panel < #PANELS, hints_on and panel and s.panel == #PANELS,
+        hints_on and layer == "footer", hints_on and (panel or layer == "footer"),
+    }
+    local r = w.abs_rect(g.dialog)
+    local cy = math.min(STRIP_MAX_Y, (r and r.y2 or 700) + STRIP_GAP)
+    ui_gp_pause.update_strip(s.strip, vis, cy)
+
+    local cap = g.gp_controls[({"cap_character", "cap_inventory", "cap_loadout", "cap_options"})[s.panel]]
+    local title = cap:GetWndPos()
+    s.marker:SetWndPos(vector2():set(title.x - 12, title.y))
+    s.marker:SetWndSize(vector2():set(12, cap:GetHeight()))
+    s.marker:Show(panel and hints_on)
+end

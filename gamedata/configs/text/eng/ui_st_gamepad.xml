@@ -1,0 +1,1190 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<string_table>
+	<string id="ui_mm_menu_gamepad">
+		<text>Gamepad</text>
+	</string>
+	<string id="ui_mm_title_gamepad">
+		<text>Gamepad Settings, Calibration &amp; Bindings</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_calib">
+		<text>Live calibration screen for sticks (LS/RS/UI) and triggers (LT/RT): deadzones, saturation thresholds, response curves and camera turn speeds. The profile is saved in appdata\gamepad\profile.ltx.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_open_calibration">
+		<text>Open Live Gamepad Calibration Screen</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reset_calibration">
+		<text>Reset Gamepad Calibration to Defaults</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_remap">
+		<text>Context-aware button remapping (Tap, Hold, Chord), conflict detection, protected Menus &amp; Inventory navigation, layout Export/Import, and Custom Controller Setup Wizard (saved in appdata\gamepad\user_mappings.txt).</text>
+	</string>
+	<string id="ui_mm_control_gamepad_open_remap">
+		<text>Open Gamepad Button Remapping Screen</text>
+	</string>
+	<string id="ui_mm_control_gamepad_open_wizard_class_c">
+		<text>Open Custom Controller Setup Wizard</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reset_bindings">
+		<text>Emergency Reset Gamepad Bindings (or hold Start + Back 5s)</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_glyphs">
+		<text>Button icon set (Auto-detect, Xbox ABXY, PlayStation Cross/Circle/Square/Triangle, Nintendo Switch BAYX, or Generic B1-B4). Saved in appdata\gamepad\profile.ltx [glyphs].</text>
+	</string>
+	<string id="ui_mm_control_gamepad_cycle_glyph_style">
+		<text>Cycle Button Glyph Style (Auto / Xbox / PlayStation / Nintendo / Generic)</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_wheel">
+		<text>Quick Action Wheel (hold LB outside ADS, switch tabs with LT/RT, select a sector with the Right Stick, confirm with A or by releasing LB, cancel with B). Time mode: Real-Time 1.0x (default), Slow-Mo 0.2x or Full Pause.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_cycle_wheel_time_mode">
+		<text>Cycle Quick Wheel Time Mode (Slow-Mo 0.2x / Full Pause / Real-Time 1.0x)</text>
+	</string>
+	<string id="ui_gp_wheel_tab_weapons">
+		<text>Weapons</text>
+	</string>
+	<string id="ui_gp_wheel_tab_meds_food">
+		<text>Meds &amp; Food</text>
+	</string>
+	<string id="ui_gp_wheel_tab_devices">
+		<text>Devices &amp; Light</text>
+	</string>
+	<string id="ui_gp_wheel_tab_companions">
+		<text>Companions</text>
+	</string>
+	<string id="ui_gp_wheel_mode_slowmo">
+		<text>Time: Slow-Mo 0.2x</text>
+	</string>
+	<string id="ui_gp_wheel_mode_pause">
+		<text>Time: Full Pause</text>
+	</string>
+	<string id="ui_gp_wheel_mode_realtime">
+		<text>Time: Real-Time 1.0x</text>
+	</string>
+	<string id="ui_gp_wheel_hint_select">
+		<text>Select</text>
+	</string>
+	<string id="ui_gp_wheel_hint_cancel">
+		<text>Cancel</text>
+	</string>
+	<string id="ui_gp_wheel_act_detector">
+		<text>Detector (Show / Hide)</text>
+	</string>
+	<string id="ui_gp_wheel_act_torch">
+		<text>Headlamp (On / Off)</text>
+	</string>
+	<string id="ui_gp_wheel_act_nvg">
+		<text>NVG (On / Off)</text>
+	</string>
+	<string id="ui_gp_wheel_act_nvg_bright">
+		<text>NVG Brightness</text>
+	</string>
+	<string id="ui_gp_wheel_act_mask">
+		<text>Wipe Mask</text>
+	</string>
+	<string id="ui_gp_wheel_act_pda">
+		<text>3D PDA</text>
+	</string>
+	<string id="ui_gp_wheel_comp_point">
+		<text>Move to crosshair</text>
+	</string>
+	<string id="ui_gp_wheel_comp_idiots">
+		<text>Tactical Companion Menu (IDIOTS)</text>
+	</string>
+	<string id="ui_gp_wheel_hint_assign">
+		<text>Assign</text>
+	</string>
+	<string id="ui_gp_wheel_slot_empty">
+		<text>empty</text>
+	</string>
+	<string id="ui_gp_wheel_slot_weapon_slot">
+		<text>Weapon slot</text>
+	</string>
+	<string id="ui_gp_wheel_assign_pick">
+		<text>Point the stick at a sector first</text>
+	</string>
+	<string id="ui_gp_wheel_assign_failed">
+		<text>Not saved</text>
+	</string>
+	<string id="ui_gp_wheel_assign_nosave">
+		<text>not saved to profile</text>
+	</string>
+	<string id="ui_mm_control_gamepad_x_target_angle">
+		<text>X: hint radius (degrees)</text>
+	</string>
+	<string id="ui_mm_control_gamepad_x_target_angle_desc">
+		<text>How close to a use hint (stash, body, NPC, door) the crosshair must be for a short X to skip reloading. 0 = only exactly on the hint. Gamepad only: within this radius the use hint and Dot Marks already show the object and X/F use it, without exact aiming. Mouse and keyboard work as in the original game.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_ammo_wheel_max_types">
+		<text>Ammo wheel: max ammo types shown</text>
+	</string>
+	<string id="ui_mm_control_gamepad_ammo_wheel_max_types_desc">
+		<text>How many compatible ammo types the Ammo Wheel shows for the current weapon (1 to 6, default 3). The Ammo Wheel is on by default. If there are more compatible types, the currently loaded type comes first, then ammo from the backpack and loaded magazines, sorted by quantity.</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_qaw_warn">
+		<text>Installation note: This radial wheel replaces Quick Action Wheel by HarukaSai and G.A.M.M.A. Quick Action Wheel Balance. Disable both external wheel mods in Mod Organizer 2.</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_mod_status_header">
+		<text>Mod compatibility (feature -&gt; mod -&gt; status):</text>
+	</string>
+	<string id="ui_gp_wheel_tab_ammo">
+		<text>Ammo</text>
+	</string>
+	<string id="ui_gp_wheel_ammo_loaded">
+		<text>loaded</text>
+	</string>
+	<string id="ui_gp_wheel_ammo_empty">
+		<text>No compatible ammo</text>
+	</string>
+	<string id="ui_gp_wheel_hint_confirm">
+		<text>Confirm</text>
+	</string>
+	<string id="ui_gp_comp_follow_me">
+		<text>Follow me</text>
+	</string>
+	<string id="ui_gp_comp_wait_here">
+		<text>Wait here</text>
+	</string>
+	<string id="ui_gp_comp_attack_all">
+		<text>Attack all</text>
+	</string>
+	<string id="ui_gp_comp_ignore_combat">
+		<text>Ignore combat</text>
+	</string>
+	<string id="ui_gp_comp_stop_stealth">
+		<text>Exit stealth</text>
+	</string>
+	<string id="ui_gp_comp_start_stealth">
+		<text>Stealth mode</text>
+	</string>
+	<string id="ui_gp_comp_dist_far">
+		<text>Keep distance: far</text>
+	</string>
+	<string id="ui_gp_comp_dist_near">
+		<text>Keep distance: close</text>
+	</string>
+	<string id="ui_gp_comp_stop_looting">
+		<text>Do not loot corpses</text>
+	</string>
+	<string id="ui_gp_comp_start_looting">
+		<text>Loot corpses</text>
+	</string>
+	<string id="ui_gp_compat_cap_mags">
+		<text>Magazines</text>
+	</string>
+	<string id="ui_gp_compat_cap_ammo_check">
+		<text>Ammo Check</text>
+	</string>
+	<string id="ui_gp_compat_cap_fast_reload">
+		<text>Fast Reload</text>
+	</string>
+	<string id="ui_gp_compat_cap_jamming">
+		<text>Weapon Jam</text>
+	</string>
+	<string id="ui_gp_compat_cap_bullet_time">
+		<text>Bullet Time</text>
+	</string>
+	<string id="ui_gp_compat_cap_qaw_ext">
+		<text>External QAW Wheel</text>
+	</string>
+	<string id="ui_gp_compat_st_ok">
+		<text>OK</text>
+	</string>
+	<string id="ui_gp_compat_st_absent">
+		<text>none (fallback)</text>
+	</string>
+	<string id="ui_gp_compat_st_partial">
+		<text>partial (fallback)</text>
+	</string>
+	<string id="ui_gp_compat_st_broken">
+		<text>broken (fallback)</text>
+	</string>
+	<string id="ui_gp_compat_st_reserved">
+		<text>reserved (no button bound)</text>
+	</string>
+	<string id="ui_gp_compat_st_conflict">
+		<text>disable external mod!</text>
+	</string>
+	<string id="ui_gp_compat_mod_none">
+		<text>none</text>
+	</string>
+	<string id="ui_gp_compat_mod_none_std_reload">
+		<text>none (standard reload)</text>
+	</string>
+	<string id="ui_gp_compat_mod_stub_winchester">
+		<text>empty stub (Winchester 1892)</text>
+	</string>
+	<!-- K5a (D61): Controls Menu (gamepad diagram, callouts, tabs, chords) -->
+	<string id="ui_mm_control_gamepad_open_controls">
+		<text>Open Controls Menu (button diagram &amp; aiming)</text>
+	</string>
+	<string id="ui_gp_ctrl_title">
+		<text>CONTROLS</text>
+	</string>
+	<string id="ui_gp_ctrl_tab_world">
+		<text>World</text>
+	</string>
+	<string id="ui_gp_ctrl_tab_menu">
+		<text>Inventory &amp; Menus</text>
+	</string>
+	<string id="ui_gp_ctrl_tab_aim">
+		<text>Aiming</text>
+	</string>
+	<string id="ui_gp_ctrl_btn_reset">
+		<text>[Y] Reset</text>
+	</string>
+	<string id="ui_gp_ctrl_btn_close">
+		<text>[B] Close</text>
+	</string>
+	<string id="ui_gp_ctrl_hold_prefix">
+		<text>[Hold] </text>
+	</string>
+	<string id="ui_gp_ctrl_locked_suffix">
+		<text> · locked</text>
+	</string>
+	<string id="ui_gp_ctrl_unbound">
+		<text>Not assigned</text>
+	</string>
+	<string id="ui_gp_ctrl_footer_hint">
+		<text>A - Remap  ·  X - Tap/Hold  ·  Y - Reset  ·  LB/RB - Tab  ·  B - Close</text>
+	</string>
+	<string id="ui_gp_ctrl_pad_xbox">
+		<text>Controller Layout: Xbox Series</text>
+	</string>
+	<string id="ui_gp_ctrl_pad_playstation">
+		<text>Controller Layout: DualSense / PlayStation</text>
+	</string>
+	<string id="ui_gp_ctrl_pad_generic">
+		<text>Controller Layout: Standard (Generic)</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_LT">
+		<text>LT</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_LB">
+		<text>LB</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_View">
+		<text>View</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_LS">
+		<text>Left Stick</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_L3">
+		<text>L3 (Press)</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_DU">
+		<text>D-Pad Up</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_DL">
+		<text>D-Pad Left</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_DR">
+		<text>D-Pad Right</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_DD">
+		<text>D-Pad Down</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_RT">
+		<text>RT</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_RB">
+		<text>RB</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_Menu">
+		<text>Menu</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_Y">
+		<text>Y</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_B">
+		<text>B</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_X">
+		<text>X</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_A">
+		<text>A</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_RS">
+		<text>Right Stick</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_R3">
+		<text>R3 (Press)</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_LT">
+		<text>L2</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_LB">
+		<text>L1</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_View">
+		<text>Create / Share</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_LS">
+		<text>Left Stick</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_L3">
+		<text>L3 (Press)</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_DU">
+		<text>D-Pad Up</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_DL">
+		<text>D-Pad Left</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_DR">
+		<text>D-Pad Right</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_DD">
+		<text>D-Pad Down</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_RT">
+		<text>R2</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_RB">
+		<text>R1</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_Menu">
+		<text>Options</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_Y">
+		<text>Triangle</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_B">
+		<text>Circle</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_X">
+		<text>Square</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_A">
+		<text>Cross</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_RS">
+		<text>Right Stick</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_R3">
+		<text>R3 (Press)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_LT">
+		<text>LT / L2</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_LB">
+		<text>LB / L1</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_View">
+		<text>Back / Select</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_LS">
+		<text>Left Stick</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_L3">
+		<text>L3 (Press)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_DU">
+		<text>D-Pad Up</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_DL">
+		<text>D-Pad Left</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_DR">
+		<text>D-Pad Right</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_DD">
+		<text>D-Pad Down</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_RT">
+		<text>RT / R2</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_RB">
+		<text>RB / R1</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_Menu">
+		<text>Start</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_Y">
+		<text>B4 (Top)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_B">
+		<text>B2 (Right)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_X">
+		<text>B3 (Left)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_A">
+		<text>B1 (Bottom)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_RS">
+		<text>Right Stick</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_R3">
+		<text>R3 (Press)</text>
+	</string>
+	<string id="ui_gp_act_Jump">
+		<text>Jump up</text>
+	</string>
+	<string id="ui_gp_act_Crouch">
+		<text>Crouching</text>
+	</string>
+	<string id="ui_gp_act_LowCrouch">
+		<text>Low crouch</text>
+	</string>
+	<string id="ui_gp_act_Sprint">
+		<text>Run</text>
+	</string>
+	<string id="ui_gp_act_MeleeQuick">
+		<text>Knife strike</text>
+	</string>
+	<string id="ui_gp_act_Freelook">
+		<text>Look around</text>
+	</string>
+	<string id="ui_gp_act_Fire">
+		<text>Shoot</text>
+	</string>
+	<string id="ui_gp_act_Aim">
+		<text>Aim (ADS)</text>
+	</string>
+	<string id="ui_gp_act_ContextUseReload">
+		<text>Reload / Interact</text>
+	</string>
+	<string id="ui_gp_act_AmmoCheck">
+		<text>Ammo check</text>
+	</string>
+	<string id="ui_gp_act_FastReload">
+		<text>Fast reload</text>
+	</string>
+	<string id="ui_gp_act_NextWeapon">
+		<text>Next weapon</text>
+	</string>
+	<string id="ui_gp_act_WeaponWheel">
+		<text>Weapon wheel</text>
+	</string>
+	<string id="ui_gp_act_GrenadeQuick">
+		<text>Quick grenade</text>
+	</string>
+	<string id="ui_gp_act_LeanLeft">
+		<text>Lean left</text>
+	</string>
+	<string id="ui_gp_act_LeanRight">
+		<text>Lean right</text>
+	</string>
+	<string id="ui_gp_act_TorchToggle">
+		<text>Headlamp</text>
+	</string>
+	<string id="ui_gp_act_NightVision">
+		<text>NVG</text>
+	</string>
+	<string id="ui_gp_act_DetectorToggle">
+		<text>Detector</text>
+	</string>
+	<string id="ui_gp_act_FireModeNext">
+		<text>Fire mode</text>
+	</string>
+	<string id="ui_gp_act_Pda3DToggle">
+		<text>3D PDA</text>
+	</string>
+	<string id="ui_gp_act_AmmoTypeNext">
+		<text>Next ammo type</text>
+	</string>
+	<string id="ui_gp_act_MaskClean">
+		<text>Wipe mask</text>
+	</string>
+	<string id="ui_gp_act_UnderbarrelToggle">
+		<text>Underbarrel</text>
+	</string>
+	<string id="ui_gp_act_PauseMenu">
+		<text>Pause</text>
+	</string>
+	<string id="ui_gp_act_PdaFullToggle">
+		<text>Inventory</text>
+	</string>
+	<string id="ui_gp_act_MoveStick">
+		<text>Movement</text>
+	</string>
+	<string id="ui_gp_act_LookStick">
+		<text>Look</text>
+	</string>
+	<string id="ui_gp_act_Confirm">
+		<text>Select / Drag</text>
+	</string>
+	<string id="ui_gp_act_Back">
+		<text>Return</text>
+	</string>
+	<string id="ui_gp_act_ContextMenu">
+		<text>Context menu</text>
+	</string>
+	<string id="ui_gp_act_QuickAction">
+		<text>Quick action</text>
+	</string>
+	<string id="ui_gp_act_TabPrev">
+		<text>LB chords</text>
+	</string>
+	<string id="ui_gp_act_TabNext">
+		<text>Medical filter</text>
+	</string>
+	<string id="ui_gp_act_PagePrev">
+		<text>Previous category</text>
+	</string>
+	<string id="ui_gp_act_PageNext">
+		<text>Next category</text>
+	</string>
+	<string id="ui_gp_act_PanelSwitch">
+		<text>Backpack / Equipment</text>
+	</string>
+	<string id="ui_gp_act_CancelQueue">
+		<text>Remove last queued</text>
+	</string>
+	<string id="ui_gp_act_CursorStick">
+		<text>Cursor</text>
+	</string>
+	<string id="ui_gp_act_ScrollStick">
+		<text>Scroll list</text>
+	</string>
+	<string id="ui_gp_act_NavigateCells">
+		<text>Navigate cells</text>
+	</string>
+	<string id="ui_gp_act_Menu">
+		<text>-</text>
+	</string>
+	<string id="ui_gp_act_MoveStack">
+		<text>Move stack</text>
+	</string>
+	<string id="ui_gp_act_InspectItem">
+		<text>Inspect</text>
+	</string>
+	<string id="ui_gp_act_QuickSlotAssign">
+		<text>Bind to F1-F4</text>
+	</string>
+	<string id="ui_gp_chord_lb_dpad">
+		<text>LB + D-Pad</text>
+	</string>
+	<string id="ui_gp_ctrl_btn_wish">
+		<text>Wheel on Y</text>
+	</string>
+	<string id="ui_gp_ctrl_capture_prompt">
+		<text>Press a button (short - Tap, long - Hold, 2 buttons - Chord; B - cancel)</text>
+	</string>
+	<string id="ui_gp_ctrl_capture_slot">
+		<text>Press a button...</text>
+	</string>
+	<string id="ui_gp_ctrl_reset_confirm">
+		<text>Reset this tab to default bindings?  [A] Yes   [B] Cancel</text>
+	</string>
+	<string id="ui_gp_ctrl_reset_done">
+		<text>Default bindings for this tab restored</text>
+	</string>
+	<string id="ui_gp_ctrl_err_locked">
+		<text>Movement and Look sticks cannot be remapped</text>
+	</string>
+	<string id="ui_gp_ctrl_err_pause">
+		<text>Cannot leave controls without a Pause button</text>
+	</string>
+	<string id="ui_gp_ctrl_err_back">
+		<text>Cannot leave menus without a Back button</text>
+	</string>
+	<string id="ui_gp_act_QuickBoltOrSlot">
+		<text>Quick consumables</text>
+	</string>
+	<string id="ui_gp_act_SwitchPanel">
+		<text>Backpack / Equipment</text>
+	</string>
+	<string id="ui_gp_act_AmmoWheel">
+		<text>Ammo wheel</text>
+	</string>
+	<string id="ui_gp_act_DialogSelect">
+		<text>Select line</text>
+	</string>
+	<string id="ui_gp_act_DialogExit">
+		<text>Exit dialog</text>
+	</string>
+	<string id="ui_gp_act_WheelConfirm">
+		<text>Confirm in wheel</text>
+	</string>
+	<string id="ui_gp_act_WheelCancel">
+		<text>Close wheel</text>
+	</string>
+	<string id="ui_gp_act_WheelTabPrev">
+		<text>Prev wheel tab</text>
+	</string>
+	<string id="ui_gp_act_WheelTabNext">
+		<text>Next wheel tab</text>
+	</string>
+	<string id="ui_gp_act_PdaInteractiveToggle">
+		<text>PDA cursor</text>
+	</string>
+	<string id="ui_gp_act_PdaClose">
+		<text>Close PDA</text>
+	</string>
+	<string id="ui_gp_act_PlacementConfirm">
+		<text>Place item</text>
+	</string>
+	<string id="ui_gp_act_PlacementCancel">
+		<text>Cancel placement</text>
+	</string>
+	<string id="ui_gp_act_PlacementRotate">
+		<text>Rotate item</text>
+	</string>
+	<string id="ui_gp_tab_world">
+		<text>World</text>
+	</string>
+	<string id="ui_gp_tab_menu">
+		<text>Inventory &amp; Menus</text>
+	</string>
+	<string id="ui_gp_tab_aim">
+		<text>Aiming</text>
+	</string>
+	<string id="ui_gp_btn_reset">
+		<text>[Y] Reset</text>
+	</string>
+	<string id="ui_gp_btn_close">
+		<text>[B] Close</text>
+	</string>
+	<string id="ui_gp_aim_grp_look">
+		<text>SENSITIVITY &amp; RESPONSE</text>
+	</string>
+	<string id="ui_gp_aim_grp_dz">
+		<text>DEADZONES</text>
+	</string>
+	<string id="ui_gp_aim_grp_aa">
+		<text>AIM ASSIST</text>
+	</string>
+	<string id="ui_gp_aim_grp_curve">
+		<text>RESPONSE CURVE</text>
+	</string>
+	<string id="ui_gp_aim_grp_stick">
+		<text>STICK</text>
+	</string>
+	<string id="ui_gp_aim_sx">
+		<text>Horizontal Sensitivity</text>
+	</string>
+	<string id="ui_gp_aim_sy">
+		<text>Vertical Sensitivity</text>
+	</string>
+	<string id="ui_gp_aim_ads">
+		<text>ADS Sensitivity Multiplier</text>
+	</string>
+	<string id="ui_gp_aim_acc">
+		<text>Edge Acceleration</text>
+	</string>
+	<string id="ui_gp_aim_curve">
+		<text>Response Curve</text>
+	</string>
+	<string id="ui_gp_aim_inv">
+		<text>Invert Vertical Look</text>
+	</string>
+	<string id="ui_gp_aim_dzi">
+		<text>Inner Deadzone (Anti-Drift)</text>
+	</string>
+	<string id="ui_gp_aim_dzo">
+		<text>Outer Limit (Full Tilt)</text>
+	</string>
+	<string id="ui_gp_aim_assist">
+		<text>Mode</text>
+	</string>
+	<string id="ui_gp_aim_fric">
+		<text>Target Friction</text>
+	</string>
+	<string id="ui_gp_aim_mag">
+		<text>ADS Magnetism</text>
+	</string>
+	<string id="ui_gp_aim_scope">
+		<text>Disable in Scopes &amp; 3D Scopes</text>
+	</string>
+	<string id="ui_gp_aim_curve_lin">
+		<text>Linear</text>
+	</string>
+	<string id="ui_gp_aim_curve_exp">
+		<text>Smooth</text>
+	</string>
+	<string id="ui_gp_aim_curve_s">
+		<text>S-Curve</text>
+	</string>
+	<string id="ui_gp_aim_off">
+		<text>Off</text>
+	</string>
+	<string id="ui_gp_aim_on">
+		<text>On</text>
+	</string>
+	<string id="ui_gp_aim_yes">
+		<text>Yes</text>
+	</string>
+	<string id="ui_gp_aim_no">
+		<text>No</text>
+	</string>
+	<string id="ui_gp_aim_aa_off">
+		<text>Off</text>
+	</string>
+	<string id="ui_gp_aim_aa_low">
+		<text>Low</text>
+	</string>
+	<string id="ui_gp_aim_aa_mid">
+		<text>Medium</text>
+	</string>
+	<string id="ui_gp_aim_aa_high">
+		<text>High</text>
+	</string>
+	<string id="ui_gp_aim_cap_curve">
+		<text>Gentle camera movement near the center, ramping up to full speed at the edge. Shaded bands show inner and outer deadzones.</text>
+	</string>
+	<string id="ui_gp_aim_cap_stick">
+		<text>Tilt the right stick - the dot shows live response while the rings show the inner deadzone and outer limit.</text>
+	</string>
+	<string id="ui_gp_aim_k6b_locked">
+		<text>unavailable (coming soon)</text>
+	</string>
+	<string id="ui_gp_aim_info_curve">
+		<text>Horiz: %d%%  |  Vert: %d%%  |  Deadzone: %d%%-%d%%</text>
+	</string>
+	<string id="ui_gp_aim_info_stick">
+		<text>Stick tilt: %d%%   ->   Camera response: %d%%</text>
+	</string>
+	<string id="ui_gp_aim_footer_hint">
+		<text>Up/Down: Select Row  |  Left/Right: Adjust (Auto-Save)  |  LB/RB: Tabs  |  Y: Reset  |  B: Close</text>
+	</string>
+	<string id="st_gp_no_apply_targets">
+		<text>No compatible items in inventory</text>
+	</string>
+	<string id="ui_gp_ctrl_pad_nintendo">
+		<text>Controller Layout: Nintendo Switch</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_LT">
+		<text>ZL</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_LB">
+		<text>L</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_View">
+		<text>Minus</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_LS">
+		<text>Left Stick</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_L3">
+		<text>L3 (Press)</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_DU">
+		<text>D-Pad Up</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_DL">
+		<text>D-Pad Left</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_DR">
+		<text>D-Pad Right</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_DD">
+		<text>D-Pad Down</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_RT">
+		<text>ZR</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_RB">
+		<text>R</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_Menu">
+		<text>Plus</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_Y">
+		<text>Y</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_B">
+		<text>A</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_X">
+		<text>X</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_A">
+		<text>B</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_RS">
+		<text>Right Stick</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_R3">
+		<text>R3 (Press)</text>
+	</string>
+	<string id="ui_mm_control_gamepad_inv_hl_deep">
+		<text>Inventory: deep blue selection color</text>
+	</string>
+	<string id="ui_mm_control_gamepad_inv_hl_deep_desc">
+		<text>Off: light teal selection highlight on all slots (backpack and equipment). On: deeper, high-contrast blue highlight on all slots. Gamepad only.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_ui_editor">
+		<text>UI editor</text>
+	</string>
+	<string id="ui_mm_control_gamepad_ui_editor_desc">
+		<text>Hidden feature: opens the UI editor in the overlay (F10, Debug menu). Move, resize and recolor screen elements. Edits are stored in appdata\gamepad\ui-layout\user.ltx.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reset_ui_layout">
+		<text>Reset interface</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reset_ui_layout_desc">
+		<text>Restores the default interface. Current edits are kept as user.bak.ltx.</text>
+	</string>
+	<string id="ui_gp_act_KnifeDraw">
+		<text>Draw knife / binoculars</text>
+	</string>
+	<string id="ui_gp_act_WeaponLower">
+		<text>Lower weapon</text>
+	</string>
+	<string id="ui_gp_act_PdaFlat">
+		<text>PDA</text>
+	</string>
+	<string id="ui_gp_act_BoltThrow">
+		<text>Bolt</text>
+	</string>
+	<string id="ui_gp_act_WeaponSelect">
+		<text>Weapon select</text>
+	</string>
+	<string id="ui_gp_act_ForceReload">
+		<text>Reload (forced)</text>
+	</string>
+	<string id="ui_gp_act_TutorialPrompt">
+		<text>Tutorial</text>
+	</string>
+	<string id="ui_gp_wheel_act_fast_reload">
+		<text>Fast Reload</text>
+	</string>
+	<string id="ui_gp_wheel_weapons_empty">
+		<text>No weapons in slots</text>
+	</string>
+	<!-- GPSET-2_START -->
+	<string id="ui_gp_oth_grp_haptics">
+		<text>Vibration</text>
+	</string>
+	<string id="ui_gp_oth_grp_icons">
+		<text>Icons &amp; Prompts</text>
+	</string>
+	<string id="ui_gp_oth_grp_control">
+		<text>Controls</text>
+	</string>
+	<string id="ui_gp_oth_grp_pad">
+		<text>Gamepad</text>
+	</string>
+	<string id="ui_gp_oth_grp_debug">
+		<text>Debug</text>
+	</string>
+	<string id="ui_gp_oth_hap_master">
+		<text>Master Level</text>
+	</string>
+	<string id="ui_gp_oth_hap_master_desc">
+		<text>Overall vibration level across all gameplay events (0% = off). Press X to test the current strength.</text>
+	</string>
+	<string id="ui_gp_oth_hap_recoil">
+		<text>Shooting &amp; Recoil</text>
+	</string>
+	<string id="ui_gp_oth_hap_recoil_desc">
+		<text>Vibration on weapon shots, bolt cycling, and reloads (0% = off). Press X to test.</text>
+	</string>
+	<string id="ui_gp_oth_hap_damage">
+		<text>Damage</text>
+	</string>
+	<string id="ui_gp_oth_hap_damage_desc">
+		<text>Vibration when taking hits, falls, and melee strikes (0% = off). Press X to test.</text>
+	</string>
+	<string id="ui_gp_oth_hap_anomaly">
+		<text>Nearby Anomalies</text>
+	</string>
+	<string id="ui_gp_oth_hap_anomaly_desc">
+		<text>Proximity rumble near active anomalies and discharges (0% = off). Press X to test.</text>
+	</string>
+	<string id="ui_gp_oth_hap_jam">
+		<text>Weapon Jam</text>
+	</string>
+	<string id="ui_gp_oth_hap_jam_desc">
+		<text>Distinct pulse when a weapon misfires or jams (0% = off). Press X to test.</text>
+	</string>
+	<string id="ui_gp_oth_hap_explosion">
+		<text>Blasts</text>
+	</string>
+	<string id="ui_gp_oth_hap_explosion_desc">
+		<text>Heavy low-frequency rumble from grenades, blasts, and emissions (0% = off). Press X to test.</text>
+	</string>
+	<string id="ui_gp_oth_glyph_type">
+		<text>Gamepad Type</text>
+	</string>
+	<string id="ui_gp_oth_glyph_type_desc">
+		<text>Button labels shown in prompts and menus. Auto detects the connected controller family.</text>
+	</string>
+	<string id="ui_gp_oth_pad_auto">
+		<text>Auto</text>
+	</string>
+	<string id="ui_gp_oth_pad_xbox">
+		<text>Xbox</text>
+	</string>
+	<string id="ui_gp_oth_pad_ps">
+		<text>PlayStation</text>
+	</string>
+	<string id="ui_gp_oth_pad_nintendo">
+		<text>Nintendo</text>
+	</string>
+	<string id="ui_gp_oth_pad_generic">
+		<text>Generic</text>
+	</string>
+	<string id="ui_gp_oth_icon_style">
+		<text>Icon Style</text>
+	</string>
+	<string id="ui_gp_oth_icon_style_desc">
+		<text>Visual style of gamepad button icons matching the game HUD: light, weathered dark, or colored symbols.</text>
+	</string>
+	<string id="ui_gp_oth_style_white">
+		<text>Light</text>
+	</string>
+	<string id="ui_gp_oth_style_dark">
+		<text>Dark</text>
+	</string>
+	<string id="ui_gp_oth_style_color">
+		<text>Colored</text>
+	</string>
+	<string id="ui_gp_oth_icon_scale">
+		<text>Icon Scale</text>
+	</string>
+	<string id="ui_gp_oth_icon_scale_desc">
+		<text>Scale of gamepad button icons across world prompts, inventory, and menus (50% to 150%).</text>
+	</string>
+	<string id="ui_gp_oth_hint_mode">
+		<text>On-Screen Button Prompts</text>
+	</string>
+	<string id="ui_gp_oth_hint_mode_desc">
+		<text>Where to show button prompt icons: always, only in menus and inventory, or hidden everywhere.</text>
+	</string>
+	<string id="ui_gp_oth_hints_always">
+		<text>Always</text>
+	</string>
+	<string id="ui_gp_oth_hints_menu">
+		<text>Menus Only</text>
+	</string>
+	<string id="ui_gp_oth_hints_off">
+		<text>Hide</text>
+	</string>
+	<string id="ui_gp_oth_crouch_mode">
+		<text>Crouch</text>
+	</string>
+	<string id="ui_gp_oth_crouch_mode_desc">
+		<text>Crouch button behavior: hold while crouching or toggle with a single press.</text>
+	</string>
+	<string id="ui_gp_oth_sprint_mode">
+		<text>Run</text>
+	</string>
+	<string id="ui_gp_oth_sprint_mode_desc">
+		<text>Run button behavior: hold while running or toggle with a single press.</text>
+	</string>
+	<string id="ui_gp_oth_mode_hold">
+		<text>Hold</text>
+	</string>
+	<string id="ui_gp_oth_mode_toggle">
+		<text>Toggle</text>
+	</string>
+	<string id="ui_gp_oth_btn_test">
+		<text>Button Test</text>
+	</string>
+	<string id="ui_gp_oth_btn_test_desc">
+		<text>Opens a live controller diagram highlighting pressed buttons, triggers, D-pad, and sticks in white. Hold B for 1 second to exit.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_calib_open">
+		<text>Calibrate Sticks and Triggers</text>
+	</string>
+	<string id="ui_gp_oth_dbg_calib_open_desc">
+		<text>Step-by-step center, deadzone, and trigger range calibration for controllers with stick drift.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_calib_reset">
+		<text>Reset Calibration</text>
+	</string>
+	<string id="ui_gp_oth_dbg_calib_reset_desc">
+		<text>Restores default stick and trigger calibration thresholds and saves them to the profile.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_remap_open">
+		<text>Debug Remap Utility</text>
+	</string>
+	<string id="ui_gp_oth_dbg_remap_open_desc">
+		<text>Opens the low-level engine input remapping utility for troubleshooting non-standard controllers.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_wizard_c">
+		<text>Custom Controller Wizard</text>
+	</string>
+	<string id="ui_gp_oth_dbg_wizard_c_desc">
+		<text>Step-by-step button and axis mapping wizard for unrecognized non-standard controllers.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_bind_reset">
+		<text>Emergency Binding Reset</text>
+	</string>
+	<string id="ui_gp_oth_dbg_bind_reset_desc">
+		<text>Resets all gamepad button bindings across every context back to mod defaults.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_wheel_open">
+		<text>Quick Action Wheel Setup</text>
+	</string>
+	<string id="ui_gp_oth_dbg_wheel_open_desc">
+		<text>Opens the setup screen for sectors and tabs of the radial wheel (weapons, ammo and devices).</text>
+	</string>
+	<string id="ui_gp_oth_wheel_time">
+		<text>Wheel Time Mode</text>
+	</string>
+	<string id="ui_gp_oth_wheel_time_desc">
+		<text>Game time flow while the radial wheel is open: real time, slow motion, or full pause.</text>
+	</string>
+	<string id="ui_gp_oth_wheel_realtime">
+		<text>Real-Time</text>
+	</string>
+	<string id="ui_gp_oth_wheel_slowmo">
+		<text>Slow Motion</text>
+	</string>
+	<string id="ui_gp_oth_wheel_pause">
+		<text>Pause</text>
+	</string>
+	<string id="ui_gp_oth_x_angle">
+		<text>Interaction Prompt Angle</text>
+	</string>
+	<string id="ui_gp_oth_x_angle_desc">
+		<text>Maximum view angle cone in degrees (0 to 30) within which the X interaction prompt locks onto nearby targets.</text>
+	</string>
+	<string id="ui_gp_oth_unit_deg">
+		<text>°</text>
+	</string>
+	<string id="ui_gp_oth_inv_hl">
+		<text>Inventory Cell Highlight</text>
+	</string>
+	<string id="ui_gp_oth_inv_hl_desc">
+		<text>Selected inventory slot highlight style: standard G.A.M.M.A. neutral tint or high-contrast deep blue.</text>
+	</string>
+	<string id="ui_gp_oth_inv_hl_std">
+		<text>Standard</text>
+	</string>
+	<string id="ui_gp_oth_inv_hl_blue">
+		<text>Deep Blue</text>
+	</string>
+	<string id="ui_gp_oth_ui_editor">
+		<text>UI Layout Editor</text>
+	</string>
+	<string id="ui_gp_oth_ui_editor_desc">
+		<text>Enables the debug UI element positioning panel inside the F10 overlay.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_ui_reset">
+		<text>Reset UI Layout</text>
+	</string>
+	<string id="ui_gp_oth_dbg_ui_reset_desc">
+		<text>Backs up custom UI layout offsets and restores all interface elements to their default positions.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_compat">
+		<text>Mod Compatibility Report</text>
+	</string>
+	<string id="ui_gp_oth_dbg_compat_desc">
+		<text>Displays detected G.A.M.M.A. weapon and UI mod integrations. Press A or Y to view the full status report.</text>
+	</string>
+	<string id="ui_gp_oth_reload_guard">
+		<text>Accidental reload protection</text>
+	</string>
+	<string id="ui_gp_oth_reload_guard_desc">
+		<text>On: while the crosshair is on an item or spot with an interaction mark (even a distant one), X does not reload - the gamepad gives a light pulse instead. LT + X still reloads. Off: X reloads as usual.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reload_guard">
+		<text>Accidental reload protection</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reload_guard_desc">
+		<text>X does not reload while the crosshair is on a marked item. LT + X always reloads.</text>
+	</string>
+	<string id="ui_gp_oth_off">
+		<text>Off</text>
+	</string>
+	<string id="ui_gp_oth_on">
+		<text>On</text>
+	</string>
+	<string id="ui_gp_oth_act_open">
+		<text>Open</text>
+	</string>
+	<string id="ui_gp_oth_act_reset">
+		<text>Reset</text>
+	</string>
+	<string id="ui_gp_oth_act_report">
+		<text>Show Report</text>
+	</string>
+	<string id="ui_gp_oth_preview_title">
+		<text>Button Icon Preview</text>
+	</string>
+	<string id="ui_gp_oth_press_a_run">
+		<text>A - Run action</text>
+	</string>
+	<string id="ui_gp_oth_hint_short">
+		<text>Y - Detailed help. Changes take effect when you press Apply.</text>
+	</string>
+	<string id="ui_gp_oth_hint_short_rumble">
+		<text>X - Test vibration on this channel. Y - Detailed help.</text>
+	</string>
+	<string id="ui_gp_oth_f_test">
+		<text>Test</text>
+	</string>
+	<string id="ui_gp_oth_status_rumble_test">
+		<text>Vibration test started</text>
+	</string>
+	<string id="ui_gp_oth_status_rumble_off">
+		<text>Intensity is 0% - vibration is turned off</text>
+	</string>
+	<string id="ui_gp_oth_status_done">
+		<text>Done</text>
+	</string>
+	<string id="ui_gp_btntest_title">
+		<text>Gamepad Button Test</text>
+	</string>
+	<string id="ui_gp_btntest_idle">
+		<text>Press any button, trigger, or move a stick</text>
+	</string>
+	<string id="ui_gp_btntest_pressed">
+		<text>Pressed:</text>
+	</string>
+	<string id="ui_gp_btntest_sub">
+		<text>A short tap on B tests the B button itself without closing the window</text>
+	</string>
+	<string id="ui_gp_btntest_exit_hold">
+		<text>Hold B (1 sec) to close</text>
+	</string>
+	<string id="ui_gp_btntest_guide">
+		<text>Guide Button</text>
+	</string>
+	<!-- GPSET-2_END -->
+	<!-- CURSOR1_START -->
+	<string id="ui_gp_act_MouseCursor">
+		<text>Mouse mode</text>
+	</string>
+	<string id="ui_gp_cursor_hint_move">
+		<text>Move</text>
+	</string>
+	<string id="ui_gp_cursor_hint_lclick">
+		<text>LMB</text>
+	</string>
+	<string id="ui_gp_cursor_hint_rclick">
+		<text>RMB</text>
+	</string>
+	<string id="ui_gp_cursor_hint_scroll">
+		<text>Scroll</text>
+	</string>
+	<string id="ui_gp_cursor_hint_exit">
+		<text>Exit</text>
+	</string>
+	<string id="ui_gp_cursor_hold_short">
+		<text>Hold</text>
+	</string>
+	<!-- CURSOR1_END -->
+	<string id="ui_gp_act_WheelMaskClean">
+		<text>Wipe Mask (wheel shortcut)</text>
+	</string>
+	<string id="ui_gp_act_WheelLaser">
+		<text>Laser (wheel shortcut)</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle">
+		<text>PDA map marker</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_desc">
+		<text>Shape of the marker in the centre of the PDA map. The marker stays put: the left stick moves the map under it, the right stick zooms, and it sticks to a nearby task.</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_square">
+		<text>Square</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_circle">
+		<text>Circle</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_cross">
+		<text>Cross</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_size">
+		<text>PDA map reticle size</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_size_desc">
+		<text>Size of the reticle in the centre of the PDA map. A bigger reticle notices and sticks to markers from further away.</text>
+	</string>
+</string_table>

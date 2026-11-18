@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="st_gp_qaw_wheel"><text>Колесо</text></string>
+    <string id="st_gp_qaw_meds"><text>Расходники</text></string>
+    <string id="st_gp_qaw_grenades"><text>Гранаты и обвесы</text></string>
+    <string id="st_gp_qaw_devices"><text>Устройства и другое</text></string>
+    <string id="st_gp_qaw_companions"><text>Напарники</text></string>
+    <string id="st_gp_qaw_moving"><text>Перенос</text></string>
+    <string id="st_gp_qaw_assigned"><text>Расходник назначен на короткий LB</text></string>
+    <string id="st_gp_qaw_quick_empty"><text>Нет расходника</text></string>
+    <string id="st_gp_qaw_unavailable"><text>Колесо недоступно</text></string>
+    <string id="st_gp_qaw_prev"><text>Вкладка назад</text></string>
+    <string id="st_gp_qaw_next"><text>Вкладка вперёд</text></string>
+    <string id="st_gp_qaw_use"><text>Применить</text></string>
+    <string id="st_gp_qaw_close"><text>Закрыть</text></string>
+    <string id="st_gp_qaw_move"><text>назначить</text></string>
+    <string id="st_gp_qaw_remove"><text>убрать</text></string>
+    <string id="st_gp_qaw_add_meds"><text>Добавить в колесо / Лечение и еда</text></string>
+    <string id="st_gp_qaw_add_grenades"><text>Добавить в колесо / Гранаты и обвесы</text></string>
+    <string id="st_gp_qaw_settings"><text>Настройки колеса</text></string>
+    <string id="st_gp_qaw_settings_keys"><text>^v Выбор    A Вкл/выкл    LB/RB Порядок    B Назад</text></string>
+    <string id="st_gp_qaw_quick"><text>Быстрый расходник</text></string>
+    <string id="st_gp_qaw_time"><text>Режим времени</text></string>
+    <string id="st_gp_qaw_on"><text>Вкл</text></string>
+    <string id="st_gp_qaw_off"><text>Выкл</text></string>
+    <string id="st_gp_qaw_empty"><text>Пусто</text></string>
+    <string id="ui_mm_control_gamepad_open_wheel"><text>Колесо</text></string>
+    <string id="ui_mm_hint_control_gamepad_open_wheel"><text>Настройки колеса</text></string>
+    <string id="st_gp_qaw_add"><text>добавить в колесо</text></string>
+    <string id="st_gp_qaw_full"><text>Колесо заполнено</text></string>
+    <string id="st_gp_qaw_laser"><text>ЛЦУ</text></string>
+    <string id="st_gp_qaw_binocular"><text>Бинокль</text></string>
+    <string id="st_gp_qaw_place"><text>положить</text></string>
+    <string id="st_gp_qaw_quick_missing"><text>Расходник не назначен</text></string>
+    <string id="st_gp_qaw_quick_spent"><text>Расходник закончился</text></string>
+    <!-- FIX-LIVE3 п.18: закреплённые слоты крестовины (gp_qaw_patch pins) -->
+    <string id="st_gp_pin_set"><text>Закреплено на крестовине: %1. Использовать: LB + это направление</text></string>
+    <string id="st_gp_pin_ask"><text>Направление занято: %1. Заменить на %2? A — да, B — нет</text></string>
+    <string id="st_gp_pin_kept"><text>Оставлено как было</text></string>
+    <string id="st_gp_pin_same"><text>Уже закреплено: %1</text></string>
+    <string id="st_gp_pin_empty"><text>На этом направлении крестовины ничего не закреплено</text></string>
+    <string id="st_gp_pin_spent"><text>Закончилось: %1</text></string>
+    <string id="st_gp_pin_unavailable"><text>Сейчас недоступно: %1</text></string>
+    <string id="st_gp_pin_unpinnable"><text>Это нельзя закрепить на крестовине</text></string>
+    <string id="st_gp_pin_no_sector"><text>Наведи стик на сектор колеса, потом нажми направление крестовины</text></string>
+</string_table>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="st_gp_qaw_wheel"><text>Wheel</text></string>
+    <string id="st_gp_qaw_meds"><text>Consumables</text></string>
+    <string id="st_gp_qaw_grenades"><text>Grenades &amp; Addons</text></string>
+    <string id="st_gp_qaw_devices"><text>Devices &amp; more</text></string>
+    <string id="st_gp_qaw_companions"><text>Companions</text></string>
+    <string id="st_gp_qaw_moving"><text>Moving</text></string>
+    <string id="st_gp_qaw_assigned"><text>Consumable assigned to LB tap</text></string>
+    <string id="st_gp_qaw_quick_empty"><text>No consumable</text></string>
+    <string id="st_gp_qaw_unavailable"><text>Wheel unavailable</text></string>
+    <string id="st_gp_qaw_prev"><text>Previous tab</text></string>
+    <string id="st_gp_qaw_next"><text>Next tab</text></string>
+    <string id="st_gp_qaw_use"><text>Use</text></string>
+    <string id="st_gp_qaw_close"><text>Close</text></string>
+    <string id="st_gp_qaw_move"><text>assign</text></string>
+    <string id="st_gp_qaw_remove"><text>remove</text></string>
+    <string id="st_gp_qaw_add_meds"><text>Add to wheel: Meds &amp; Food</text></string>
+    <string id="st_gp_qaw_add_grenades"><text>Add to wheel: Grenades &amp; Addons</text></string>
+    <string id="st_gp_qaw_settings"><text>Wheel settings</text></string>
+    <string id="st_gp_qaw_settings_keys"><text>^v Select    A Toggle    LB/RB Reorder    B Back</text></string>
+    <string id="st_gp_qaw_quick"><text>Quick consumable</text></string>
+    <string id="st_gp_qaw_time"><text>Time mode</text></string>
+    <string id="st_gp_qaw_on"><text>On</text></string>
+    <string id="st_gp_qaw_off"><text>Off</text></string>
+    <string id="st_gp_qaw_empty"><text>Empty</text></string>
+    <string id="ui_mm_control_gamepad_open_wheel"><text>Wheel</text></string>
+    <string id="ui_mm_hint_control_gamepad_open_wheel"><text>Wheel settings</text></string>
+    <string id="st_gp_qaw_add"><text>add to wheel</text></string>
+    <string id="st_gp_qaw_full"><text>Wheel is full</text></string>
+    <string id="st_gp_qaw_laser"><text>Laser</text></string>
+    <string id="st_gp_qaw_binocular"><text>Binoculars</text></string>
+    <string id="st_gp_qaw_place"><text>place</text></string>
+    <string id="st_gp_qaw_quick_missing"><text>No consumable assigned</text></string>
+    <string id="st_gp_qaw_quick_spent"><text>Consumable depleted</text></string>
+    <!-- FIX-LIVE3 п.18: закреплённые слоты крестовины (gp_qaw_patch pins) -->
+    <string id="st_gp_pin_set"><text>Pinned to D-pad: %1. Use: LB + this direction</text></string>
+    <string id="st_gp_pin_ask"><text>Direction taken: %1. Replace with %2? A - yes, B - no</text></string>
+    <string id="st_gp_pin_kept"><text>Kept as it was</text></string>
+    <string id="st_gp_pin_same"><text>Already pinned: %1</text></string>
+    <string id="st_gp_pin_empty"><text>Nothing is pinned to this D-pad direction</text></string>
+    <string id="st_gp_pin_spent"><text>Out of: %1</text></string>
+    <string id="st_gp_pin_unavailable"><text>Not available now: %1</text></string>
+    <string id="st_gp_pin_unpinnable"><text>This can't be pinned to the D-pad</text></string>
+    <string id="st_gp_pin_no_sector"><text>Point the stick at a wheel sector, then press a D-pad direction</text></string>
+</string_table>

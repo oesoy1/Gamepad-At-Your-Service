@@ -1,0 +1,3185 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- UI-Settings-v2 (docs/ui/gamepad-settings-v2/BRIEF.md): gamepad pages inside the stock UIOptions window.
+-- ASCII source. The old windows UIGpControlsWnd / UIGpAimWnd stay as the logic owners (remap state machine,
+-- profile.ltx writer, aim state); their own widgets are hidden and replaced by stock-styled ones built here.
+-- Layout is in the 1024x768 UI space of ui_options_16.xml; the right panel is "tab_size" (340,55,573,606).
+
+local installed = false
+local owner     = nil      -- UIOptions instance that currently hosts the pages
+local controls  = nil      -- UIGpControlsWnd
+local aim       = nil      -- UIGpAimWnd
+local other     = nil      -- UIGpOtherWnd (GPSET-2: "Other settings" page)
+local active    = nil      -- the window that is shown now (controls / aim / other / nil)
+local cur_tab   = "world"
+local aim_applied   = nil  -- snapshot of the engine state; aim.state holds pending (not applied) values
+local other_applied = nil  -- snapshot of the engine state; other.state holds pending (not applied) values
+local X         = nil      -- CScriptXmlInit for ui_gp_native.xml
+
+local PATH      = "control/gamepad"
+local TABS      = { "world", "menu", "aim", "other" }
+local PANEL_W, PANEL_H = 573, 606
+local TABLE_W   = 340
+local SIDE_X, SIDE_W = 348, 225
+local ROW_H, ROW_STEP, GROUP_STEP = 18, 21, 26
+local MAX_ROWS, MAX_GROUPS, MAX_HELP = 20, 6, 8
+
+-- Table groups. "world" copies the stock keybinding groups (BRIEF 5.2); "menu" groups are project ones.
+local GROUPS = {
+    world = { "move", "weapon", "inv", "pda", "common" },
+    menu  = { "nav", "act", "tabs", "common" },
+}
+local ACT_GROUP = {
+    MoveStick = "move", LookStick = "move", Jump = "move", Crouch = "move", LowCrouch = "move",
+    Sprint = "move", Freelook = "move", LeanLeft = "move", LeanRight = "move",
+    Fire = "weapon", Aim = "weapon", ContextUseReload = "weapon", AmmoCheck = "weapon", FastReload = "weapon",
+    NextWeapon = "weapon", WeaponWheel = "weapon", GrenadeQuick = "weapon", QuickBoltOrSlot = "weapon",
+    MeleeQuick = "weapon", FireModeNext = "weapon", AmmoTypeNext = "weapon", UnderbarrelToggle = "weapon",
+    TorchToggle = "inv", NightVision = "inv", DetectorToggle = "inv", MaskClean = "inv",
+    WheelMaskClean = "inv", WheelLaser = "inv",
+    Pda3DToggle = "pda", PdaFullToggle = "pda",
+    PauseMenu = "common",
+    CursorStick = "nav", ScrollStick = "nav", NavigateCells = "nav",
+    Confirm = "act", Back = "act", ContextMenu = "act", QuickAction = "act",
+    TabPrev = "tabs", TabNext = "tabs", PagePrev = "tabs", PageNext = "tabs",
+    PanelSwitch = "common", CancelQueue = "common", MouseCursor = "common", Menu = "common",
+}
+-- Aim page groups (BRIEF 5.3). Only parameters that exist in ui_gp_aim.get_parameter_specs() are shown.
+local AIM_GROUPS = {
+    { id = "look",   params = { "sx", "sy", "inv", "acc" } },
+    { id = "ads",    params = { "ads" } },
+    { id = "stick",  params = { "dzi", "dzo", "curve" } },
+    { id = "assist", params = { "assist", "fric", "mag", "scope" } },
+}
+-- Short button names for the "Button" column; d-pad names match the inventory quick-slot bar.
+local SHORT = { DU = "D-U", DR = "D-R", DD = "D-D", DL = "D-L" }
+local GLYPH_SUFFIX = {
+    LT = "ltrigger", LB = "lshoulder", View = "back", LS = "ls", L3 = "lstick",
+    DU = "dpup", DL = "dpleft", DR = "dpright", DD = "dpdown",
+    RT = "rtrigger", RB = "rshoulder", Menu = "start",
+    Y = "north", B = "east", X = "west", A = "south", RS = "rs", R3 = "rstick",
+}
+local HOLD_DELAY_MS = 300
+local HOLD_ANIM_MS  = 700
+local HOLD_TOTAL_MS = HOLD_DELAY_MS + HOLD_ANIM_MS
+
+local x_hold = { active = false, candidate = false, tab = nil, start_ms = nil, progress = 0, fired = false }
+
+-- Normalized button anchor coordinates on 300x360 controller schematics (PS / Generic) for selected slot highlight (B8).
+local PAD_BASE_W, PAD_BASE_H = 300, 360
+local PAD_ANCHORS_XBOX = {
+    LT = { 66, 22 }, RT = { 234, 22 }, LB = { 68, 52 }, RB = { 232, 52 },
+    View = { 122, 108 }, Guide = { 150, 76 }, Menu = { 178, 108 },
+    LS = { 78, 126 }, L3 = { 78, 126 }, RS = { 192, 190 }, R3 = { 192, 190 },
+    DU = { 101, 166 }, DD = { 101, 202 }, DL = { 83, 184 }, DR = { 119, 184 }, DPad = { 101, 184 },
+    Y = { 222, 98 }, B = { 244, 120 }, A = { 222, 142 }, X = { 200, 120 },
+}
+local PAD_ANCHORS_PS = {
+    LT = { 64, 22 }, RT = { 236, 22 }, LB = { 64, 52 }, RB = { 236, 52 },
+    View = { 95, 92 }, Guide = { 150, 168 }, Menu = { 205, 92 },
+    LS = { 108, 192 }, L3 = { 108, 192 }, RS = { 192, 192 }, R3 = { 192, 192 },
+    DU = { 64, 120 }, DD = { 64, 156 }, DL = { 46, 138 }, DR = { 82, 138 }, DPad = { 64, 138 },
+    Y = { 236, 116 }, B = { 258, 138 }, A = { 236, 160 }, X = { 214, 138 },
+}
+
+local FALLBACK_RU = {
+    ["ui_gp_oth_input_source"] = "\208\229\230\232\236 \243\239\240\224\226\235\229\237\232\255",
+    ["ui_gp_oth_input_source_desc"] = "\207\229\240\229\234\235\254\247\229\237\232\229 \236\229\230\228\243 \234\235\224\226\232\224\242\243\240\238\233 \241 \236\251\248\252\254 \232 \227\229\233\236\239\224\228\238\236: \224\226\242\238\236\224\242\232\247\229\241\234\232 \239\240\232 \237\224\230\224\242\232\232, \242\238\235\252\234\238 \227\229\233\236\239\224\228 \232\235\232 \239\238\235\237\238\229 \238\242\234\235\254\247\229\237\232\229 \227\229\233\236\239\224\228\224.",
+    ["ui_gp_oth_src_auto"] = "\192\226\242\238\236\224\242\232\247\229\241\234\232",
+    ["ui_gp_oth_src_pad_only"] = "\210\238\235\252\234\238 \227\229\233\236\239\224\228",
+    ["ui_gp_oth_src_kbm_only"] = "\206\242\234\235\254\247\232\242\252 \227\229\233\236\239\224\228",
+    ["ui_gp_oth_pad_device"] = "\211\241\242\240\238\233\241\242\226\238",
+    ["ui_gp_oth_pad_device_desc"] = "\200\236\255 \239\238\228\234\235\254\247\184\237\237\238\227\238 \224\234\242\232\226\237\238\227\238 \234\238\237\242\240\238\235\235\229\240\224.",
+    ["ui_gp_oth_pad_power"] = "\199\224\240\255\228 \225\224\242\224\240\229\232",
+    ["ui_gp_oth_pad_power_desc"] = "\211\240\238\226\229\237\252 \231\224\240\255\228\224 \232 \240\229\230\232\236 \239\232\242\224\237\232\255 \224\234\242\232\226\237\238\227\238 \227\229\233\236\239\224\228\224.",
+    ["ui_gp_oth_pwr_wired"] = "\207\238 \234\224\225\229\235\254",
+    ["ui_gp_oth_pwr_charged"] = "100% (\199\224\240\255\230\229\237)",
+    ["ui_gp_oth_pwr_charging"] = "\199\224\240\255\228\234\224",
+    ["ui_gp_oth_pwr_battery"] = "\206\242 \225\224\242\224\240\229\232",
+    ["ui_gp_oth_hold_x_reset"] = "\211\228\229\240\230\232\226\224\233\242\229 X, \247\242\238\225\251 \241\225\240\238\241\232\242\252",
+    ["ui_gp_opt_bounds_fmt"] = "\196\238\239\243\241\242\232\236\238: %s",
+    ["st_gp_hint_columns"] = "\202\238\235\238\237\234\232",
+    ["st_gp_hint_to_buttons"] = "\202 \234\237\238\239\234\224\236"
+}
+local FALLBACK_EN = {
+    ["ui_gp_oth_input_source"] = "Input mode",
+    ["ui_gp_oth_input_source_desc"] = "Switch between keyboard/mouse and gamepad automatically, lock to gamepad only, or disable gamepad input.",
+    ["ui_gp_oth_src_auto"] = "Automatic",
+    ["ui_gp_oth_src_pad_only"] = "Gamepad only",
+    ["ui_gp_oth_src_kbm_only"] = "Disable gamepad",
+    ["ui_gp_oth_pad_device"] = "Controller",
+    ["ui_gp_oth_pad_device_desc"] = "Connected active controller name.",
+    ["ui_gp_oth_pad_power"] = "Battery",
+    ["ui_gp_oth_pad_power_desc"] = "Battery charge level and power state of the active gamepad.",
+    ["ui_gp_oth_pwr_wired"] = "Wired",
+    ["ui_gp_oth_pwr_charged"] = "100% (Charged)",
+    ["ui_gp_oth_pwr_charging"] = "Charging",
+    ["ui_gp_oth_pwr_battery"] = "On battery",
+    ["ui_gp_oth_hold_x_reset"] = "Hold X to reset",
+    ["ui_gp_opt_bounds_fmt"] = "Valid range: %s",
+    ["st_gp_hint_columns"] = "Columns",
+    ["st_gp_hint_to_buttons"] = "To buttons"
+}
+
+local function is_cyrillic_locale()
+    if ui_options and type(ui_options.curr_localization) == "function" then
+        local ok, loc = pcall(ui_options.curr_localization)
+        if ok and type(loc) == "string" then
+            return loc == "rus" or loc == "ukr"
+        end
+    end
+    if type(_G.get_console) == "function" then
+        local ok_c, con = pcall(_G.get_console)
+        if ok_c and con and type(con.get_string) == "function" then
+            local ok_s, lang = pcall(con.get_string, con, "g_language")
+            if ok_s and type(lang) == "string" and lang ~= "" then
+                return lang == "rus" or lang == "ukr"
+            end
+        end
+    end
+    return true
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Small helpers
+-- ---------------------------------------------------------------------------------------------
+local function clr(a, r, g, b) return GetARGB(a, r, g, b) end
+local function tr(key)
+    if not key or key == "" then return "" end
+    local res = game and game.translate_string and game.translate_string(key) or key
+    if res == key then
+        local fb = is_cyrillic_locale() and FALLBACK_RU[key] or FALLBACK_EN[key]
+        if fb then return fb end
+    end
+    return res
+end
+-- id (UIDBG, docs/ui/debug-menu): optional stable name for the UI editor; gp_ui_tune adds the saved
+-- offsets and remembers the window. Without an id (or without saved offsets) the numbers stay as passed.
+local function rect(w, x, y, width, height, id)
+    if not w then return end
+    if id and gp_ui_tune and gp_ui_tune.tune_rect then
+        x, y, width, height = gp_ui_tune.tune_rect(id, w, x, y, width, height)
+    end
+    w:SetWndPos(vector2():set(x, y))
+    w:SetWndSize(vector2():set(width, height))
+end
+local function show(w, flag) if w then w:Show(flag and true or false) end end
+local function use_native_menu_focus()
+    return (game and game.is_gamepad_active_source and game.is_gamepad_active_source()) and true or false
+end
+local function icon_scale_k()
+    if _G.gp_icons and type(_G.gp_icons.scale_k) == "function" then
+        local ok, k = pcall(_G.gp_icons.scale_k)
+        if ok and type(k) == "number" and k > 0 then return k end
+    end
+    return 1.0
+end
+local function menu_hints_visible()
+    if _G.gp_icons and type(_G.gp_icons.hints_visible) == "function" then
+        local ok, vis = pcall(_G.gp_icons.hints_visible, "menu")
+        if ok then return vis ~= false end
+    end
+    return true
+end
+local function footer_hints_visible()
+    if not menu_hints_visible() then return false end
+    if _G.game and type(_G.game.is_gamepad_active_source) == "function" then
+        return use_native_menu_focus()
+    end
+    return true
+end
+local function icons_revision()
+    if _G.gp_icons and type(_G.gp_icons.revision) == "function" then
+        local ok, r = pcall(_G.gp_icons.revision)
+        if ok and type(r) == "number" then return r end
+    end
+    return 0
+end
+local function menu_pulse(tag)
+    if _G.game and type(_G.game.gamepad_menu_pulse) == "function" then
+        pcall(_G.game.gamepad_menu_pulse, tag or "menu_hold")
+    end
+end
+local function xmlh()
+    if not X then
+        X = CScriptXmlInit()
+        X:ParseFile("ui_gp_native.xml")
+    end
+    return X
+end
+-- Width (UI x units) of a shape that must look as wide as one UI y unit is tall on the current screen.
+local function kx()
+    local aspect = 16 / 9
+    if device then
+        local ok, d = pcall(device)
+        if ok and d and tonumber(d.width) and tonumber(d.height) and d.height > 0 then
+            aspect = d.width / d.height
+        end
+    end
+    return (4 / 3) / aspect
+end
+local function txt(parent, tpl, x, y, width, height, color)
+    local t = xmlh():InitTextWnd(tpl, parent)
+    rect(t, x, y, width, height)
+    if color then t:SetTextColor(color) end
+    return t
+end
+local function fill(parent, x, y, width, height, color)
+    local s = CUIStatic()
+    s:SetAutoDelete(true)
+    rect(s, x, y, width, height)
+    s:InitTexture("ui_gp_solid_white")
+    s:SetStretchTexture(true)
+    s:SetTextureColor(color)
+    parent:AttachChild(s)
+    return s
+end
+local function icon(parent, x, y, width, height, tex)
+    local s = CUIStatic()
+    s:SetAutoDelete(true)
+    rect(s, x, y, width, height)
+    s._gp_tex = tex
+    s:InitTexture(tex)
+    s:SetStretchTexture(true)
+    parent:AttachChild(s)
+    return s
+end
+local function set_tex(s, tex)
+    if s and s._gp_tex ~= tex then
+        s._gp_tex = tex
+        s:InitTexture(tex)
+        s:SetStretchTexture(true)
+    end
+end
+-- Icon of a pad button (B8): exclusively via gp_icons.tex / gp_icons.dims when loaded; neutral white Dot Marks fallback otherwise.
+local function button_icon(family, glyph_prefix, slot_id)
+    if _G.gp_icons and type(_G.gp_icons.tex) == "function" then
+        local asp = 1
+        if type(_G.gp_icons.dims) == "function" then
+            local _, _, tw, th = _G.gp_icons.dims(slot_id, "round")
+            if tw and th and th > 0 then asp = tw / th end
+        end
+        return _G.gp_icons.tex(slot_id, "round"), asp
+    end
+    local tag = (family == "playstation") and "ps"
+        or (family == "nintendo" and "nintendo" or (family == "generic" and "generic" or "xbox"))
+    return "ui_gp_white_" .. tag .. "_" .. (GLYPH_SUFFIX[slot_id] or "south"), 1
+end
+local function align_icon_and_label(base_h, cy, tex, asp, label_h, font_name, k)
+    local align = _G.gp_hint_align
+    if align and type(align.px_w) == "function" and type(align.px_h) == "function" and type(align.label_y) == "function" then
+        local h_sc = base_h * ((type(align.icon_scale) == "function") and align.icon_scale(tex) or 1)
+        local sh = 1080
+        if type(align.screen) == "function" then
+            local _, s_h = align.screen()
+            if tonumber(s_h) and tonumber(s_h) > 0 then sh = tonumber(s_h) end
+        end
+        local ratio = asp or 1
+        local px_h = math.max(8, math.floor(h_sc * sh / 768 + 0.5))
+        local px_w = (ratio == 1) and px_h or math.max(8, math.floor(px_h * ratio + 0.5))
+        local iw, ih = align.px_w(px_w), align.px_h(px_h)
+        local iy = (type(align.snap_y) == "function") and align.snap_y(cy - ih * 0.5) or (cy - ih * 0.5)
+        local ly = align.label_y(iy + ih * 0.5, label_h, font_name or "letterica16")
+        return iw, ih, iy, ly
+    end
+    local ih = base_h
+    local iw = base_h * (k or kx()) * (asp or 1)
+    return iw, ih, cy - ih * 0.5, cy - label_h * 0.5
+end
+local function copy_state(src)
+    local dst = {}
+    for k, v in pairs(src or {}) do dst[k] = v end
+    return dst
+end
+
+-- Bottom hint bar: one dark strip, "icon + word" items aligned on cap-height line (B8) + white X-hold bar (B4).
+local function build_footer(w, n, items)
+    n.foot_bg = fill(w, 0, 578, PANEL_W, 26, clr(170, 12, 12, 12))
+    n.foot_ln = fill(w, 0, 578, PANEL_W, 1, clr(120, 150, 150, 150))
+    n.foot = {}
+    local slot_w = PANEL_W / #items
+    local init_tex = button_icon("xbox", nil, "A")
+    n.x_slot_idx = nil
+    for i, it in ipairs(items) do
+        local f = { item = it, icons = {}, x = (i - 1) * slot_w + 8, slot_w = slot_w }
+        for j, btn_id in ipairs(it.buttons) do
+            local btex = button_icon("xbox", nil, btn_id)
+            f.icons[j] = icon(w, f.x, 583, 12, 16, btex or init_tex)
+            if btn_id == "X" then n.x_slot_idx = i end
+        end
+        f.label = txt(w, "t16", f.x, 582, slot_w - 14, 18, clr(255, 200, 200, 200))
+        f.label:SetText(tr(it.label))
+        n.foot[i] = f
+    end
+    n.hold_track = fill(w, 10, 600, 72, 3, clr(110, 70, 70, 75))
+    n.hold_fill  = fill(w, 10, 600, 2,  3, clr(245, 245, 245, 250))
+    show(n.hold_track, false)
+    show(n.hold_fill, false)
+end
+local function sync_footer_hold_bar(n)
+    if not (n and n.hold_track and n.hold_fill) then return end
+    local vis = footer_hints_visible() and x_hold.active and x_hold.progress > 0
+    if vis then
+        local f = n.foot[n.x_slot_idx or 2] or n.foot[1]
+        local bx = f and f.x or 10
+        local bw = math.max(32, math.min(96, (f and f.slot_w or 100) - 16))
+        if bx + bw > PANEL_W - 4 then bw = math.max(16, PANEL_W - 4 - bx) end
+        local fw = math.max(2, math.floor(bw * math.min(1, x_hold.progress) + 0.5))
+        rect(n.hold_track, bx, 600, bw, 3)
+        rect(n.hold_fill,  bx, 600, fw, 3)
+        show(n.hold_track, true)
+        show(n.hold_fill, true)
+    else
+        show(n.hold_track, false)
+        show(n.hold_fill, false)
+    end
+end
+local function layout_footer(n, family, glyph_prefix, pfx)
+    local k = kx()
+    local vis = footer_hints_visible()
+    n.hints_vis = vis
+    local base_h = math.min(20, 16 * math.min(1.25, icon_scale_k()))
+    local cy = 591
+    show(n.foot_bg, vis)
+    show(n.foot_ln, vis)
+    for i, f in ipairs(n.foot) do
+        local icon_id = pfx and (pfx .. ".foot.icon." .. i) or nil
+        local x = f.x
+        local line_ly = 582
+        for j, id in ipairs(f.item.buttons) do
+            local tex, asp = button_icon(family, glyph_prefix, id)
+            local iw, ih, iy, ly = align_icon_and_label(base_h, cy, tex, asp, 18, "letterica16", k)
+            if iy < 579 then iy = 579 end
+            if iy + ih > 603 then ih = math.max(10, 603 - iy) end
+            line_ly = math.max(579, math.min(587, ly))
+            set_tex(f.icons[j], tex)
+            rect(f.icons[j], x, iy, iw, ih, icon_id)
+            show(f.icons[j], vis)
+            x = x + iw + 2
+        end
+        local max_lbl_w = math.max(24, math.min(f.slot_w - (x - f.x) - 4, PANEL_W - (x + 3) - 2))
+        rect(f.label, x + 3, line_ly, max_lbl_w, 18, pfx and (pfx .. ".foot.label." .. i) or nil)
+        show(f.label, vis)
+    end
+    sync_footer_hold_bar(n)
+end
+local function cancel_options()
+    if owner and owner.OnButton_Cancel then owner:OnButton_Cancel() end
+    return true
+end
+local function accept_options()
+    if owner and owner.OnButton_Accept then owner:OnButton_Accept() end
+    return true
+end
+local function update_pending()
+    if owner and owner.UpdatePending then owner:UpdatePending() end
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Pages "In the world" / "Inventory and menus": table Button | Press | Hold + one controller
+-- ---------------------------------------------------------------------------------------------
+-- Display model: group titles and slot rows in table order; four identical d-pad rows of the menu
+-- context are folded into one. Returns rows, navigation order (slot indexes) and the folded flag.
+function build_row_model(vm)
+    local ctx = (vm.context == "menu") and "menu" or "world"
+    local merged = false
+    if ctx == "menu" then
+        merged = true
+        for _, id in ipairs({ "DU", "DL", "DR", "DD" }) do
+            local s = vm.slot_by_id and vm.slot_by_id[id]
+            if not s or s.tap_action_id ~= "NavigateCells" or s.hold_action_id then merged = false end
+        end
+    end
+    local allowed = {}
+    for _, g in ipairs(GROUPS[ctx]) do allowed[g] = true end
+    local by = {}
+    for i, s in ipairs(vm.slots or {}) do
+        if not (merged and (s.id == "DL" or s.id == "DR" or s.id == "DD")) then
+            local g = ACT_GROUP[s.tap_action_id or ""] or ACT_GROUP[s.hold_action_id or ""] or "common"
+            if not allowed[g] then g = "common" end
+            by[g] = by[g] or {}
+            table.insert(by[g], { idx = i, sd = s, merged = (merged and s.id == "DU") })
+        end
+    end
+    local rows, nav = {}, {}
+    for _, g in ipairs(GROUPS[ctx]) do
+        if by[g] then
+            rows[#rows + 1] = { group = g }
+            for _, r in ipairs(by[g]) do
+                rows[#rows + 1] = r
+                nav[#nav + 1] = r.idx
+            end
+        end
+    end
+    return rows, nav, merged
+end
+-- Slot index of the selected table row (a folded d-pad row is represented by D-pad Up).
+local function selected_row_idx(w, merged)
+    local idx = w.selected_slot_idx or 1
+    local sd = w.view_model and w.view_model.slots and w.view_model.slots[idx]
+    if merged and sd and (sd.id == "DL" or sd.id == "DR" or sd.id == "DD") then
+        local du = w.view_model.slot_by_id and w.view_model.slot_by_id.DU
+        for i, s in ipairs(w.view_model.slots) do
+            if s == du then return i end
+        end
+    end
+    return idx
+end
+
+local function build_controls(w)
+    if w._n then return w._n end
+    local x = xmlh()
+    local n = { rows = {}, groups = {}, help = {}, model = {}, nav = {}, help_open = true } -- FIX-LIVE2 6a: help always on
+    show(w.back, false)
+    w:SetWindowName("gp_native_controls")
+    n.cap = x:InitFrameLine("cap", w)
+    n.cap_t = txt(w, "t16", 8, 0, 420, 15)
+    x:InitFrameLine("hdr_1", w)
+    x:InitFrameLine("hdr_2", w)
+    x:InitFrameLine("hdr_3", w)
+    txt(w, "t_hdr", 4, 20, 86, 15):SetText(tr("ui_gp_n_col_btn"))
+    txt(w, "t_hdr", 96, 20, 122, 15):SetText(tr("ui_gp_n_col_tap"))
+    txt(w, "t_hdr", 224, 20, 114, 15):SetText(tr("ui_gp_n_col_hold"))
+    n.frame = x:InitFrame("frame", w)
+    for i = 1, MAX_GROUPS do
+        n.groups[i] = txt(w, "t_group", 3, 0, 330, 20)
+    end
+    for i = 1, MAX_ROWS do
+        local r = {}
+        r.cell = fill(w, 0, 0, 10, ROW_H, clr(55, 255, 255, 255))
+        r.mark = fill(w, 2, 0, 2, ROW_H, clr(255, 255, 255, 255))
+        r.icon = icon(w, 7, 0, 12, 16, button_icon("xbox", nil, "A"))
+        r.name = txt(w, "t16", 32, 0, 58, ROW_H)
+        r.name:SetWindowName("gp_native_row_" .. i)
+        r.tap  = txt(w, "t16", 96, 0, 122, ROW_H)
+        r.hold = txt(w, "t16", 224, 0, 114, ROW_H)
+        r.btn  = x:Init3tButton("row_btn", w)
+        local name = "gp_n_row_" .. i
+        w:Register(r.btn, name)
+        w:AddCallback(name, ui_events.BUTTON_CLICKED, function()
+            local rec = n.rowrec and n.rowrec[i]
+            if rec then w:OnSlotClicked(rec.idx) end
+        end, w)
+        n.rows[i] = r
+    end
+    n.pad = icon(w, SIDE_X, 20, SIDE_W, SIDE_W, "ui_gp_native_pad_LT")
+    n.pad_disc = icon(w, SIDE_X, 20, 14, 14, "ui_gp_circle_disc")
+    n.pad_ring = icon(w, SIDE_X, 20, 22, 22, "ui_gp_circle_ring")
+    n.pad_disc:SetTextureColor(clr(195, 232, 232, 238))
+    n.pad_ring:SetTextureColor(clr(245, 245, 245, 250))
+    show(n.pad_disc, false)
+    show(n.pad_ring, false)
+    n.card = x:InitFrame("frame", w)
+    n.help_title = txt(w, "t18", 0, 0, 100, 20)
+    for i = 1, MAX_HELP do
+        n.help[i] = txt(w, "t16", 0, 0, 100, 18, clr(255, 200, 200, 200))
+    end
+    n.help_long = txt(w, "t16w", 0, 0, 100, 60)
+    n.status = txt(w, "t_status", 2, 554, PANEL_W - 4, 18)
+    build_footer(w, n, {
+        { buttons = { "A" },        label = "ui_gp_n_f_change" },
+        { buttons = { "X" },        label = "ui_gp_n_f_hold" },
+        { buttons = { "LB", "RB" }, label = "ui_gp_n_f_tab" },
+        { buttons = { "B" },        label = "ui_gp_n_f_close" },
+    })
+    w._n = n
+    return n
+end
+
+function layout_controls(w)
+    if not w._native_owner or not w.view_model then return end
+    local n = build_controls(w)
+    n.menu_pad_focus = use_native_menu_focus()
+    n.icon_rev = icons_revision()
+    local vm = w.view_model
+    local family = w.pad_family or vm.pad_family or "xbox"
+    local glyph_prefix = vm.pad_spec and vm.pad_spec.glyph_prefix or nil
+    local k = kx()
+    rect(w, 0, 0, PANEL_W, PANEL_H, "options.gpc.panel")
+    n.cap_t:SetText(tr("ui_gp_n_cap") .. "  -  " .. tr("ui_gp_n_tab_" .. (vm.context == "menu" and "menu" or "world")))
+
+    local rows, nav, merged = build_row_model(vm)
+    n.model, n.nav, n.merged = rows, nav, merged
+    n.rowrec = {}
+    local sel_idx = selected_row_idx(w, merged)
+    local capturing = (w.remap_state == "capturing")
+    local sub = capturing and (w.capture_sub_kind or "tap") or (w.selected_sub_kind or "tap")
+    local blink = (math.floor((time_global and time_global() or 0) / 200) % 2) == 0
+    local c_norm, c_sel, c_dim = clr(255, 170, 170, 170), clr(255, 240, 240, 240), clr(255, 120, 120, 120)
+    local c_warn = clr(255, 250, 150, 75)
+
+    local y, gi, ri = 38, 0, 0
+    local sel_sd = nil
+    for _, rec in ipairs(rows) do
+        if rec.group then
+            gi = gi + 1
+            local g = n.groups[gi]
+            if g then
+                rect(g, 3, y + 3, 330, 20)
+                g:SetText(tr("ui_gp_n_grp_" .. rec.group))
+                show(g, true)
+            end
+            y = y + GROUP_STEP
+        else
+            ri = ri + 1
+            local r = n.rows[ri]
+            if r then
+                local sd = rec.sd
+                local is_sel = (rec.idx == sel_idx)
+                n.rowrec[ri] = rec
+                if is_sel then sel_sd = sd end
+                local tex, asp = button_icon(family, glyph_prefix, sd.id)
+                set_tex(r.icon, tex)
+                local r_bh = math.min(18, 15 * math.min(1.2, icon_scale_k()))
+                local iw, ih, iy, ly = align_icon_and_label(r_bh, y + ROW_H * 0.5, tex, asp, ROW_H, "letterica16", k)
+                if iw > 23 then iw = 23 end
+                rect(r.icon, 7, math.max(0, iy), iw, ih)
+                rect(r.name, 32, math.max(0, ly), 58, ROW_H)
+                rect(r.tap, 96, y, 122, ROW_H)
+                rect(r.hold, 224, y, 114, ROW_H)
+                rect(r.btn, 0, y, TABLE_W, ROW_H)
+                rect(r.mark, 2, y, 2, ROW_H)
+                if sub == "hold" and not sd.locked then
+                    rect(r.cell, 221, y, 117, ROW_H)
+                else
+                    rect(r.cell, 93, y, 126, ROW_H)
+                end
+                local name = rec.merged and tr("ui_gp_n_dpad")
+                    or ((family == "xbox") and (SHORT[sd.id] or sd.id) or sd.button_title)
+                r.name:SetText(name)
+                local tap_text = sd.tap_text or ""
+                local hold_text = (sd.hold_text and sd.hold_text ~= "") and sd.hold_text or tr("ui_gp_n_none")
+                if sd.locked then hold_text = tr("ui_gp_n_fixed") end
+                local c_tap, c_hold = is_sel and c_sel or c_norm, is_sel and c_sel or c_norm
+                if sd.locked then c_hold = c_dim end
+                if capturing and w.capture_slot_id == sd.id then
+                    if sub == "hold" then
+                        hold_text, c_hold = tr("ui_gp_ctrl_capture_slot"), c_warn
+                    else
+                        tap_text, c_tap = tr("ui_gp_ctrl_capture_slot"), c_warn
+                    end
+                elseif w.IsSlotFlashing and w:IsSlotFlashing(sd.id) then
+                    c_tap = blink and c_sel or c_norm
+                    c_hold = c_tap
+                end
+                r.tap:SetText(tap_text)
+                r.hold:SetText(hold_text)
+                r.name:SetTextColor(is_sel and c_sel or c_norm)
+                r.tap:SetTextColor(c_tap)
+                r.hold:SetTextColor(c_hold)
+                show(r.mark, is_sel and not n.menu_pad_focus)
+                show(r.cell, is_sel)
+                for _, key in ipairs({ "icon", "name", "tap", "hold", "btn" }) do show(r[key], true) end
+            end
+            y = y + ROW_STEP
+        end
+    end
+    for i = gi + 1, MAX_GROUPS do show(n.groups[i], false) end
+    for i = ri + 1, MAX_ROWS do
+        local r = n.rows[i]
+        for _, key in ipairs({ "icon", "name", "tap", "hold", "btn", "mark", "cell" }) do show(r[key], false) end
+    end
+
+    -- One controller on the right; the selected button is lit grey/white (ui_gp_native_pad_* states).
+    sel_sd = sel_sd or w:GetSelectedSlot()
+    local pw = SIDE_W
+    local ph = pw * 0.75 / k
+    if ph > 300 then
+        ph = 300
+        pw = ph * k / 0.75
+    end
+    local pad_x = SIDE_X + (SIDE_W - pw) / 2
+    rect(n.pad, pad_x, 20, pw, ph, "options.gpc.pad")
+    if sel_sd and family == "xbox" then
+        set_tex(n.pad, "ui_gp_native_pad_" .. sel_sd.id)
+        show(n.pad_disc, false)
+        show(n.pad_ring, false)
+    else
+        local base_tex = (family == "playstation") and "ui_gp_pad_ps"
+            or ((family == "generic") and "ui_gp_pad_generic"
+            or ((vm.pad_spec and vm.pad_spec.texture) or "ui_gp_pad_xbox"))
+        set_tex(n.pad, base_tex)
+        local anchors = (family == "playstation") and PAD_ANCHORS_PS or PAD_ANCHORS_XBOX
+        local aid = (sel_sd and merged and sel_sd.id == "DU") and "DPad" or (sel_sd and sel_sd.id or nil)
+        local anc = aid and anchors[aid] or nil
+        if anc then
+            local ppos = n.pad:GetWndPos()
+            local cx = ppos.x + (anc[1] / PAD_BASE_W) * n.pad:GetWidth()
+            local cy_m = ppos.y + (anc[2] / PAD_BASE_H) * n.pad:GetHeight()
+            local rw, rh = 22 * k, 22
+            local dw, dh = 14 * k, 14
+            rect(n.pad_ring, math.max(0, math.min(PANEL_W - rw, cx - rw * 0.5)), math.max(0, cy_m - rh * 0.5), rw, rh)
+            rect(n.pad_disc, math.max(0, math.min(PANEL_W - dw, cx - dw * 0.5)), math.max(0, cy_m - dh * 0.5), dw, dh)
+            show(n.pad_ring, true)
+            show(n.pad_disc, true)
+        else
+            show(n.pad_ring, false)
+            show(n.pad_disc, false)
+        end
+    end
+
+    -- Help card under the controller: name, press / hold, chords; Y opens the long text.
+    local cy = 20 + ph + 6
+    local lines = {}
+    local long_text = ""
+    if sel_sd then
+        local folded = merged and sel_sd.id == "DU"
+        n.help_title:SetText(folded and tr("ui_gp_n_dpad") or sel_sd.button_title)
+        lines[#lines + 1] = tr("ui_gp_n_tap") .. ": " .. (sel_sd.tap_text or "")
+        if sel_sd.locked then
+            long_text = tr("ui_gp_n_locked_why")
+        else
+            lines[#lines + 1] = tr("ui_gp_n_hold") .. ": "
+                .. ((sel_sd.hold_text and sel_sd.hold_text ~= "") and sel_sd.hold_text or tr("ui_gp_n_none"))
+            if n.help_open then long_text = tr("ui_gp_n_help_slot") end
+        end
+        for _, c in ipairs(vm.chords or {}) do
+            if c.modifier == sel_sd.id or c.button == sel_sd.id or (folded and c.button == "DPad") then
+                lines[#lines + 1] = c.chip_text
+            end
+        end
+    else
+        n.help_title:SetText("")
+    end
+    rect(n.help_title, SIDE_X + 6, cy + 6, SIDE_W - 12, 20, "options.gpc.help.title")
+    local ly = cy + 30
+    for i = 1, MAX_HELP do
+        local h = n.help[i]
+        if lines[i] then
+            rect(h, SIDE_X + 6, ly, SIDE_W - 12, 18)
+            h:SetText(lines[i])
+            show(h, true)
+            ly = ly + 18
+        else
+            show(h, false)
+        end
+    end
+    local long_h = (long_text ~= "") and math.min(84, math.max(18, 540 - ly - 6)) or 0
+    rect(n.help_long, SIDE_X + 6, ly + 6, SIDE_W - 12, math.max(18, long_h), "options.gpc.help.long")
+    n.help_long:SetText(long_text)
+    show(n.help_long, long_text ~= "")
+    -- The card is as tall as its text, so no empty frame hangs under the controller.
+    rect(n.card, SIDE_X - 2, cy, SIDE_W + 2, math.min(550 - cy, (ly - cy) + 8 + ((long_h > 0) and (long_h + 6) or 0)), "options.gpc.help.card")
+
+    if capturing then
+        n.status:SetText(tr("ui_gp_ctrl_capture_prompt"))
+    elseif w.remap_state == "confirm_reset" then
+        n.status:SetText(tr("ui_gp_ctrl_reset_confirm"))
+    elseif type(w.status_message) == "string" and w.status_message ~= "" then
+        n.status:SetText(w.status_message)
+    else
+        n.status:SetText("")
+    end
+    layout_footer(n, family, glyph_prefix, "options.gpc")
+end
+
+-- Selection instead of a cursor: up/down walks the table rows, left/right picks Press / Hold.
+function navigate_controls(w, dir)
+    if w.remap_state ~= "browse" then return false end
+    local n = w._n
+    if not n or #n.nav == 0 then return false end
+    local sub = w.selected_sub_kind or "tap"
+    if dir == "left" or dir == "right" then
+        local sd = w:GetSelectedSlot()
+        w.selected_sub_kind = (dir == "right" and not (sd and sd.locked)) and "hold" or "tap"
+        w:RefreshView()
+        return true
+    end
+    if dir ~= "up" and dir ~= "down" then return false end
+    local cur = selected_row_idx(w, n.merged)
+    local pos = 1
+    for i, idx in ipairs(n.nav) do
+        if idx == cur then pos = i break end
+    end
+    pos = pos + ((dir == "up") and -1 or 1)
+    if pos < 1 then pos = #n.nav end
+    if pos > #n.nav then pos = 1 end
+    w:SelectSlotByIndex(n.nav[pos])
+    local sd = w:GetSelectedSlot()
+    w.selected_sub_kind = (sub == "hold" and not (sd and sd.locked)) and "hold" or "tap"
+    w:RefreshView()
+    return true
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Page "Aiming": stock sliders / lists / radio buttons + response curve graph
+-- ---------------------------------------------------------------------------------------------
+function aim_dirty_count()
+    if not (aim and aim_applied and aim.state) then return 0 end
+    local c = 0
+    for k, v in pairs(aim.state) do
+        if aim_applied[k] ~= v then c = c + 1 end
+    end
+    return c
+end
+local function aim_row_index(w, id)
+    for i, row in ipairs(w.rows or {}) do
+        if row.spec.id == id then return i end
+    end
+    return nil
+end
+-- Change a value without touching the engine: it is applied by the stock "Apply" button (BRIEF 5.3).
+function aim_set(w, id, val)
+    local st = w.state
+    if id == "dzi" and tonumber(val) and val > (st.dzo - 5) then val = st.dzo - 5 end
+    if id == "dzo" and tonumber(val) and val < (st.dzi + 5) then val = st.dzi + 5 end
+    st[id] = val
+    local idx = aim_row_index(w, id)
+    if idx then w.selected_idx = idx end
+    w:RefreshUI()
+    update_pending()
+    return true
+end
+function aim_step(w, dir)
+    local row = w.rows[w.selected_idx or 1]
+    if not row then return false end
+    local real = ui_gp_aim.apply_param_to_engine
+    ui_gp_aim.apply_param_to_engine = function() return true end
+    local ok = ui_gp_aim.adjust_param(w.state, row.spec.id, dir)
+    ui_gp_aim.apply_param_to_engine = real
+    w:RefreshUI()
+    update_pending()
+    return ok
+end
+function aim_move(w, delta)
+    local n = w._n
+    if not n or #n.order == 0 then return false end
+    local pos = 1
+    for i, idx in ipairs(n.order) do
+        if idx == w.selected_idx then pos = i break end
+    end
+    pos = ((pos - 1 + delta) % #n.order) + 1
+    w.selected_idx = n.order[pos]
+    w:RefreshUI()
+    return true
+end
+function aim_reset_defaults(w)
+    w.state = ui_gp_aim.get_default_aim_state()
+    w:RefreshUI()
+    update_pending()
+    return true
+end
+local function bool_options(spec)
+    -- Radio order is always "Off, On" whatever the order in the spec is.
+    local off, on = nil, nil
+    for _, o in ipairs(spec.options or {}) do
+        if o.val == false then off = o elseif o.val == true then on = o end
+    end
+    if off and on and #spec.options == 2 then return { off, on } end
+    return nil
+end
+
+local function build_aim(w)
+    if w._n then return w._n end
+    local x = xmlh()
+    local n = { rows = {}, groups = {}, order = {}, points = {}, dashes = {}, help_open = true } -- FIX-LIVE2 6a
+    show(w.back, false)
+    w:SetWindowName("gp_native_aim")
+    n.cap = x:InitFrameLine("cap", w)
+    n.cap_t = txt(w, "t16", 8, 0, 420, 15)
+    x:InitFrameLine("hdr_a1", w)
+    x:InitFrameLine("hdr_a2", w)
+    txt(w, "t_hdr", 4, 20, 150, 15):SetText(tr("ui_gp_n_col_param"))
+    txt(w, "t_hdr", 168, 20, 160, 15):SetText(tr("ui_gp_n_col_value"))
+    n.frame = x:InitFrame("frame", w)
+
+    local y = 38
+    for _, grp in ipairs(AIM_GROUPS) do
+        local members = {}
+        for _, id in ipairs(grp.params) do
+            local idx = aim_row_index(w, id)
+            if idx and w.rows[idx].spec.supported ~= false then members[#members + 1] = idx end
+        end
+        if #members > 0 then
+            local g = txt(w, "t_group", 3, y + 3, 330, 20)
+            g:SetText(tr("ui_gp_n_grp_aim_" .. grp.id))
+            n.groups[#n.groups + 1] = g
+            y = y + GROUP_STEP
+            for _, idx in ipairs(members) do
+                local spec = w.rows[idx].spec
+                local r = { idx = idx, spec = spec, y = y }
+                r.mark = fill(w, 2, y, 2, 22, clr(255, 255, 255, 255))
+                r.cap = txt(w, "t16", 8, y, 156, 22)
+                r.cap:SetWindowName("gp_native_row_" .. idx)
+                r.cap:SetText(tr("ui_gp_n_aim_" .. spec.id))
+                if spec.kind == "slider" then
+                    r.track = x:InitTrackBar("track", w)
+                    rect(r.track, 166, y + 3, 132, 16)
+                    r.track:SetStep(spec.step)
+                    r.track:SetOptFBounds(spec.min, spec.max)
+                    r.value = txt(w, "t16c", 298, y, 40, 22)
+                    r.knob = fill(w, 166, y + 20, 8, 2, clr(255, 255, 255, 255))
+                else
+                    local radio = bool_options(spec)
+                    if radio then
+                        r.radio = {}
+                        for j, o in ipairs(radio) do
+                            local e = { opt = o }
+                            e.btn = x:InitCheck("radio_btn", w)
+                            rect(e.btn, 166 + (j - 1) * 84, y, 26, 22)
+                            e.lbl = txt(w, "t16", 194 + (j - 1) * 84, y, 54, 22, clr(255, 200, 200, 200))
+                            e.lbl:SetText(tr(o.label_id))
+                            local name = "gp_n_radio_" .. spec.id .. "_" .. j
+                            w:Register(e.btn, name)
+                            w:AddCallback(name, ui_events.BUTTON_CLICKED, function()
+                                aim_set(w, spec.id, o.val)
+                            end, w)
+                            r.radio[j] = e
+                        end
+                    else
+                        r.list = x:InitComboBox("list", w)
+                        rect(r.list, 166, y, 170, 22)
+                        for j, o in ipairs(spec.options or {}) do
+                            r.list:AddItem(tr(o.label_id), j)
+                        end
+                        local name = "gp_n_list_" .. spec.id
+                        w:Register(r.list, name)
+                        w:AddCallback(name, ui_events.LIST_ITEM_SELECT, function()
+                            local o = spec.options[r.list:CurrentID()]
+                            if o then aim_set(w, spec.id, o.val) end
+                        end, w)
+                    end
+                end
+                n.rows[#n.rows + 1] = r
+                n.order[#n.order + 1] = idx
+                y = y + 26
+            end
+        end
+    end
+
+    -- Response curve graph: axes 0..100%, dashed linear reference, dead zones, live input point.
+    n.g_title = txt(w, "t18", SIDE_X, 20, SIDE_W, 20)
+    n.g_title:SetText(tr("ui_gp_n_graph_title"))
+    n.g_bg    = fill(w, 0, 0, 10, 10, clr(140, 0, 0, 0))
+    n.g_dz_l  = fill(w, 0, 0, 10, 10, clr(45, 255, 255, 255))
+    n.g_dz_r  = fill(w, 0, 0, 10, 10, clr(45, 255, 255, 255))
+    n.g_axis_x = fill(w, 0, 0, 10, 1, clr(255, 170, 170, 170))
+    n.g_axis_y = fill(w, 0, 0, 1, 10, clr(255, 170, 170, 170))
+    for i = 1, 16 do n.dashes[i] = fill(w, 0, 0, 2, 2, clr(255, 110, 110, 110)) end
+    for i = 1, 61 do n.points[i] = fill(w, 0, 0, 2, 2, clr(255, 235, 235, 235)) end
+    n.g_live = fill(w, 0, 0, 5, 5, clr(255, 255, 255, 255))
+    n.g_y100 = txt(w, "t_hdr", 0, 0, 40, 14)
+    n.g_y100:SetText("100%")
+    n.g_x0   = txt(w, "t_hdr", 0, 0, 40, 14)
+    n.g_x0:SetText("0%")
+    n.g_x100 = txt(w, "t_hdr", 0, 0, 40, 14)
+    n.g_x100:SetText("100%")
+    n.g_xcap = txt(w, "t16", 0, 0, 100, 18)
+    n.g_xcap:SetText(tr("ui_gp_n_graph_x"))
+    n.g_ycap = txt(w, "t16", 0, 0, 100, 18)
+    n.g_ycap:SetText(tr("ui_gp_n_graph_y"))
+    n.info_title = txt(w, "t18", 0, 0, 100, 20)
+    n.info_line  = txt(w, "t16", 0, 0, 100, 18, clr(255, 200, 200, 200))
+    n.help_long  = txt(w, "t16w", 0, 0, 100, 60)
+    n.status = txt(w, "t_status", 2, 554, PANEL_W - 4, 18)
+    build_footer(w, n, {
+        { buttons = { "DL", "DR" }, label = "ui_gp_n_f_change" },
+        { buttons = { "LB", "RB" }, label = "ui_gp_n_f_tab" },
+        { buttons = { "B" },        label = "ui_gp_n_f_close" },
+    })
+    w._n = n
+    return n
+end
+
+local function graph_geometry()
+    local k = kx()
+    local gw = 196
+    local gh = gw / k
+    if gh > 250 then
+        gh = 250
+        gw = gh * k
+    end
+    return SIDE_X + 24, 62, gw, gh, k
+end
+local function layout_live_dot(w)
+    local n = w._n
+    if not n then return end
+    local gx, gy, gw, gh, k = graph_geometry()
+    local rx, ry = tonumber(w.live_rx) or 0, tonumber(w.live_ry) or 0
+    local t = math.min(1, math.sqrt(rx * rx + ry * ry))
+    local v = ui_gp_aim.eval_response_curve(w.state, t)
+    rect(n.g_live, gx + t * gw - 3 * k, gy + gh - v * gh - 3, 6 * k, 6)
+end
+
+function layout_aim(w)
+    if not w._native_owner then return end
+    local n = build_aim(w)
+    n.menu_pad_focus = use_native_menu_focus()
+    n.icon_rev = icons_revision()
+    local st = w.state or {}
+    rect(w, 0, 0, PANEL_W, PANEL_H, "options.gpa.panel")
+    n.cap_t:SetText(tr("ui_gp_n_cap") .. "  -  " .. tr("ui_gp_n_tab_aim"))
+    local c_norm, c_sel = clr(255, 170, 170, 170), clr(255, 240, 240, 240)
+    local sel_row = nil
+    for _, r in ipairs(n.rows) do
+        local spec = r.spec
+        local is_sel = (r.idx == w.selected_idx)
+        if is_sel then sel_row = r end
+        show(r.mark, is_sel and not n.menu_pad_focus)
+        r.cap:SetTextColor(is_sel and c_sel or c_norm)
+        local v = st[spec.id]
+        if r.track then
+            local num = tonumber(v) or spec.min
+            if not (r.track.IsCursorOverWindow and r.track:IsCursorOverWindow()) then
+                r.track:SetFValue(num)
+            end
+            r.value:SetText(tostring(num) .. tostring(spec.unit or ""))
+            local ratio = (num - spec.min) / math.max(1, spec.max - spec.min)
+            rect(r.knob, 166 + ratio * 124, r.y + 20, 8, 2)
+            show(r.knob, is_sel)
+        elseif r.radio then
+            for _, e in ipairs(r.radio) do
+                e.btn:SetCheck(e.opt.val == v)
+                e.lbl:SetTextColor((e.opt.val == v) and c_sel or c_norm)
+            end
+        elseif r.list then
+            for _, o in ipairs(spec.options or {}) do
+                if o.val == v then r.list:SetText(tr(o.label_id)) end
+            end
+        end
+    end
+
+    local gx, gy, gw, gh, k = graph_geometry()
+    rect(n.g_bg, gx, gy, gw, gh)
+    rect(n.g_axis_x, gx, gy + gh, gw, 1)
+    rect(n.g_axis_y, gx, gy, 1, gh)
+    local dzi = math.max(0, math.min(0.30, (tonumber(st.dzi) or 15) / 100))
+    local dzo = math.max(0.70, math.min(1.00, (tonumber(st.dzo) or 95) / 100))
+    rect(n.g_dz_l, gx, gy, dzi * gw, gh)
+    rect(n.g_dz_r, gx + dzo * gw, gy, (1 - dzo) * gw, gh)
+    show(n.g_dz_l, dzi > 0)
+    show(n.g_dz_r, dzo < 1)
+    for i, d in ipairs(n.dashes) do
+        local t = (i - 0.5) / #n.dashes
+        rect(d, gx + t * gw - k, gy + gh - t * gh - 1, 2 * k, 2)
+    end
+    for i, p in ipairs(n.points) do
+        local t = (i - 1) / (#n.points - 1)
+        local v = ui_gp_aim.eval_response_curve(st, t)
+        rect(p, gx + t * gw - k, gy + gh - v * gh - 1, 2 * k, 2)
+    end
+    layout_live_dot(w)
+    rect(n.g_y100, gx - 22, gy - 2, 22, 14)
+    rect(n.g_x0, gx - 2, gy + gh + 2, 30, 14)
+    rect(n.g_x100, gx + gw - 18, gy + gh + 2, 30, 14)
+    rect(n.g_ycap, gx + 4, gy + 2, gw - 8, 18)
+    rect(n.g_xcap, gx + 36, gy + gh + 1, gw - 60, 18)
+
+    local iy = gy + gh + 28
+    rect(n.info_title, SIDE_X, iy, SIDE_W, 20, "options.gpa.info.title")
+    rect(n.info_line, SIDE_X, iy + 22, SIDE_W, 18, "options.gpa.info.line")
+    rect(n.help_long, SIDE_X, iy + 46, SIDE_W, math.max(18, 548 - iy - 46), "options.gpa.help.long")
+    if sel_row then
+        local spec = sel_row.spec
+        n.info_title:SetText(tr("ui_gp_n_aim_" .. spec.id))
+        if spec.kind == "slider" then
+            n.info_line:SetText(tostring(spec.min) .. tostring(spec.unit or "") .. " ... "
+                .. tostring(spec.max) .. tostring(spec.unit or ""))
+        else
+            n.info_line:SetText("")
+        end
+    else
+        n.info_title:SetText("")
+        n.info_line:SetText("")
+    end
+    n.help_long:SetText(n.help_open and tr("ui_gp_n_help_aim") or "")
+    show(n.help_long, n.help_open)
+    n.status:SetText("")
+    local family = (controls and controls.pad_family) or ui_gp_controls.resolve_pad_family("auto")
+    local spec = ui_gp_controls.get_pad_image_spec(family)
+    layout_footer(n, family, spec and spec.glyph_prefix, "options.gpa")
+end
+-- Mouse drag of a stock track bar has no callback, so poll it like ui_options.UIOptions:Update does.
+local function poll_aim_tracks(w)
+    local n = w._n
+    if not n then return end
+    for _, r in ipairs(n.rows) do
+        if r.track and r.track.IsCursorOverWindow and r.track:IsCursorOverWindow() then
+            local spec = r.spec
+            local raw = tonumber(r.track:GetFValue()) or spec.min
+            local snapped = spec.min + math.floor((raw - spec.min) / spec.step + 0.5) * spec.step
+            snapped = math.max(spec.min, math.min(spec.max, snapped))
+            if snapped ~= w.state[spec.id] then
+                aim_set(w, spec.id, snapped)
+                return
+            end
+        end
+    end
+end
+-- FIX-LIVE2 6a: toggle_help removed - the help card is always shown on the gamepad tabs.
+
+-- ---------------------------------------------------------------------------------------------
+-- Page "Other settings" (GPSET-2, BRIEF 11.1..11.5): Vibration, Icons & Hints, Controls, Gamepad, Debug
+-- ---------------------------------------------------------------------------------------------
+local function now_ms()
+    if _G.game and type(_G.game.get_time_continual) == "function" then
+        local ok, t = pcall(_G.game.get_time_continual)
+        if ok and type(t) == "number" then return t end
+    end
+    if type(_G.time_global) == "function" then
+        local ok, t = pcall(_G.time_global)
+        if ok and type(t) == "number" then return t end
+    end
+    return 0
+end
+
+local function exec_cmd(cmd)
+    if not cmd or cmd == "" then return false end
+    if type(_G.get_console) == "function" then
+        local ok_c, con = pcall(_G.get_console)
+        if ok_c and con and type(con.execute) == "function" then
+            local ok_e = pcall(con.execute, con, cmd)
+            if ok_e then return true end
+        end
+    end
+    if type(_G.exec_console_cmd) == "function" then
+        local ok_x = pcall(_G.exec_console_cmd, cmd)
+        if ok_x then return true end
+    end
+    return false
+end
+
+local function read_con_float(name, def)
+    if type(_G.get_console) == "function" then
+        local ok_c, con = pcall(_G.get_console)
+        if ok_c and con then
+            if type(con.get_float) == "function" then
+                local ok_f, v = pcall(con.get_float, con, name)
+                if ok_f and type(v) == "number" then return v end
+            end
+            if type(con.get_integer) == "function" then
+                local ok_i, v = pcall(con.get_integer, con, name)
+                if ok_i and type(v) == "number" then return v end
+            end
+        end
+    end
+    return def
+end
+
+local function read_con_bool(name, opt_id, def)
+    if ui_options and type(ui_options.get) == "function" and opt_id then
+        local ok_o, v = pcall(ui_options.get, opt_id)
+        if ok_o and v ~= nil then
+            return (v == true or v == 1 or v == "true" or v == "1")
+        end
+    end
+    if type(_G.get_console) == "function" then
+        local ok_c, con = pcall(_G.get_console)
+        if ok_c and con then
+            if type(con.get_bool) == "function" then
+                local ok_b, v = pcall(con.get_bool, con, name)
+                if ok_b and type(v) == "boolean" then return v end
+            end
+            if type(con.get_integer) == "function" then
+                local ok_i, v = pcall(con.get_integer, con, name)
+                if ok_i and type(v) == "number" then return v ~= 0 end
+            end
+        end
+    end
+    return def
+end
+
+local function has_gp_icons()
+    return _G.gp_icons ~= nil and type(_G.gp_icons.get_icon_style) == "function"
+end
+
+local function has_source_mode_api()
+    return _G.game ~= nil
+        and type(_G.game.get_gamepad_source_mode) == "function"
+        and type(_G.game.set_gamepad_source_mode) == "function"
+end
+
+local function query_active_pad_name()
+    if _G.game and type(_G.game.gamepad_get_active_name) == "function" then
+        local ok, name = pcall(_G.game.gamepad_get_active_name)
+        if ok and type(name) == "string" then
+            local trimmed = name:gsub("^%s+", ""):gsub("%s+$", "")
+            if trimmed ~= "" then return trimmed end
+        end
+    end
+    return nil
+end
+
+local function has_active_pad_name()
+    return query_active_pad_name() ~= nil
+end
+
+local function query_active_pad_power()
+    if _G.game and type(_G.game.gamepad_get_power_info) == "function" then
+        local ok, a, b = pcall(_G.game.gamepad_get_power_info)
+        if ok then
+            local st, pct
+            if type(a) == "table" then
+                st = tostring(a.state or "unknown")
+                pct = tonumber(a.percent or a.pct or -1) or -1
+            else
+                st = tostring(a or "unknown")
+                pct = tonumber(b) or -1
+            end
+            if st ~= "" and st ~= "disconnected" and st ~= "unknown" then
+                return st, pct
+            end
+        end
+    end
+    return nil, -1
+end
+
+local function format_pad_power_text()
+    local st, pct = query_active_pad_power()
+    if not st then return nil end
+    if st == "wired" or st == "no_battery" then
+        return tr("ui_gp_oth_pwr_wired")
+    elseif st == "charged" then
+        return tr("ui_gp_oth_pwr_charged")
+    elseif st == "charging" then
+        if pct >= 0 and pct <= 100 then
+            return string.format("%d%% (%s)", math.floor(pct + 0.5), tr("ui_gp_oth_pwr_charging"))
+        end
+        return tr("ui_gp_oth_pwr_charging")
+    elseif st == "on_battery" then
+        if pct >= 0 and pct <= 100 then
+            return string.format("%d%%", math.floor(pct + 0.5))
+        end
+        return tr("ui_gp_oth_pwr_battery")
+    end
+    if pct >= 0 and pct <= 100 then
+        return string.format("%d%%", math.floor(pct + 0.5))
+    end
+    return nil
+end
+
+local function has_active_pad_power()
+    return format_pad_power_text() ~= nil
+end
+
+-- icons_revision is defined in Small helpers above
+
+local HAPTIC_CVARS = {
+    { id = "hap_master",    cmd = "gp_haptics_master",    test_ch = "recoil" },
+    { id = "hap_recoil",    cmd = "gp_haptics_recoil",    test_ch = "recoil" },
+    { id = "hap_damage",    cmd = "gp_haptics_damage",    test_ch = "damage" },
+    { id = "hap_anomaly",   cmd = "gp_haptics_anomaly",   test_ch = "anomaly" },
+    { id = "hap_jam",       cmd = "gp_haptics_jam",       test_ch = "jam" },
+    { id = "hap_explosion", cmd = "gp_haptics_explosion", test_ch = "explosion" },
+}
+
+local PREVIEW_BTNS_ROW1 = { "A", "B", "X", "Y" }
+local PREVIEW_BTNS_ROW2 = { "LB", "RB", "LT", "RT" }
+
+local OTHER_SPECS = {
+    -- 11.1 Vibration
+    { id = "hap_master",    group = "haptics", kind = "slider", min = 0, max = 100, step = 5, unit = "%", def = 100, cmd = "gp_haptics_master",    test_ch = "recoil",    label_id = "ui_gp_oth_hap_master",    desc_id = "ui_gp_oth_hap_master_desc" },
+    { id = "hap_recoil",    group = "haptics", kind = "slider", min = 0, max = 100, step = 5, unit = "%", def = 100, cmd = "gp_haptics_recoil",    test_ch = "recoil",    label_id = "ui_gp_oth_hap_recoil",    desc_id = "ui_gp_oth_hap_recoil_desc" },
+    { id = "hap_damage",    group = "haptics", kind = "slider", min = 0, max = 100, step = 5, unit = "%", def = 100, cmd = "gp_haptics_damage",    test_ch = "damage",    label_id = "ui_gp_oth_hap_damage",    desc_id = "ui_gp_oth_hap_damage_desc" },
+    { id = "hap_anomaly",   group = "haptics", kind = "slider", min = 0, max = 100, step = 5, unit = "%", def = 100, cmd = "gp_haptics_anomaly",   test_ch = "anomaly",   label_id = "ui_gp_oth_hap_anomaly",   desc_id = "ui_gp_oth_hap_anomaly_desc" },
+    { id = "hap_jam",       group = "haptics", kind = "slider", min = 0, max = 100, step = 5, unit = "%", def = 100, cmd = "gp_haptics_jam",       test_ch = "jam",       label_id = "ui_gp_oth_hap_jam",       desc_id = "ui_gp_oth_hap_jam_desc" },
+    { id = "hap_explosion", group = "haptics", kind = "slider", min = 0, max = 100, step = 5, unit = "%", def = 100, cmd = "gp_haptics_explosion", test_ch = "explosion", label_id = "ui_gp_oth_hap_explosion", desc_id = "ui_gp_oth_hap_explosion_desc" },
+
+    -- 11.2 Icons and hints
+    { id = "glyph_type", group = "icons", kind = "step", def = "auto",
+      label_id = "ui_gp_oth_glyph_type", desc_id = "ui_gp_oth_glyph_type_desc",
+      options = {
+          { val = "auto",        label_id = "ui_gp_oth_pad_auto" },
+          { val = "xbox",        label_id = "ui_gp_oth_pad_xbox" },
+          { val = "playstation", label_id = "ui_gp_oth_pad_ps" },
+          { val = "nintendo",    label_id = "ui_gp_oth_pad_nintendo" },
+          { val = "generic",     label_id = "ui_gp_oth_pad_generic" },
+      } },
+    { id = "icon_style", group = "icons", kind = "step", def = "white", supported = has_gp_icons,
+      label_id = "ui_gp_oth_icon_style", desc_id = "ui_gp_oth_icon_style_desc",
+      options = {
+          { val = "white", label_id = "ui_gp_oth_style_white" },
+          { val = "dark",  label_id = "ui_gp_oth_style_dark" },
+          { val = "color", label_id = "ui_gp_oth_style_color" },
+      } },
+    { id = "icon_scale", group = "icons", kind = "slider", min = 50, max = 150, step = 5, unit = "%", def = 100, supported = has_gp_icons,
+      label_id = "ui_gp_oth_icon_scale", desc_id = "ui_gp_oth_icon_scale_desc" },
+    { id = "hint_mode", group = "icons", kind = "step", def = "always", supported = has_gp_icons,
+      label_id = "ui_gp_oth_hint_mode", desc_id = "ui_gp_oth_hint_mode_desc",
+      options = {
+          { val = "always", label_id = "ui_gp_oth_hints_always" },
+          { val = "menu",   label_id = "ui_gp_oth_hints_menu" },
+          { val = "off",    label_id = "ui_gp_oth_hints_off" },
+      } },
+
+    -- 11.3 Controls (GPSET-2 Phase 2: input source mode switcher)
+    { id = "input_source", group = "control", kind = "step", def = "auto",
+      supported = has_source_mode_api, phase2_engine = true,
+      label_id = "ui_gp_oth_input_source", desc_id = "ui_gp_oth_input_source_desc",
+      options = {
+          { val = "auto",         label_id = "ui_gp_oth_src_auto" },
+          { val = "gamepad_only", label_id = "ui_gp_oth_src_pad_only" },
+          { val = "kbm_only",     label_id = "ui_gp_oth_src_kbm_only" },
+      } },
+    { id = "crouch_mode", group = "control", kind = "step", def = false,
+      label_id = "ui_gp_oth_crouch_mode", desc_id = "ui_gp_oth_crouch_mode_desc",
+      options = {
+          { val = false, label_id = "ui_gp_oth_mode_hold" },
+          { val = true,  label_id = "ui_gp_oth_mode_toggle" },
+      } },
+    { id = "sprint_mode", group = "control", kind = "step", def = true,
+      label_id = "ui_gp_oth_sprint_mode", desc_id = "ui_gp_oth_sprint_mode_desc",
+      options = {
+          { val = false, label_id = "ui_gp_oth_mode_hold" },
+          { val = true,  label_id = "ui_gp_oth_mode_toggle" },
+      } },
+    { id = "cursor_size", group = "control", kind = "slider",
+      min = 50, max = 200, step = 10, unit = "%", def = 100,
+      label_id = "ui_gp_oth_cursor_size", desc_id = "ui_gp_oth_cursor_size_desc" },
+    { id = "cursor_speed", group = "control", kind = "slider",
+      min = 50, max = 200, step = 10, unit = "%", def = 100,
+      label_id = "ui_gp_oth_cursor_speed", desc_id = "ui_gp_oth_cursor_speed_desc" },
+    { id = "cursor_toggle_btn", group = "control", kind = "step", def = "button:R3",
+      label_id = "ui_gp_oth_cursor_btn", desc_id = "ui_gp_oth_cursor_btn_desc",
+      options = {
+          { val = "button:R3",     label_id = "ui_gp_oth_cursor_btn_r3" },
+          { val = "hold:L3:300",   label_id = "ui_gp_oth_cursor_btn_hold_l3" },
+          { val = "chord:LB+L3",   label_id = "ui_gp_oth_cursor_btn_lb_l3" },
+          { val = "hold:Back:300", label_id = "ui_gp_oth_cursor_btn_hold_view" },
+      } },
+    -- FIX-LIVE2 item 8 (Misha 8a, 2026-11-16): PDA map reticle shape, square by default
+    { id = "pda_reticle", group = "control", kind = "step", def = 0,
+      label_id = "ui_gp_oth_pda_reticle", desc_id = "ui_gp_oth_pda_reticle_desc",
+      options = {
+          { val = 0, label_id = "ui_gp_oth_pda_reticle_square" },
+          { val = 1, label_id = "ui_gp_oth_pda_reticle_circle" },
+          { val = 2, label_id = "ui_gp_oth_pda_reticle_cross" },
+      } },
+    -- FIX-LIVE3 item 13: PDA map reticle size, percent of the base 32 px (cvar gp_pda_reticle_size 20..64)
+    { id = "pda_reticle_size", group = "control", kind = "slider",
+      min = 60, max = 200, step = 10, unit = "%", def = 100,
+      label_id = "ui_gp_oth_pda_reticle_size", desc_id = "ui_gp_oth_pda_reticle_size_desc" },
+    { id = "reload_guard", group = "control", kind = "step", def = true,
+      label_id = "ui_gp_oth_reload_guard", desc_id = "ui_gp_oth_reload_guard_desc",
+      options = {
+          { val = false, label_id = "ui_gp_oth_off" },
+          { val = true,  label_id = "ui_gp_oth_on" },
+      } },
+
+    -- 11.4 Gamepad (GPSET-2 Phase 2: active controller name & SDL3 battery info; P22 hides when unavailable)
+    { id = "pad_device", group = "pad", kind = "info", supported = has_active_pad_name, phase2_engine = true,
+      label_id = "ui_gp_oth_pad_device", desc_id = "ui_gp_oth_pad_device_desc" },
+    { id = "pad_power",  group = "pad", kind = "info", supported = has_active_pad_power, phase2_engine = true,
+      label_id = "ui_gp_oth_pad_power",  desc_id = "ui_gp_oth_pad_power_desc" },
+    { id = "btn_test", group = "pad", kind = "action", action_label = "ui_gp_oth_act_open",
+      label_id = "ui_gp_oth_btn_test", desc_id = "ui_gp_oth_btn_test_desc" },
+
+    -- 11.5 Debug
+    { id = "dbg_calib_open",  group = "debug", kind = "action", action_label = "ui_gp_oth_act_open",
+      label_id = "ui_gp_oth_dbg_calib_open",  desc_id = "ui_gp_oth_dbg_calib_open_desc" },
+    { id = "dbg_calib_reset", group = "debug", kind = "action", action_label = "ui_gp_oth_act_reset",
+      label_id = "ui_gp_oth_dbg_calib_reset", desc_id = "ui_gp_oth_dbg_calib_reset_desc" },
+    { id = "dbg_remap_open",  group = "debug", kind = "action", action_label = "ui_gp_oth_act_open",
+      label_id = "ui_gp_oth_dbg_remap_open",  desc_id = "ui_gp_oth_dbg_remap_open_desc" },
+    { id = "dbg_wizard_c",    group = "debug", kind = "action", action_label = "ui_gp_oth_act_open",
+      label_id = "ui_gp_oth_dbg_wizard_c",    desc_id = "ui_gp_oth_dbg_wizard_c_desc" },
+    { id = "dbg_bind_reset",  group = "debug", kind = "action", action_label = "ui_gp_oth_act_reset",
+      label_id = "ui_gp_oth_dbg_bind_reset",  desc_id = "ui_gp_oth_dbg_bind_reset_desc" },
+    { id = "dbg_wheel_open",  group = "debug", kind = "action", action_label = "ui_gp_oth_act_open",
+      label_id = "ui_gp_oth_dbg_wheel_open",  desc_id = "ui_gp_oth_dbg_wheel_open_desc" },
+    { id = "wheel_time_mode", group = "debug", kind = "step", def = "realtime",
+      label_id = "ui_gp_oth_wheel_time", desc_id = "ui_gp_oth_wheel_time_desc",
+      options = {
+          { val = "realtime", label_id = "ui_gp_oth_wheel_realtime" },
+          { val = "slowmo",   label_id = "ui_gp_oth_wheel_slowmo" },
+          { val = "pause",    label_id = "ui_gp_oth_wheel_pause" },
+      } },
+    { id = "x_target_angle", group = "debug", kind = "slider", min = 0, max = 30, step = 1, unit = " deg", unit_tr = "ui_gp_oth_unit_deg", def = 10,
+      cmd = "gp_x_target_angle", label_id = "ui_gp_oth_x_angle", desc_id = "ui_gp_oth_x_angle_desc" },
+    { id = "inv_hl_deep", group = "debug", kind = "step", def = false,
+      label_id = "ui_gp_oth_inv_hl", desc_id = "ui_gp_oth_inv_hl_desc",
+      options = {
+          { val = false, label_id = "ui_gp_oth_inv_hl_std" },
+          { val = true,  label_id = "ui_gp_oth_inv_hl_blue" },
+      } },
+    { id = "ui_editor", group = "debug", kind = "radio", def = false,
+      label_id = "ui_gp_oth_ui_editor", desc_id = "ui_gp_oth_ui_editor_desc",
+      options = {
+          { val = false, label_id = "ui_gp_oth_off" },
+          { val = true,  label_id = "ui_gp_oth_on" },
+      } },
+    { id = "dbg_ui_reset", group = "debug", kind = "action", action_label = "ui_gp_oth_act_reset",
+      label_id = "ui_gp_oth_dbg_ui_reset", desc_id = "ui_gp_oth_dbg_ui_reset_desc" },
+    { id = "dbg_compat", group = "debug", kind = "action", action_label = "ui_gp_oth_act_report",
+      label_id = "ui_gp_oth_dbg_compat", desc_id = "ui_gp_oth_dbg_compat_desc" },
+}
+
+for idx, sp in ipairs(OTHER_SPECS) do sp.idx = idx end
+
+local OTHER_GROUPS = {
+    { id = "haptics", label_id = "ui_gp_oth_grp_haptics" },
+    { id = "icons",   label_id = "ui_gp_oth_grp_icons" },
+    { id = "control", label_id = "ui_gp_oth_grp_control" },
+    { id = "pad",     label_id = "ui_gp_oth_grp_pad" },
+    { id = "debug",   label_id = "ui_gp_oth_grp_debug" },
+}
+
+function get_all_other_specs()
+    return OTHER_SPECS
+end
+
+function get_other_specs()
+    local out = {}
+    for _, sp in ipairs(OTHER_SPECS) do
+        if not sp.phase2_engine or (sp.supported and sp.supported()) then
+            out[#out + 1] = sp
+        end
+    end
+    return out
+end
+
+function get_default_other_state()
+    local st = {}
+    for _, sp in ipairs(OTHER_SPECS) do
+        if sp.kind ~= "action" and sp.kind ~= "info" then
+            st[sp.id] = sp.def
+        end
+    end
+    return st
+end
+
+function load_other_state_from_engine()
+    local st = get_default_other_state()
+    for _, hc in ipairs(HAPTIC_CVARS) do
+        local f = math.max(0, math.min(1, tonumber(read_con_float(hc.cmd, 1.0)) or 1.0))
+        st[hc.id] = math.floor(f * 100 + 0.5)
+    end
+    if gp_bridge and type(gp_bridge.get_glyph_override) == "function" then
+        local ok, g = pcall(gp_bridge.get_glyph_override)
+        if ok and type(g) == "string" and g ~= "" then st.glyph_type = g end
+    end
+    if has_gp_icons() then
+        local ok_s, s = pcall(_G.gp_icons.get_icon_style)
+        if ok_s and type(s) == "string" then st.icon_style = s end
+        local ok_k, k = pcall(_G.gp_icons.get_scale)
+        if ok_k and type(k) == "number" then st.icon_scale = k end
+        if type(_G.gp_icons.get_hint_mode) == "function" then
+            local ok_h, h = pcall(_G.gp_icons.get_hint_mode)
+            if ok_h and type(h) == "string" then st.hint_mode = h end
+        end
+    end
+    if has_source_mode_api() then
+        local ok_sm, sm = pcall(_G.game.get_gamepad_source_mode)
+        if ok_sm and (sm == "auto" or sm == "gamepad_only" or sm == "kbm_only") then
+            st.input_source = sm
+        end
+    end
+    st.crouch_mode = read_con_bool("g_crouch_toggle", "control/general/crouch_toggle", false)
+    st.sprint_mode = read_con_bool("g_sprint_toggle", "control/general/sprint_toggle", true)
+    st.reload_guard = read_con_bool("gp_reload_guard", "control/gamepad/gp_reload_guard", true)
+    if _G.gp_cursor and type(_G.gp_cursor.get_size_pct) == "function" then
+        pcall(_G.gp_cursor.load_settings)
+        local ok_sz, sz = pcall(_G.gp_cursor.get_size_pct)
+        if ok_sz and tonumber(sz) then st.cursor_size = tonumber(sz) end
+        local ok_sp, sp = pcall(_G.gp_cursor.get_speed_pct)
+        if ok_sp and tonumber(sp) then st.cursor_speed = tonumber(sp) end
+        local ok_tg, tg = pcall(_G.gp_cursor.get_toggle_spec)
+        if ok_tg and type(tg) == "string" and tg ~= "" then st.cursor_toggle_btn = tg end
+    else
+        local c_sz = read_con_float("gp_cursor_size", nil)
+        if c_sz ~= nil then
+            st.cursor_size = math.max(50, math.min(200, math.floor(((c_sz / 1.5) * 100) / 10 + 0.5) * 10))
+        end
+        local c_sp = read_con_float("gp_cursor_speed", nil)
+        if c_sp ~= nil then
+            st.cursor_speed = math.max(50, math.min(200, math.floor((c_sp * 100) / 10 + 0.5) * 10))
+        end
+    end
+    for _, sp in ipairs(OTHER_SPECS) do
+        if sp.id == "cursor_toggle_btn" and sp.options then
+            while #sp.options > 4 do table.remove(sp.options) end
+            local cur_v = tostring(st.cursor_toggle_btn or "button:R3")
+            local known = false
+            for _, o in ipairs(sp.options) do
+                if o.val == cur_v then known = true break end
+            end
+            if not known then
+                sp.options[5] = { val = cur_v, label_id = "ui_gp_oth_cursor_btn_custom" }
+            end
+            break
+        end
+    end
+    if _G.gp_wheel and type(_G.gp_wheel.get_time_mode) == "function" then
+        local ok_w, m = pcall(_G.gp_wheel.get_time_mode)
+        if ok_w and type(m) == "string" and m ~= "" then st.wheel_time_mode = m end
+    end
+    local shp = math.floor((tonumber(read_con_float("gp_pda_reticle_shape", 0)) or 0) + 0.5)
+    st.pda_reticle = (shp == 1 or shp == 2) and shp or 0
+    local rsz = tonumber(read_con_float("gp_pda_reticle_size", 32)) or 32
+    st.pda_reticle_size = math.max(60, math.min(200, math.floor(((rsz / 32) * 100) / 10 + 0.5) * 10))
+    local x_ang = read_con_float("gp_x_target_angle", nil)
+    if x_ang == nil and ui_options and type(ui_options.get) == "function" then
+        local ok_a, av = pcall(ui_options.get, "control/gamepad/gp_x_target_angle")
+        if ok_a and tonumber(av) then x_ang = tonumber(av) end
+    end
+    st.x_target_angle = math.max(0, math.min(30, math.floor((tonumber(x_ang) or 10) + 0.5)))
+    st.inv_hl_deep = read_con_bool("gp_inv_hl_deep", "control/gamepad/gp_inv_hl_deep", false)
+    st.ui_editor   = read_con_bool("gp_ui_editor",   "control/gamepad/gp_ui_editor",   false)
+    return st
+end
+
+local function restore_applied_haptics()
+    if other then other.rumble_restore_at = nil end
+    if not other_applied then return end
+    for _, hc in ipairs(HAPTIC_CVARS) do
+        local f = math.max(0, math.min(1, (tonumber(other_applied[hc.id]) or 100) / 100))
+        exec_cmd(string.format("%s %.2f", hc.cmd, f))
+    end
+end
+
+function apply_other_to_engine(st)
+    if not st then return false end
+    if other then other.rumble_restore_at = nil end
+    for _, hc in ipairs(HAPTIC_CVARS) do
+        local f = math.max(0, math.min(1, (tonumber(st[hc.id]) or 100) / 100))
+        exec_cmd(string.format("%s %.2f", hc.cmd, f))
+    end
+    exec_cmd("gp_rumble_test save")
+
+    local gtype = tostring(st.glyph_type or "auto")
+    if gp_bridge and type(gp_bridge.set_glyph_override) == "function" then
+        pcall(gp_bridge.set_glyph_override, gtype)
+    else
+        exec_cmd("gp_glyphs " .. gtype)
+    end
+    if has_gp_icons() then
+        pcall(_G.gp_icons.set_icon_style, st.icon_style or "white")
+        if type(_G.gp_icons.set_scale) == "function" then
+            pcall(_G.gp_icons.set_scale, tonumber(st.icon_scale) or 100)
+        end
+        if type(_G.gp_icons.set_hint_mode) == "function" then
+            pcall(_G.gp_icons.set_hint_mode, st.hint_mode or "always")
+        end
+        if type(_G.gp_icons.refresh) == "function" then
+            pcall(_G.gp_icons.refresh)
+        end
+    end
+
+    if has_source_mode_api() then
+        local sm = tostring(st.input_source or "auto")
+        if sm ~= "auto" and sm ~= "gamepad_only" and sm ~= "kbm_only" then sm = "auto" end
+        pcall(_G.game.set_gamepad_source_mode, sm)
+    end
+    exec_cmd("g_crouch_toggle " .. (st.crouch_mode and "1" or "0"))
+    exec_cmd("g_sprint_toggle " .. (st.sprint_mode and "1" or "0"))
+    if _G.gp_cursor and type(_G.gp_cursor.apply_settings) == "function" then
+        pcall(_G.gp_cursor.apply_settings, st.cursor_size, st.cursor_speed, st.cursor_toggle_btn)
+    else
+        local sz_cv = math.max(0.5, math.min(3.0, (tonumber(st.cursor_size) or 100) * 0.015))
+        local sp_cv = math.max(0.4, math.min(2.5, (tonumber(st.cursor_speed) or 100) * 0.01))
+        exec_cmd(string.format("gp_cursor_size %.2f", sz_cv))
+        exec_cmd(string.format("gp_cursor_speed %.2f", sp_cv))
+    end
+    if _G.gp_wheel and type(_G.gp_wheel.set_time_mode) == "function" then
+        pcall(_G.gp_wheel.set_time_mode, st.wheel_time_mode or "realtime")
+    end
+    local x_ang = math.max(0, math.min(30, math.floor((tonumber(st.x_target_angle) or 10) + 0.5)))
+    exec_cmd("gp_x_target_angle " .. tostring(x_ang))
+    local shp = tonumber(st.pda_reticle) or 0
+    if shp ~= 1 and shp ~= 2 then shp = 0 end
+    exec_cmd("gp_pda_reticle_shape " .. tostring(shp))
+    local rpct = tonumber(st.pda_reticle_size) or 100
+    exec_cmd("gp_pda_reticle_size " .. tostring(math.max(20, math.min(64, math.floor(32 * rpct / 100 + 0.5)))))
+
+    if ui_options and type(ui_options.set) == "function" then
+        pcall(ui_options.set, "control/general/crouch_toggle", st.crouch_mode and true or false)
+        pcall(ui_options.set, "control/general/sprint_toggle", st.sprint_mode and true or false)
+        pcall(ui_options.set, "control/gamepad/gp_x_target_angle", x_ang)
+        pcall(ui_options.set, "control/gamepad/gp_inv_hl_deep", st.inv_hl_deep and true or false)
+        pcall(ui_options.set, "control/gamepad/gp_reload_guard", st.reload_guard ~= false)
+        pcall(ui_options.set, "control/gamepad/gp_ui_editor", st.ui_editor and true or false)
+    end
+    return true
+end
+
+function other_dirty_count()
+    if not (other and other_applied and other.state) then return 0 end
+    local c = 0
+    for _, sp in ipairs(OTHER_SPECS) do
+        if sp.kind ~= "action" and sp.kind ~= "info" and (sp.supported == nil or sp.supported()) then
+            if other.state[sp.id] ~= other_applied[sp.id] then
+                c = c + 1
+            end
+        end
+    end
+    return c
+end
+
+local function total_dirty_count()
+    return aim_dirty_count() + other_dirty_count()
+end
+
+local function other_spec_by_id(id)
+    for _, sp in ipairs(OTHER_SPECS) do
+        if sp.id == id then return sp end
+    end
+    return nil
+end
+
+function other_set(w, id, val)
+    local sp = other_spec_by_id(id)
+    if not sp or sp.kind == "action" or sp.kind == "info" then return false end
+    if sp.kind == "slider" then
+        local num = tonumber(val) or sp.def
+        num = sp.min + math.floor((num - sp.min) / sp.step + 0.5) * sp.step
+        val = math.max(sp.min, math.min(sp.max, num))
+    end
+    w.state[id] = val
+    w.selected_idx = sp.idx
+    w.status_msg = ""
+    w:RefreshUI()
+    update_pending()
+    return true
+end
+
+function other_step(w, dir)
+    local sp = OTHER_SPECS[w.selected_idx or 1]
+    if not sp or sp.kind == "action" or sp.kind == "info" then return false end
+    local d = (tonumber(dir) or 1) < 0 and -1 or 1
+    if sp.kind == "slider" then
+        local cur = tonumber(w.state[sp.id]) or sp.def
+        return other_set(w, sp.id, cur + d * sp.step)
+    elseif sp.options and #sp.options > 0 then
+        local cur = w.state[sp.id]
+        local pos = 1
+        for i, o in ipairs(sp.options) do
+            if o.val == cur then pos = i break end
+        end
+        pos = ((pos - 1 + d) % #sp.options) + 1
+        return other_set(w, sp.id, sp.options[pos].val)
+    end
+    return false
+end
+
+function other_move(w, delta)
+    local n = w._n
+    if not n or #n.order == 0 then return false end
+    local pos = 1
+    for i, idx in ipairs(n.order) do
+        if idx == w.selected_idx then pos = i break end
+    end
+    pos = ((pos - 1 + delta) % #n.order) + 1
+    w.selected_idx = n.order[pos]
+    w._scroll_follow = true
+    w.status_msg = ""
+    w:RefreshUI()
+    return true
+end
+
+function other_scroll_by(w, dy)
+    local delta = tonumber(dy) or 0
+    if delta == 0 then return false end
+    local prev = w.scroll_y or 0
+    w.scroll_y = math.max(0, prev + delta)
+    if w.scroll_y == prev then return false end
+    w._scroll_follow = false
+    w:RefreshUI()
+    return (w.scroll_y ~= prev)
+end
+
+function other_reset_defaults(w)
+    if w.rumble_restore_at then restore_applied_haptics() end
+    w.state = get_default_other_state()
+    w.status_msg = ""
+    w:RefreshUI()
+    update_pending()
+    return true
+end
+
+function other_test_rumble(w)
+    local sp = OTHER_SPECS[w.selected_idx or 1]
+    if not (sp and sp.test_ch) then return false end
+    local master = math.max(0, math.min(1, (tonumber(w.state.hap_master) or 100) / 100))
+    local ch_val = math.max(0, math.min(1, (tonumber(w.state[sp.id]) or 100) / 100))
+    if master <= 0 or ch_val <= 0 then
+        exec_cmd("gp_rumble_test stop")
+        w.status_msg = tr("ui_gp_oth_status_rumble_off")
+        w:RefreshUI()
+        return true
+    end
+    exec_cmd(string.format("gp_haptics_master %.2f", master))
+    if sp.cmd ~= "gp_haptics_master" then
+        exec_cmd(string.format("%s %.2f", sp.cmd, ch_val))
+    end
+    exec_cmd(string.format("gp_rumble_test %s 1.0 220", sp.test_ch))
+    w.rumble_restore_at = now_ms() + 260
+    w.status_msg = tr("ui_gp_oth_status_rumble_test")
+    w:RefreshUI()
+    return true
+end
+
+local function is_other_reset_action(id)
+    return id == "dbg_calib_reset" or id == "dbg_bind_reset" or id == "dbg_ui_reset"
+end
+
+function other_activate(w, sp, from_hold_x)
+    sp = sp or OTHER_SPECS[w.selected_idx or 1]
+    if not sp then return false end
+    w.selected_idx = sp.idx
+    if sp.kind == "info" then return true end
+    if sp.kind ~= "action" then
+        if sp.kind == "slider" then
+            -- FIX-LIVE2 6: X is the shared Apply now, the vibration test moved to A
+            if sp.test_ch then return other_test_rumble(w) end
+            return true
+        end
+        return other_step(w, 1)
+    end
+    local id = sp.id
+    if is_other_reset_action(id) and not from_hold_x and use_native_menu_focus() then
+        w.status_msg = tr("ui_gp_oth_hold_x_reset")
+        w:RefreshUI()
+        return true
+    end
+    if id == "btn_test" then
+        local opened = false
+        if ui_options_gamepad and type(ui_options_gamepad.start_gamepad_button_test_ui) == "function" then
+            opened = ui_options_gamepad.start_gamepad_button_test_ui(owner, function()
+                if w and w:IsShown() then w:RefreshUI() end
+            end)
+        elseif _G.ui_gp_button_test and type(_G.ui_gp_button_test.open) == "function" then
+            opened = _G.ui_gp_button_test.open(owner and owner.dialog or nil, function()
+                if w and w:IsShown() then w:RefreshUI() end
+            end)
+        end
+        return opened and true or false
+    elseif id == "dbg_calib_open" then
+        if ui_options_gamepad and ui_options_gamepad.start_gamepad_calibration_ui then
+            ui_options_gamepad.start_gamepad_calibration_ui(owner)
+        else
+            exec_cmd("gp_calib open")
+        end
+        return true
+    elseif id == "dbg_calib_reset" then
+        if ui_options_gamepad and ui_options_gamepad.reset_gamepad_calibration_defaults then
+            ui_options_gamepad.reset_gamepad_calibration_defaults()
+        else
+            exec_cmd("gp_calib reset")
+            exec_cmd("gp_calib save")
+        end
+        w.status_msg = tr("ui_gp_oth_status_done")
+        w:RefreshUI()
+        return true
+    elseif id == "dbg_remap_open" then
+        if ui_options_gamepad and ui_options_gamepad.start_gamepad_remap_ui then
+            ui_options_gamepad.start_gamepad_remap_ui(owner)
+        else
+            exec_cmd("gp_remap open")
+        end
+        return true
+    elseif id == "dbg_wizard_c" then
+        if ui_options_gamepad and ui_options_gamepad.start_gamepad_class_c_wizard_ui then
+            ui_options_gamepad.start_gamepad_class_c_wizard_ui(owner)
+        else
+            exec_cmd("gp_remap wizard")
+        end
+        return true
+    elseif id == "dbg_bind_reset" then
+        if ui_options_gamepad and ui_options_gamepad.reset_gamepad_bindings_defaults then
+            ui_options_gamepad.reset_gamepad_bindings_defaults()
+        else
+            exec_cmd("gp_bind_reset")
+        end
+        w.status_msg = tr("ui_gp_oth_status_done")
+        w:RefreshUI()
+        return true
+    elseif id == "dbg_wheel_open" then
+        if ui_options_gamepad and ui_options_gamepad.open_gamepad_wheel_settings then
+            ui_options_gamepad.open_gamepad_wheel_settings(owner)
+        elseif _G.ui_gp_qaw_settings and _G.ui_gp_qaw_settings.open then
+            _G.ui_gp_qaw_settings.open()
+        end
+        return true
+    elseif id == "dbg_ui_reset" then
+        if ui_options_gamepad and ui_options_gamepad.reset_ui_layout then
+            ui_options_gamepad.reset_ui_layout()
+        elseif gp_ui_tune and gp_ui_tune.reset_interface then
+            gp_ui_tune.reset_interface()
+        end
+        w.status_msg = tr("ui_gp_oth_status_done")
+        w:RefreshUI()
+        return true
+    elseif id == "dbg_compat" then
+        w._n.help_open = true
+        w:RefreshUI()
+        return true
+    end
+    return false
+end
+
+local function compat_full_text()
+    if _G.gp_compat and type(_G.gp_compat.get_options_status_text) == "function" then
+        local ok, t = pcall(_G.gp_compat.get_options_status_text)
+        if ok and type(t) == "string" and t ~= "" then return t end
+    end
+    return tr("ui_gp_oth_dbg_compat_desc")
+end
+
+local function preview_icon_spec(btn, eff_family, icon_style)
+    local set_tag = (eff_family == "playstation") and "ps"
+        or (eff_family == "nintendo" and "nintendo"
+        or (eff_family == "generic" and "generic" or "xbox"))
+    local suf = GLYPH_SUFFIX[btn] or "south"
+    if has_gp_icons() then
+        local st = (icon_style == "dark" or icon_style == "color") and icon_style or "white"
+        local tex = "ui_gp_" .. st .. "_" .. set_tag .. "_" .. suf
+        local tw, th = 28, 28
+        if type(_G.gp_icons.dims) == "function" then
+            local _, _, dw, dh = _G.gp_icons.dims(btn, "round", set_tag)
+            if dw and dh and dh > 0 then tw, th = dw, dh end
+        end
+        return tex, tw, th
+    end
+    local tex, asp = button_icon(eff_family, "ui_gp_" .. set_tag .. "_", btn)
+    return tex, 24 * asp, 24
+end
+
+local function build_other(w)
+    if w._n then return w._n end
+    local x = xmlh()
+    local n = { rows = {}, groups = {}, order = {}, prev1 = {}, prev2 = {}, help_open = true } -- FIX-LIVE2 6a
+    w:SetWindowName("gp_native_other")
+    n.cap = x:InitFrameLine("cap", w)
+    n.cap_t = txt(w, "t16", 8, 0, 420, 15)
+    x:InitFrameLine("hdr_a1", w)
+    x:InitFrameLine("hdr_a2", w)
+    txt(w, "t_hdr", 4, 20, 150, 15):SetText(tr("ui_gp_n_col_param"))
+    txt(w, "t_hdr", 168, 20, 160, 15):SetText(tr("ui_gp_n_col_value"))
+    n.frame = x:InitFrame("frame", w)
+
+    for gi, grp in ipairs(OTHER_GROUPS) do
+        local g = txt(w, "t_group", 3, 38, 318, 20)
+        g:SetText(tr(grp.label_id))
+        n.groups[gi] = g
+    end
+
+    for _, sp in ipairs(OTHER_SPECS) do
+        local r = { idx = sp.idx, spec = sp, y = 38 }
+        r.mark = fill(w, 2, 38, 2, 22, clr(255, 255, 255, 255))
+        r.cap  = txt(w, "t16", 8, 38, 154, 22)
+        r.cap:SetWindowName("gp_native_row_" .. sp.idx)
+        r.cap:SetText(tr(sp.label_id))
+        r.row_btn = x:Init3tButton("row_btn", w)
+        rect(r.row_btn, 0, 38, 162, 22)
+        local rname = "gp_oth_row_" .. sp.idx
+        w:Register(r.row_btn, rname)
+        w:AddCallback(rname, ui_events.BUTTON_CLICKED, function()
+            w.selected_idx = sp.idx
+            w.status_msg = ""
+            w:RefreshUI()
+        end, w)
+
+        if sp.kind == "slider" then
+            r.track = x:InitTrackBar("track", w)
+            rect(r.track, 164, 41, 124, 16)
+            r.track:SetStep(sp.step)
+            r.track:SetOptFBounds(sp.min, sp.max)
+            r.value = txt(w, "t16c", 288, 38, 38, 22)
+            r.knob  = fill(w, 164, 58, 8, 2, clr(255, 255, 255, 255))
+        elseif sp.kind == "radio" then
+            r.radio = {}
+            for j, o in ipairs(sp.options) do
+                local e = { opt = o }
+                e.btn = x:InitCheck("radio_btn", w)
+                rect(e.btn, 164 + (j - 1) * 80, 38, 26, 22)
+                e.lbl = txt(w, "t16", 192 + (j - 1) * 80, 38, 50, 22, clr(255, 200, 200, 200))
+                e.lbl:SetText(tr(o.label_id))
+                local bname = "gp_oth_rad_" .. sp.id .. "_" .. j
+                w:Register(e.btn, bname)
+                w:AddCallback(bname, ui_events.BUTTON_CLICKED, function()
+                    other_set(w, sp.id, o.val)
+                end, w)
+                r.radio[j] = e
+            end
+        elseif sp.kind == "step" then
+            r.lbl_prev = txt(w, "t16c", 164, 38, 18, 22, clr(255, 190, 190, 195))
+            r.lbl_prev:SetText("<")
+            r.val_txt  = txt(w, "t16c", 182, 38, 124, 22)
+            r.lbl_next = txt(w, "t16c", 306, 38, 18, 22, clr(255, 190, 190, 195))
+            r.lbl_next:SetText(">")
+            r.btn_prev = x:Init3tButton("row_btn", w)
+            r.btn_val  = x:Init3tButton("row_btn", w)
+            r.btn_next = x:Init3tButton("row_btn", w)
+            local np, nv, nn = "gp_oth_prev_" .. sp.id, "gp_oth_val_" .. sp.id, "gp_oth_next_" .. sp.id
+            w:Register(r.btn_prev, np)
+            w:Register(r.btn_val,  nv)
+            w:Register(r.btn_next, nn)
+            w:AddCallback(np, ui_events.BUTTON_CLICKED, function() w.selected_idx = sp.idx other_step(w, -1) end, w)
+            w:AddCallback(nv, ui_events.BUTTON_CLICKED, function() w.selected_idx = sp.idx other_step(w, 1) end, w)
+            w:AddCallback(nn, ui_events.BUTTON_CLICKED, function() w.selected_idx = sp.idx other_step(w, 1) end, w)
+        elseif sp.kind == "action" then
+            r.act_brd = fill(w, 165, 39, 159, 20, clr(130, 145, 145, 152))
+            r.act_bg  = fill(w, 166, 40, 157, 18, clr(215, 28, 28, 32))
+            r.act_lbl = txt(w, "t16c", 166, 38, 157, 22, clr(255, 220, 220, 225))
+            r.act_lbl:SetText(tr(sp.action_label))
+            r.act_btn = x:Init3tButton("row_btn", w)
+            local aname = "gp_oth_act_" .. sp.id
+            w:Register(r.act_btn, aname)
+            w:AddCallback(aname, ui_events.BUTTON_CLICKED, function()
+                other_activate(w, sp, not use_native_menu_focus())
+            end, w)
+        elseif sp.kind == "info" then
+            r.info_txt = txt(w, "t16c", 164, 38, 159, 22, clr(255, 205, 205, 212))
+        end
+        n.rows[sp.idx] = r
+    end
+
+    -- Thin viewport scrollbar on the right edge of the 340px frame
+    n.sb_track = fill(w, 333, 56, 3, 474, clr(95, 65, 65, 70))
+    n.sb_thumb = fill(w, 333, 56, 3, 80,  clr(210, 185, 185, 192))
+    n.sb_up_l  = txt(w, "t_hdr", 327, 38, 12, 16)
+    n.sb_up_l:SetText("^")
+    n.sb_dn_l  = txt(w, "t_hdr", 327, 532, 12, 16)
+    n.sb_dn_l:SetText("v")
+    n.sb_up = x:Init3tButton("row_btn", w)
+    n.sb_dn = x:Init3tButton("row_btn", w)
+    rect(n.sb_up, 324, 38, 15, 16)
+    rect(n.sb_dn, 324, 532, 15, 16)
+    w:Register(n.sb_up, "gp_oth_sb_up")
+    w:Register(n.sb_dn, "gp_oth_sb_dn")
+    w:AddCallback("gp_oth_sb_up", ui_events.BUTTON_CLICKED, function() other_scroll_by(w, -72) end, w)
+    w:AddCallback("gp_oth_sb_dn", ui_events.BUTTON_CLICKED, function() other_scroll_by(w,  72) end, w)
+
+    -- Right panel: Live 8-icon preview (A B X Y + LB RB LT RT) & selected item card
+    n.prev_title = txt(w, "t18", SIDE_X, 20, SIDE_W, 20)
+    n.prev_title:SetText(tr("ui_gp_oth_preview_title"))
+    n.prev_card = x:InitFrame("frame", w)
+    for i = 1, #PREVIEW_BTNS_ROW1 do
+        n.prev1[i] = icon(w, SIDE_X + 12, 56, 18, 18, button_icon("xbox", nil, PREVIEW_BTNS_ROW1[i]))
+    end
+    for i = 1, #PREVIEW_BTNS_ROW2 do
+        n.prev2[i] = icon(w, SIDE_X + 12, 98, 24, 18, button_icon("xbox", nil, PREVIEW_BTNS_ROW2[i]))
+    end
+
+    n.info_card  = x:InitFrame("frame", w)
+    n.info_title = txt(w, "t18", SIDE_X + 8, 168, SIDE_W - 16, 20)
+    n.info_line  = txt(w, "t16", SIDE_X + 8, 190, SIDE_W - 16, 18, clr(255, 200, 200, 200))
+    n.help_long  = txt(w, "t16w", SIDE_X + 8, 214, SIDE_W - 16, 328)
+    n.status     = txt(w, "t_status", 2, 554, PANEL_W - 4, 18)
+
+    build_footer(w, n, {
+        { buttons = { "A" },        label = "ui_gp_n_f_change" },
+        { buttons = { "LB", "RB" }, label = "ui_gp_n_f_tab" },
+        { buttons = { "B" },        label = "ui_gp_n_f_close" },
+    })
+    w._n = n
+    return n
+end
+
+local function layout_preview_row(widgets, btns, cy, eff_family, icon_style, scale_k, k)
+    local dims = {}
+    local gap = 8 * k
+    local total_w = 0
+    for i, btn in ipairs(btns) do
+        local tex, tw, th = preview_icon_spec(btn, eff_family, icon_style)
+        local ih = th * scale_k
+        local iw = tw * scale_k * k
+        dims[i] = { tex = tex, iw = iw, ih = ih }
+        total_w = total_w + iw + ((i > 1) and gap or 0)
+    end
+    local max_w = SIDE_W - 16
+    local fit = (total_w > max_w and total_w > 0) and (max_w / total_w) or 1
+    total_w = total_w * fit
+    gap = gap * fit
+    local x = SIDE_X + (SIDE_W - total_w) * 0.5
+    for i, d in ipairs(dims) do
+        local iw, ih = d.iw * fit, d.ih * fit
+        set_tex(widgets[i], d.tex)
+        rect(widgets[i], x, cy - ih * 0.5, iw, ih)
+        show(widgets[i], true)
+        x = x + iw + gap
+    end
+end
+
+local function format_other_value(sp, val)
+    if sp.kind == "slider" then
+        local num = tonumber(val) or sp.def
+        local unit = sp.unit_tr and tr(sp.unit_tr) or tostring(sp.unit or "")
+        return tostring(num) .. unit
+    elseif sp.options then
+        for _, o in ipairs(sp.options) do
+            if o.val == val then return tr(o.label_id) end
+        end
+    elseif sp.kind == "action" then
+        return tr(sp.action_label)
+    elseif sp.kind == "info" then
+        if sp.id == "pad_device" then
+            return query_active_pad_name() or ""
+        elseif sp.id == "pad_power" then
+            return format_pad_power_text() or ""
+        end
+        return ""
+    end
+    return tostring(val or "")
+end
+
+function layout_other(w)
+    if not w._native_owner then return end
+    local n = build_other(w)
+    n.menu_pad_focus = use_native_menu_focus()
+    n.icon_rev = icons_revision()
+    local st = w.state or {}
+    local k = kx()
+    rect(w, 0, 0, PANEL_W, PANEL_H, "options.gpo.panel")
+    n.cap_t:SetText(tr("ui_gp_n_cap") .. "  -  " .. tr("ui_gp_n_tab_other"))
+
+    -- 1. Compute virtual Y positions for supported groups and rows
+    local VIEW_TOP, VIEW_BOT = 38, 546
+    local VIEW_H = VIEW_BOT - VIEW_TOP
+    n.order = {}
+    local grp_vy = {}
+    local row_vy = {}
+    local first_in_grp = {}
+    local vy = 0
+    for gi, grp in ipairs(OTHER_GROUPS) do
+        local members = {}
+        for _, sp in ipairs(OTHER_SPECS) do
+            if sp.group == grp.id and (sp.supported == nil or sp.supported()) then
+                members[#members + 1] = sp.idx
+            end
+        end
+        if #members > 0 then
+            grp_vy[gi] = vy
+            vy = vy + GROUP_STEP
+            first_in_grp[members[1]] = grp_vy[gi]
+            for _, idx in ipairs(members) do
+                row_vy[idx] = vy
+                n.order[#n.order + 1] = idx
+                vy = vy + 24
+            end
+        end
+    end
+    local content_h = vy
+
+    -- Ensure selected_idx points to an active row
+    local sel_ok = false
+    for _, idx in ipairs(n.order) do
+        if idx == w.selected_idx then sel_ok = true break end
+    end
+    if not sel_ok then w.selected_idx = n.order[1] or 1 end
+
+    -- Keep selected row inside the viewport when moving with gamepad/keyboard
+    local max_scroll = math.max(0, content_h - VIEW_H)
+    local sel_vy = row_vy[w.selected_idx]
+    if w._scroll_follow and sel_vy ~= nil then
+        local top_need = first_in_grp[w.selected_idx] or sel_vy
+        local bot_need = sel_vy + 24
+        local sy = w.scroll_y or 0
+        if top_need < sy then
+            sy = top_need
+        elseif bot_need > sy + VIEW_H then
+            sy = bot_need - VIEW_H
+        end
+        w.scroll_y = sy
+        w._scroll_follow = false
+    end
+    w.scroll_y = math.max(0, math.min(max_scroll, w.scroll_y or 0))
+    local scroll = w.scroll_y
+
+    -- 2. Position & show/hide groups and rows inside [VIEW_TOP .. VIEW_BOT]
+    for gi, g in ipairs(n.groups) do
+        local gvy = grp_vy[gi]
+        if gvy ~= nil then
+            local sy = VIEW_TOP + gvy - scroll + 3
+            local vis = (sy >= VIEW_TOP - 2) and (sy + 20 <= VIEW_BOT + 2)
+            rect(g, 3, vis and sy or VIEW_TOP, 318, 20)
+            show(g, vis)
+        else
+            show(g, false)
+        end
+    end
+
+    local c_norm, c_sel = clr(255, 170, 170, 170), clr(255, 240, 240, 240)
+    local sel_spec = OTHER_SPECS[w.selected_idx]
+    for idx, r in ipairs(n.rows) do
+        local sp = r.spec
+        local rvy = row_vy[idx]
+        local sy = rvy and (VIEW_TOP + rvy - scroll) or VIEW_TOP
+        local vis = (rvy ~= nil) and (sy >= VIEW_TOP - 2) and (sy + 22 <= VIEW_BOT + 2)
+        local py = vis and sy or VIEW_TOP
+        local is_sel = vis and (idx == w.selected_idx)
+        r.y = py
+
+        rect(r.mark, 2, py, 2, 22)
+        rect(r.cap, 8, py, 154, 22)
+        rect(r.row_btn, 0, py, 162, 22)
+        show(r.mark, is_sel and not n.menu_pad_focus)
+        show(r.cap, vis)
+        show(r.row_btn, vis)
+        r.cap:SetTextColor(is_sel and c_sel or c_norm)
+
+        local v = st[sp.id]
+        if r.track then
+            local num = tonumber(v) or sp.def
+            rect(r.track, 164, py + 3, 122, 16)
+            rect(r.value, 286, py, 38, 22)
+            if vis and not (r.track.IsCursorOverWindow and r.track:IsCursorOverWindow()) then
+                r.track:SetFValue(num)
+            end
+            r.value:SetText(format_other_value(sp, num))
+            local ratio = (num - sp.min) / math.max(1, sp.max - sp.min)
+            rect(r.knob, 164 + ratio * 114, py + 20, 8, 2)
+            show(r.track, vis)
+            show(r.value, vis)
+            show(r.knob, is_sel)
+        elseif r.radio then
+            for j, e in ipairs(r.radio) do
+                rect(e.btn, 164 + (j - 1) * 78, py, 26, 22)
+                rect(e.lbl, 192 + (j - 1) * 78, py, 50, 22)
+                e.btn:SetCheck(e.opt.val == v)
+                e.lbl:SetTextColor((e.opt.val == v) and c_sel or c_norm)
+                show(e.btn, vis)
+                show(e.lbl, vis)
+            end
+        elseif r.val_txt then
+            rect(r.lbl_prev, 164, py, 16, 22)
+            rect(r.val_txt,  180, py, 128, 22)
+            rect(r.lbl_next, 308, py, 16, 22)
+            rect(r.btn_prev, 164, py, 18, 22)
+            rect(r.btn_val,  182, py, 124, 22)
+            rect(r.btn_next, 306, py, 18, 22)
+            r.val_txt:SetText(format_other_value(sp, v))
+            r.val_txt:SetTextColor(is_sel and c_sel or clr(255, 200, 200, 210))
+            show(r.lbl_prev, vis)
+            show(r.val_txt,  vis)
+            show(r.lbl_next, vis)
+            show(r.btn_prev, vis)
+            show(r.btn_val,  vis)
+            show(r.btn_next, vis)
+        elseif r.act_btn then
+            rect(r.act_brd, 165, py + 1, 157, 20)
+            rect(r.act_bg,  166, py + 2, 155, 18)
+            rect(r.act_lbl, 166, py,     155, 22)
+            rect(r.act_btn, 164, py,     159, 22)
+            r.act_brd:SetTextureColor(is_sel and clr(220, 235, 235, 240) or clr(110, 120, 120, 128))
+            r.act_lbl:SetTextColor(is_sel and c_sel or clr(255, 205, 205, 212))
+            show(r.act_brd, vis)
+            show(r.act_bg,  vis)
+            show(r.act_lbl, vis)
+            show(r.act_btn, vis)
+        elseif r.info_txt then
+            rect(r.info_txt, 164, py, 159, 22)
+            r.info_txt:SetText(format_other_value(sp, nil))
+            r.info_txt:SetTextColor(is_sel and c_sel or clr(255, 205, 205, 212))
+            show(r.info_txt, vis)
+        end
+    end
+
+    -- 3. Scrollbar
+    local has_sb = max_scroll > 0
+    show(n.sb_track, has_sb)
+    show(n.sb_thumb, has_sb)
+    show(n.sb_up_l,  has_sb)
+    show(n.sb_dn_l,  has_sb)
+    show(n.sb_up,    has_sb)
+    show(n.sb_dn,    has_sb)
+    if has_sb then
+        local track_y, track_h = 56, 474
+        local thumb_h = math.max(28, math.floor(track_h * (VIEW_H / content_h) + 0.5))
+        local thumb_y = track_y + math.floor((track_h - thumb_h) * (scroll / max_scroll) + 0.5)
+        rect(n.sb_thumb, 333, thumb_y, 3, thumb_h)
+    end
+
+    -- 4. Right panel: Live 8-icon preview (updates immediately from pending state) + Help card
+    rect(n.prev_title, SIDE_X, 20, SIDE_W, 20, "options.gpo.preview.title")
+    rect(n.prev_card,  SIDE_X, 40, SIDE_W, 112, "options.gpo.preview.card")
+    local pending_ov = tostring(st.glyph_type or "auto")
+    local eff_family = (pending_ov ~= "auto") and pending_ov or ui_gp_controls.resolve_pad_family("auto")
+    local pend_style = tostring(st.icon_style or "white")
+    local pend_scale = math.max(0.5, math.min(1.5, (tonumber(st.icon_scale) or 100) / 100))
+    layout_preview_row(n.prev1, PREVIEW_BTNS_ROW1, 70,  eff_family, pend_style, pend_scale, k)
+    layout_preview_row(n.prev2, PREVIEW_BTNS_ROW2, 120, eff_family, pend_style, pend_scale, k)
+
+    rect(n.info_card,  SIDE_X, 160, SIDE_W, 390, "options.gpo.info.card")
+    rect(n.info_title, SIDE_X + 8, 168, SIDE_W - 16, 20, "options.gpo.info.title")
+    rect(n.info_line,  SIDE_X + 8, 190, SIDE_W - 16, 18, "options.gpo.info.line")
+    rect(n.help_long,  SIDE_X + 8, 214, SIDE_W - 16, 328, "options.gpo.help.long")
+
+    if sel_spec then
+        n.info_title:SetText(tr(sel_spec.label_id))
+        if sel_spec.kind == "action" then
+            n.info_line:SetText(tr("ui_gp_oth_press_a_run"))
+        else
+            n.info_line:SetText(format_other_value(sel_spec, st[sel_spec.id]))
+        end
+        if n.help_open then
+            if sel_spec.id == "dbg_compat" then
+                n.help_long:SetText(compat_full_text())
+            else
+                n.help_long:SetText(tr(sel_spec.desc_id))
+            end
+        else
+            n.help_long:SetText(sel_spec.test_ch and tr("ui_gp_oth_hint_short_rumble") or tr("ui_gp_oth_hint_short"))
+        end
+        show(n.help_long, true)
+    else
+        n.info_title:SetText("")
+        n.info_line:SetText("")
+        show(n.help_long, false)
+    end
+
+    n.status:SetText(w.status_msg or "")
+    local spec = ui_gp_controls.get_pad_image_spec(eff_family)
+    layout_footer(n, eff_family, spec and spec.glyph_prefix, "options.gpo")
+end
+
+local function poll_other_tracks(w)
+    local n = w._n
+    if not n then return end
+    for _, idx in ipairs(n.order) do
+        local r = n.rows[idx]
+        if r and r.track and r.track:IsShown() and r.track.IsCursorOverWindow and r.track:IsCursorOverWindow() then
+            local sp = r.spec
+            local raw = tonumber(r.track:GetFValue()) or sp.min
+            local snapped = sp.min + math.floor((raw - sp.min) / sp.step + 0.5) * sp.step
+            snapped = math.max(sp.min, math.min(sp.max, snapped))
+            if snapped ~= w.state[sp.id] then
+                other_set(w, sp.id, snapped)
+                return
+            end
+        end
+    end
+end
+
+class "UIGpOtherWnd" (CUIScriptWnd)
+
+function UIGpOtherWnd:__init() super()
+    self.state = get_default_other_state()
+    self.selected_idx = 1
+    self.scroll_y = 0
+    self._scroll_follow = true
+    self.status_msg = ""
+    self.rumble_restore_at = nil
+end
+
+function UIGpOtherWnd:RefreshUI()
+    layout_other(self)
+end
+
+local function active_page_footer_n()
+    if active and active._n and active:IsShown() then return active._n end
+    return nil
+end
+
+local function cancel_x_hold()
+    local had = x_hold.active or x_hold.candidate or x_hold.progress > 0
+    x_hold.active = false
+    x_hold.candidate = false
+    x_hold.tab = nil
+    x_hold.start_ms = nil
+    x_hold.progress = 0
+    x_hold.fired = false
+    if had then
+        local n = active_page_footer_n()
+        if n then sync_footer_hold_bar(n) end
+    end
+end
+
+local function execute_tab_default_reset()
+    if not (active and active:IsShown()) then return false end
+    menu_pulse("reset_hold")
+    if rawequal(active, controls) then
+        if controls.ConfirmResetCurrentTab then
+            controls:ConfirmResetCurrentTab()
+        elseif controls.RequestResetCurrentTab then
+            controls:RequestResetCurrentTab()
+        end
+        return true
+    elseif rawequal(active, aim) then
+        return aim_reset_defaults(aim)
+    elseif rawequal(active, other) then
+        local sp = OTHER_SPECS[other.selected_idx or 1]
+        if sp and is_other_reset_action(sp.id) then
+            return other_activate(other, sp, true)
+        end
+        return other_reset_defaults(other)
+    end
+    return false
+end
+
+local function tick_x_hold(cur_ms)
+    if not x_hold.active or x_hold.fired then return false end
+    if not (active and active:IsShown()) or x_hold.tab ~= cur_tab then
+        cancel_x_hold()
+        return false
+    end
+    local t = tonumber(cur_ms) or now_ms()
+    local elapsed = math.max(0, t - (x_hold.start_ms or t))
+    if elapsed >= HOLD_TOTAL_MS then
+        x_hold.fired = true
+        x_hold.active = false
+        x_hold.candidate = false
+        x_hold.progress = 0
+        local n = active_page_footer_n()
+        if n then sync_footer_hold_bar(n) end
+        execute_tab_default_reset()
+        return true
+    end
+    local prog = 0
+    if elapsed > HOLD_DELAY_MS then
+        prog = (elapsed - HOLD_DELAY_MS) / HOLD_ANIM_MS
+    end
+    if math.abs(prog - x_hold.progress) > 0.004 then
+        x_hold.progress = prog
+        local n = active_page_footer_n()
+        if n then sync_footer_hold_bar(n) end
+    end
+    return false
+end
+
+local function handle_x_hold_phase(phase, timestamp_ms)
+    local ph = string.lower(tostring(phase or "tap"))
+    local ts = tonumber(timestamp_ms) or now_ms()
+    if ph == "up" then
+        cancel_x_hold()
+        return true
+    elseif ph == "down" then
+        x_hold.active = true
+        x_hold.candidate = false
+        x_hold.tab = cur_tab
+        x_hold.start_ms = ts
+        x_hold.progress = 0
+        x_hold.fired = false
+        local n = active_page_footer_n()
+        if n then sync_footer_hold_bar(n) end
+        return true
+    elseif ph == "hold" then
+        if not x_hold.fired then
+            if not x_hold.active then
+                x_hold.active = true
+                x_hold.tab = cur_tab
+                x_hold.start_ms = x_hold.candidate and x_hold.start_ms or ts
+                x_hold.candidate = false
+                x_hold.progress = 0
+            end
+            tick_x_hold(ts)
+        end
+        return true
+    else
+        -- Initial "tap" from HandleMenuPageInput (or standalone unit test): arm candidate for subsequent "hold" ticks.
+        x_hold.candidate = true
+        x_hold.active = false
+        x_hold.tab = cur_tab
+        x_hold.start_ms = ts
+        x_hold.progress = 0
+        x_hold.fired = false
+        return false
+    end
+end
+
+function get_x_hold_progress()
+    return x_hold.active and x_hold.progress or 0
+end
+
+function UIGpOtherWnd:Update()
+    CUIScriptWnd.Update(self)
+    local t = now_ms()
+    if self.rumble_restore_at and t >= self.rumble_restore_at then
+        restore_applied_haptics()
+    end
+    if self._native_owner and self._n then
+        local pad_sig = tostring(query_active_pad_name() or "") .. "|" .. tostring(format_pad_power_text() or "")
+        if self._n.menu_pad_focus ~= use_native_menu_focus()
+            or self._n.icon_rev ~= icons_revision()
+            or self._n.hints_vis ~= footer_hints_visible()
+            or self._n.pad_sig ~= pad_sig then
+            self._n.pad_sig = pad_sig
+            self:RefreshUI()
+        end
+        poll_other_tracks(self)
+        tick_x_hold(t)
+    end
+end
+
+function UIGpOtherWnd:OnKeyboard(dik, keyboard_action)
+    local res = CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+    if keyboard_action ~= ui_events.WINDOW_KEY_PRESSED then return res end
+    if DIK_keys then
+        if dik == DIK_keys.DIK_UP then
+            return other_move(self, -1)
+        elseif dik == DIK_keys.DIK_DOWN then
+            return other_move(self, 1)
+        elseif dik == DIK_keys.DIK_LEFT then
+            return other_step(self, -1)
+        elseif dik == DIK_keys.DIK_RIGHT then
+            return other_step(self, 1)
+        elseif dik == DIK_keys.DIK_PRIOR then
+            return other_scroll_by(self, -144)
+        elseif dik == DIK_keys.DIK_NEXT then
+            return other_scroll_by(self, 144)
+        elseif dik == DIK_keys.DIK_RETURN then
+            return other_activate(self)
+        end
+    end
+    return res
+end
+
+function get_other_gui()
+    if not other then
+        other = UIGpOtherWnd()
+    end
+    return other
+end
+
+function on_other_gamepad_button(button, phase, timestamp_ms)
+    local w = other
+    if not (w and rawequal(active, w) and w._native_owner and w:IsShown()) then return false end
+    local b = string.upper(tostring(button or ""))
+    local ph = string.lower(tostring(phase or "tap"))
+    -- FIX-LIVE2 6: X / Y belong to the shared Apply / Reset of the options window.
+    -- Exception: destructive debug reset rows keep the 0.3+0.7 s X-hold confirmation.
+    if b == "X" or b == "WEST" then
+        local sp = OTHER_SPECS[w.selected_idx or 1]
+        if sp and is_other_reset_action(sp.id) then
+            handle_x_hold_phase(ph, timestamp_ms)
+            return true
+        end
+        return false
+    end
+    if b == "Y" or b == "NORTH" then return false end
+    if ph == "up" or ph == "hold" then return false end
+    if b == "DU" or b == "UP" then
+        return other_move(w, -1)
+    elseif b == "DD" or b == "DOWN" then
+        return other_move(w, 1)
+    elseif b == "DL" or b == "LEFT" then
+        return other_step(w, -1)
+    elseif b == "DR" or b == "RIGHT" then
+        return other_step(w, 1)
+    elseif b == "A" or b == "SOUTH" then
+        return other_activate(w)
+    elseif b == "LB" or b == "LSHOULDER" then
+        return cycle_tab(-1)
+    elseif b == "RB" or b == "RSHOULDER" then
+        return cycle_tab(1)
+    elseif b == "MENU" or b == "START" then
+        return accept_options()
+    elseif b == "B" or b == "EAST" then
+        return cancel_options()
+    end
+    return false
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Hosting inside UIOptions: third column tabs, show / hide, apply / cancel
+-- ---------------------------------------------------------------------------------------------
+local function hide_panels()
+    cancel_x_hold()
+    if _G.ui_gp_button_test and type(_G.ui_gp_button_test.is_open) == "function" and _G.ui_gp_button_test.is_open() then
+        _G.ui_gp_button_test.close()
+    end
+    if controls then
+        if controls.remap_state == "capturing" and controls.CancelCapture then
+            controls:CancelCapture()
+        end
+        controls.remap_state = "browse"
+        controls:Show(false)
+    end
+    if aim then aim:Show(false) end
+    if other then
+        if other.rumble_restore_at then restore_applied_haptics() end
+        other:Show(false)
+    end
+    active = nil
+    if owner and owner._gp_page then owner._gp_page:Show(false) end
+    if owner and owner.scroll_opt then owner.scroll_opt:Show(true) end
+end
+-- Kept for callers of the previous adapter: opens the "Other settings" tab.
+function show_extra()
+    if owner then return show_tab(owner, "other") end
+    hide_panels()
+end
+local function attach(w)
+    if not owner._gp_page then
+        local page = CUIStatic()
+        page:SetAutoDelete(false)
+        page:SetWindowName("gp_native_page")
+        rect(page, 340, 55, PANEL_W, PANEL_H)
+        owner.dialog:AttachChild(page)
+        owner._gp_page = page
+    end
+    owner._gp_page:Show(true)
+    owner._gp_page:Enable(true)
+    if not rawequal(w._native_owner, owner) then
+        if w._native_owner and w._native_owner._gp_page then w._native_owner._gp_page:DetachChild(w) end
+        w:SetAutoDelete(false)
+        owner._gp_page:AttachChild(w)
+        w._native_owner = owner
+    end
+end
+local function sync_column()
+    local col = owner and owner._gp_col
+    if not col then return end
+    for i, id in ipairs(TABS) do
+        col.btns[i]:SetCheck(id == cur_tab)
+    end
+end
+function show_tab(host, tab)
+    if not host or not host.dialog then return false end
+    cancel_x_hold()
+    owner = host
+    if tab ~= "menu" and tab ~= "aim" and tab ~= "other" then tab = "world" end
+    cur_tab = tab
+    sync_column()
+    if _G.ui_gp_button_test and type(_G.ui_gp_button_test.is_open) == "function" and _G.ui_gp_button_test.is_open() then
+        _G.ui_gp_button_test.close()
+    end
+    owner.scroll_opt:Show(false)
+    if owner.dlg_controls then owner.dlg_controls:Show(false) end
+    if tab == "other" then
+        if controls then
+            controls.remap_state = "browse"
+            controls:Show(false)
+        end
+        if aim then aim:Show(false) end
+        other = get_other_gui()
+        attach(other)
+        if not other_applied then
+            other_applied = load_other_state_from_engine()
+            other.state = copy_state(other_applied)
+        end
+        other.status_msg = ""
+        other._scroll_follow = true
+        other:Show(true)
+        other:Enable(true)
+        active = other
+        other:RefreshUI()
+    elseif tab == "aim" then
+        if controls then
+            controls.remap_state = "browse"
+            controls:Show(false)
+        end
+        if other then
+            if other.rumble_restore_at then restore_applied_haptics() end
+            other:Show(false)
+        end
+        aim = ui_gp_aim.get_gui()
+        attach(aim)
+        if not aim_applied then
+            aim_applied = ui_gp_aim.load_aim_state_from_engine()
+            aim.state = copy_state(aim_applied)
+        end
+        aim:Show(true)
+        aim:Enable(true)
+        active = aim
+        aim:RefreshUI()
+    else
+        if aim then aim:Show(false) end
+        if other then
+            if other.rumble_restore_at then restore_applied_haptics() end
+            other:Show(false)
+        end
+        controls = ui_gp_controls.get_controls_window(tab)
+        attach(controls)
+        controls:Show(true)
+        controls:Enable(true)
+        active = controls
+        controls:RefreshView()
+    end
+    return true
+end
+-- UIDBG: redraw the visible gamepad page so new editor offsets show at once (gp_ui_tune invalidate).
+function relayout()
+    if not (owner and active and active.IsShown and active:IsShown()) then return false end
+    if rawequal(active, aim) or rawequal(active, other) then active:RefreshUI() else active:RefreshView() end
+    return true
+end
+function cycle_tab(delta)
+    if not owner then return false end
+    local pos = 1
+    for i, id in ipairs(TABS) do
+        if id == cur_tab then pos = i break end
+    end
+    pos = ((pos - 1 + ((tonumber(delta) or 1) < 0 and -1 or 1)) % #TABS) + 1
+    return show_tab(owner, TABS[pos])
+end
+-- Third (stock, previously empty) column: the gamepad tabs as stock tree buttons (BRIEF 5.1).
+local function build_column(host)
+    if host._gp_col then return host._gp_col end
+    local xml = host.xml
+    local col = { btns = {} }
+    col.sv = xml:InitScrollView("main:tree_3", host.dialog)
+    host.tree[3] = host.tree[3] or {}
+    host.tree[3][PATH .. "#tabs"] = col.sv   -- stock Callback_Tree hides it when another section opens
+    for i, id in ipairs(TABS) do
+        local st = xml:InitStatic("main:st_tree", nil)
+        col.btns[i] = xml:InitCheck("elements:btn_list", st)
+        local label = xml:InitTextWnd("elements:txt_list", st)
+        label:SetText(tr("ui_gp_n_tab_" .. id))
+        label:SetTextColor(clr(255, 180, 180, 180))
+        col.sv:AddWindow(st, true)
+        st:SetAutoDelete(false)
+        local name = "gp_native_tab_" .. i
+        col.btns[i]:SetWindowName(name)
+        host:Register(col.btns[i], name)
+        host:AddCallback(name, ui_events.BUTTON_CLICKED, function()
+            show_tab(host, id)
+        end, host)
+    end
+    host._gp_col = col
+    return col
+end
+
+-- The dispatcher owns the moving caret; the mounted page owns the row value and remapping state.
+function select_menu_row(window_name)
+    if not (active and active._n and active:IsShown()) then return false end
+    local index = tonumber(string.match(window_name or "", "^gp_native_row_(%d+)$"))
+    if not index then return false end
+    if rawequal(active, controls) then
+        local rec = controls._n.rowrec[index]
+        if not rec or controls.remap_state ~= "browse" then return false end
+        if controls.selected_slot_idx ~= rec.idx then
+            local hold = controls.selected_sub_kind == "hold"
+            controls:SelectSlotByIndex(rec.idx)
+            if hold and not rec.sd.locked then
+                controls.selected_sub_kind = "hold"
+                controls:RefreshView()
+            end
+        elseif controls._n.menu_pad_focus ~= use_native_menu_focus() then
+            controls:RefreshView()
+        end
+        return true
+    end
+    if rawequal(active, aim) then
+        for _, row in ipairs(aim._n.rows) do
+            if row.idx == index then
+                if aim.selected_idx ~= index or aim._n.menu_pad_focus ~= use_native_menu_focus() then
+                    aim.selected_idx = index
+                    aim:RefreshUI()
+                end
+                return true
+            end
+        end
+    end
+    if rawequal(active, other) then
+        for _, idx in ipairs(other._n.order or {}) do
+            if idx == index then
+                if other.selected_idx ~= index or other._n.menu_pad_focus ~= use_native_menu_focus() then
+                    other.selected_idx = index
+                    other._scroll_follow = true
+                    other.status_msg = ""
+                    other:RefreshUI()
+                end
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function menu_selected_row()
+    if not (active and active._n and active:IsShown()) then return "" end
+    if rawequal(active, controls) then
+        local n = controls._n
+        local selected = selected_row_idx(controls, n.merged)
+        for index, rec in ipairs(n.rowrec or {}) do
+            if rec.idx == selected then return "gp_native_row_" .. index end
+        end
+    elseif rawequal(active, aim) then
+        for _, row in ipairs(aim._n.rows) do
+            if row.idx == aim.selected_idx then return "gp_native_row_" .. row.idx end
+        end
+    elseif rawequal(active, other) then
+        for _, idx in ipairs(other._n.order or {}) do
+            if idx == other.selected_idx then return "gp_native_row_" .. idx end
+        end
+    end
+    return ""
+end
+
+function menu_capture_active()
+    if _G.ui_gp_button_test and type(_G.ui_gp_button_test.is_open) == "function" and _G.ui_gp_button_test.is_open() then
+        return true
+    end
+    return active ~= nil and rawequal(active, controls) and controls:IsShown()
+        and controls.remap_state ~= "browse"
+end
+
+function menu_scroll_by(dy)
+    if active and rawequal(active, other) and other:IsShown() then
+        return other_scroll_by(other, dy)
+    end
+    return false
+end
+
+function menu_row_button(button, phase, timestamp)
+    if _G.ui_gp_button_test and type(_G.ui_gp_button_test.is_open) == "function" and _G.ui_gp_button_test.is_open() then
+        return _G.ui_gp_button_test.on_gamepad_button(button, phase, timestamp)
+    end
+    if not (active and active:IsShown()) then return false end
+    local ph = string.lower(tostring(phase or "tap"))
+    local b_up = string.upper(tostring(button or ""))
+    if rawequal(active, controls) then
+        if controls.remap_state == "browse" and (b_up == "X" or b_up == "WEST") then
+            if handle_x_hold_phase(ph, timestamp) then
+                return true
+            end
+        end
+        return ui_gp_controls.on_gamepad_button(button, phase, timestamp)
+    end
+    if rawequal(active, aim) then
+        if b_up == "X" or b_up == "WEST" or b_up == "Y" or b_up == "NORTH" then
+            return false -- FIX-LIVE2 6: shared Apply / Reset
+        end
+        if ph ~= "up" and ph ~= "hold" then
+            local direction = ({ DL = "LEFT", DR = "RIGHT", DU = "UP", DD = "DOWN" })[button]
+            return ui_gp_aim.on_gamepad_button(direction or button)
+        end
+        return false
+    end
+    if rawequal(active, other) then
+        return on_other_gamepad_button(button, phase, timestamp)
+    end
+    return false
+end
+
+function collapse_options(host)
+    if rawequal(owner, host) then hide_panels() end
+    for level, trees in pairs(host.tree or {}) do
+        if level > 1 then
+            for _, sv in pairs(trees) do sv:Show(false) end
+        end
+    end
+    local first = host.bl and host.bl[1] and host.bl[1][""]
+    for _, btn in ipairs(first or {}) do btn:SetCheck(false) end
+    show(host.scroll_opt, false)
+    show(host.preset, false)
+    show(host.preset_cap, false)
+    host._gp_collapsed = true
+end
+function install()
+    if installed or not (ui_options and ui_options.UIOptions and ui_gp_controls and ui_gp_aim) then return false end
+    installed = true
+    local cls = ui_options.UIOptions
+
+    local reset = cls.Reset_opt
+    cls.Reset_opt = function(self, curr, path, flags)
+        if rawequal(owner, self) then hide_panels() end
+        local r = reset(self, curr, path, flags)
+        if path == PATH then
+            owner = self
+            build_column(self).sv:Show(true)
+            show_tab(self, cur_tab)
+        end
+        return r
+    end
+    local button_cancel = cls.OnButton_Cancel
+    cls.OnButton_Cancel = function(self, ...)
+        if rawequal(owner, self) and total_dirty_count() > 0 and self.message_box then
+            self.message_box:InitMessageBox("message_box_yes_no")
+            self.message_box:SetText(tr("ui_mm_discard_changes"))
+            self.message_box:ShowDialog(true)
+            return
+        end
+        return button_cancel(self, ...)
+    end
+    local cancel = cls.On_Cancel
+    cls.On_Cancel = function(self, ...)
+        if rawequal(owner, self) then
+            hide_panels()
+            aim_applied = nil
+            other_applied = nil
+        end
+        return cancel(self, ...)
+    end
+    local accept = cls.On_Accept
+    cls.On_Accept = function(self, ...)
+        if rawequal(owner, self) then
+            if aim and aim_applied and aim_dirty_count() > 0 then
+                ui_gp_aim.apply_all_to_engine(aim.state)
+                aim_applied = copy_state(aim.state)
+                self.Change_Done = true
+            end
+            if other and other_applied and other_dirty_count() > 0 then
+                apply_other_to_engine(other.state)
+                other_applied = copy_state(other.state)
+                self.Change_Done = true
+            end
+        end
+        return accept(self, ...)
+    end
+    local btn_reset = cls.OnButton_Reset
+    cls.OnButton_Reset = function(self, ...)
+        if rawequal(owner, self) and rawequal(active, aim) and aim and aim_applied then
+            aim.state = copy_state(aim_applied)
+            aim:RefreshUI()
+        elseif rawequal(owner, self) and rawequal(active, other) and other and other_applied then
+            if other.rumble_restore_at then restore_applied_haptics() end
+            other.state = copy_state(other_applied)
+            other.status_msg = ""
+            other:RefreshUI()
+        end
+        local r = btn_reset(self, ...)
+        if rawequal(owner, self) then self:UpdatePending() end
+        return r
+    end
+    -- "You have (N) pending changes": add the not yet applied aim & other values to the stock counter.
+    local pending = cls.UpdatePending
+    cls.UpdatePending = function(self, ...)
+        local extra = (rawequal(owner, self)) and total_dirty_count() or 0
+        if extra == 0 then return pending(self, ...) end
+        local base = 0
+        local real_size = _G.size_table
+        _G.size_table = function(t)
+            base = real_size(t)
+            return base
+        end
+        local ok, err = pcall(pending, self, ...)
+        _G.size_table = real_size
+        if not ok then error(err, 0) end
+        self.pending:SetText(strformat(game.translate_string("ui_mm_warning_pending"), base + extra))
+    end
+    -- P15c: with the gamepad the window opens on the first column only (no pre-opened section, empty right
+    -- panel); the stock path (A on a section) opens the rest. Unchecked first-column buttons make the first
+    -- A a real selection in the stock Callback_Tree.
+    local last_opt = cls.Reset_last_opt
+    if last_opt then
+        cls.Reset_last_opt = function(self, ...)
+            local r = last_opt(self, ...)
+            if use_native_menu_focus() then collapse_options(self) end
+            return r
+        end
+    end
+    local tree_cb = cls.Callback_Tree
+    if tree_cb then
+        cls.Callback_Tree = function(self, ...)
+            if self._gp_collapsed then
+                self._gp_collapsed = nil
+                show(self.scroll_opt, true)
+            end
+            return tree_cb(self, ...)
+        end
+    end
+    local keyboard = cls.OnKeyboard
+    cls.OnKeyboard = function(self, dik, action)
+        if rawequal(owner, self) and _G.ui_gp_button_test and type(_G.ui_gp_button_test.is_open) == "function"
+            and _G.ui_gp_button_test.is_open() then
+            local bt = _G.ui_gp_button_test.get_gui and _G.ui_gp_button_test.get_gui()
+            if bt and bt:OnKeyboard(dik, action) then return true end
+        end
+        if active and rawequal(owner, self) and active:IsShown() then
+            if active:OnKeyboard(dik, action) then return true end
+        end
+        return keyboard(self, dik, action)
+    end
+
+    -- B16: Preset combobox selected-index sync + numeric Input bounds display & deny shake/pulse.
+    local reg_preset = cls.Register_Preset
+    if reg_preset then
+        cls.Register_Preset = function(self, ct, ...)
+            local r = reg_preset(self, ct, ...)
+            if ct and ct.presets and ct.curr_preset and self.preset and type(self.preset.enable_id) == "function" then
+                for i = 1, #ct.presets do
+                    if ct.presets[i] == ct.curr_preset then
+                        pcall(self.preset.enable_id, self.preset, i)
+                        break
+                    end
+                end
+            end
+            return r
+        end
+    end
+
+    local function input_bounds_spec(v)
+        if type(v) ~= "table" then return nil end
+        local lo = tonumber(v.min)
+        local hi = tonumber(v.max)
+        local is_num = (v.val == 1 or v.val == 2 or lo ~= nil or hi ~= nil or type(v.def) == "number")
+        if not is_num then return nil end
+        if lo == nil and type(v.def) == "number" and v.def >= 0 then lo = 0 end
+        local text
+        if lo ~= nil and hi ~= nil then
+            text = string.format("[%s .. %s]", tostring(lo), tostring(hi))
+        elseif lo ~= nil then
+            text = string.format("[>= %s]", tostring(lo))
+        elseif hi ~= nil then
+            text = string.format("[<= %s]", tostring(hi))
+        else
+            text = "[0 .. 9999]"
+        end
+        return { is_num = true, min = lo, max = hi, badge = text }
+    end
+
+    local function start_input_deny(self, ctrl)
+        menu_pulse("deny")
+        if not ctrl or not ctrl.GetWndPos then return end
+        self._gp_input_shakes = self._gp_input_shakes or {}
+        local rec = self._gp_input_shakes[ctrl]
+        local base_pos = rec and rec.pos or ctrl:GetWndPos()
+        self._gp_input_shakes[ctrl] = {
+            pos = vector2():set(base_pos.x, base_pos.y),
+            until_ms = now_ms() + 420,
+        }
+        self._gp_last_deny_ms = now_ms()
+    end
+
+    local reg_input = cls.Register_Input
+    if reg_input then
+        cls.Register_Input = function(self, xml_doc, handler, path, opt, v, flags, ...)
+            self._gp_inputs = self._gp_inputs or {}
+            local prev_reg = self._gp_last_reg_ctrl
+            local orig_reg = self.Register
+            self.Register = function(s, c_wnd, name, ...)
+                s._gp_last_reg_ctrl = c_wnd
+                if orig_reg then return orig_reg(s, c_wnd, name, ...) end
+            end
+            local ok_ri, h = pcall(reg_input, self, xml_doc, handler, path, opt, v, flags, ...)
+            self.Register = orig_reg
+            local ctrl = self._gp_last_reg_ctrl
+            self._gp_last_reg_ctrl = prev_reg
+            if not ok_ri then error(h, 0) end
+            local spec = input_bounds_spec(v)
+            if spec and ctrl and handler then
+                self._gp_inputs[ctrl] = spec
+                local cpos = ctrl.GetWndPos and ctrl:GetWndPos() or vector2():set(275, 4)
+                local cw_box = (ctrl.GetWidth and ctrl:GetWidth() or 60)
+                local badge = txt(handler, "t16", cpos.x + cw_box + 8, cpos.y, 120, 20, clr(255, 165, 165, 172))
+                badge:SetText(spec.badge)
+                spec.badge_wnd = badge
+            end
+            return h
+        end
+    end
+
+    local cb_input = cls.Callback_Input
+    if cb_input then
+        cls.Callback_Input = function(self, ctrl, path, opt, v, ...)
+            local spec = (self._gp_inputs and ctrl and self._gp_inputs[ctrl]) or input_bounds_spec(v)
+            if spec and ctrl and ctrl.GetText then
+                local raw_val = tostring(ctrl:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+                local num = tonumber(raw_val)
+                if raw_val == "" or num == nil then
+                    start_input_deny(self, ctrl)
+                    local fallback = (self.GetCurrentValue and self:GetCurrentValue(path, opt, v))
+                        or (self.GetDefaultValue and self:GetDefaultValue(path, opt, v))
+                        or (v and v.def) or 0
+                    ctrl:SetText(tostring(fallback))
+                    return
+                end
+                local clamped = num
+                if spec.min ~= nil and clamped < spec.min then clamped = spec.min end
+                if spec.max ~= nil and clamped > spec.max then clamped = spec.max end
+                if clamped ~= num then
+                    start_input_deny(self, ctrl)
+                    ctrl:SetText(tostring(clamped))
+                end
+                if v and v.val ~= 1 then
+                    if self.CacheValue then self:CacheValue(path, opt, clamped, v) end
+                    ctrl:SetText(tostring(clamped))
+                    return
+                end
+            end
+            return cb_input(self, ctrl, path, opt, v, ...)
+        end
+    end
+
+    -- B38: Keep "LT/RT Columns - View To buttons" visible alongside (just below) the pending changes counter.
+    local function build_fallback_cols_hint(wnd)
+        if not (wnd and wnd.dialog and wnd.pending) then return nil end
+        local parent = wnd.dialog
+        local h = {
+            lt = icon(parent, 12, 600, 18, 18, button_icon("xbox", nil, "LT")),
+            rt = icon(parent, 32, 600, 18, 18, button_icon("xbox", nil, "RT")),
+            cols_lbl = txt(parent, "t16", 54, 600, 80, 20, clr(255, 225, 225, 225)),
+            sep = txt(parent, "t16c", 136, 600, 20, 20, clr(255, 175, 175, 180)),
+            vw = icon(parent, 158, 600, 18, 18, button_icon("xbox", nil, "View")),
+            vw_lbl = txt(parent, "t16", 180, 600, 90, 20, clr(255, 225, 225, 225)),
+            _fallback = true,
+        }
+        h.cols_lbl:SetText(tr("st_gp_hint_columns"))
+        if h.cols_lbl.AdjustWidthToText then h.cols_lbl:AdjustWidthToText() end
+        h.sep:SetText("\183")
+        h.vw_lbl:SetText(tr("st_gp_hint_to_buttons"))
+        if h.vw_lbl.AdjustWidthToText then h.vw_lbl:AdjustWidthToText() end
+        wnd._gp_cols_fb = h
+        return h
+    end
+
+    local function sync_fallback_cols_hint(wnd, cy, vis)
+        local h = wnd._gp_cols_fb or (vis and build_fallback_cols_hint(wnd))
+        if not h then return end
+        if not vis then
+            for _, k in ipairs({ "lt", "rt", "cols_lbl", "sep", "vw", "vw_lbl" }) do show(h[k], false) end
+            return
+        end
+        local fam = (controls and controls.pad_family)
+            or (ui_gp_controls and ui_gp_controls.resolve_pad_family and ui_gp_controls.resolve_pad_family("auto"))
+            or "xbox"
+        local k_asp = kx()
+        local bh = math.min(20, 18 * math.min(1.25, icon_scale_k()))
+        local lt_t, lt_a = button_icon(fam, nil, "LT")
+        local rt_t, rt_a = button_icon(fam, nil, "RT")
+        local vw_t, vw_a = button_icon(fam, nil, "View")
+        set_tex(h.lt, lt_t)
+        set_tex(h.rt, rt_t)
+        set_tex(h.vw, vw_t)
+        local ltw, lth, lty, cly = align_icon_and_label(bh, cy, lt_t, lt_a, 20, "letterica16", k_asp)
+        local rtw, rth, rty = align_icon_and_label(bh, cy, rt_t, rt_a, 20, "letterica16", k_asp)
+        local vww, vwh, vwy, vly = align_icon_and_label(bh, cy, vw_t, vw_a, 20, "letterica16", k_asp)
+        local cw_txt = math.max(48, h.cols_lbl:GetWidth())
+        local vw_txt = math.max(54, h.vw_lbl:GetWidth())
+        local sep_w = 18
+        local total = ltw + 4 + rtw + 6 + cw_txt + sep_w + vww + 6 + vw_txt
+        local ppos = wnd.pending:GetWndPos()
+        local pw_box = wnd.pending:GetWidth()
+        if pw_box <= 0 then pw_box = 323 end
+        local x0 = math.max(8, ppos.x + (pw_box - total) * 0.5)
+        rect(h.lt, x0, lty, ltw, lth)
+        x0 = x0 + ltw + 4
+        rect(h.rt, x0, rty, rtw, rth)
+        x0 = x0 + rtw + 6
+        rect(h.cols_lbl, x0, cly, cw_txt, 20)
+        x0 = x0 + cw_txt
+        rect(h.sep, x0, cly, sep_w, 20)
+        x0 = x0 + sep_w
+        rect(h.vw, x0, vwy, vww, vwh)
+        x0 = x0 + vww + 6
+        rect(h.vw_lbl, x0, vly, vw_txt, 20)
+        for _, wk in ipairs({ "lt", "rt", "cols_lbl", "sep", "vw", "vw_lbl" }) do show(h[wk], true) end
+    end
+
+    local function sync_options_post_update(self)
+        -- 1) Shake animation for invalid/out-of-bounds numeric Input fields (B16)
+        if self._gp_input_shakes then
+            local t = now_ms()
+            for ctrl, sh in pairs(self._gp_input_shakes) do
+                if t < sh.until_ms then
+                    local dx = math.sin((sh.until_ms - t) * 0.045) * 4
+                    ctrl:SetWndPos(vector2():set(sh.pos.x + dx, sh.pos.y))
+                else
+                    ctrl:SetWndPos(vector2():set(sh.pos.x, sh.pos.y))
+                    self._gp_input_shakes[ctrl] = nil
+                end
+            end
+        end
+
+        -- 2) B38: Keep "LT/RT Columns - View To buttons" visible below pending counter when pending text is non-empty
+        local pend = self.pending
+        if not (pend and self.dialog) then return end
+        if not self._gp_pend_base_pos then
+            local p = pend:GetWndPos()
+            local pw, ph = pend:GetWidth(), pend:GetHeight()
+            self._gp_pend_base_pos = {
+                x = (p and p.x ~= 0) and p.x or 12,
+                y = (p and p.y ~= 0) and p.y or 583,
+                w = (pw and pw > 0) and pw or 323,
+                h = (ph and ph > 0) and ph or 34,
+            }
+        end
+        local bp = self._gp_pend_base_pos
+        local ok_t, ptxt = pcall(function() return pend:GetText() end)
+        ptxt = (ok_t and ptxt) or ""
+        local show_hints = use_native_menu_focus() and menu_hints_visible()
+        local pause_mod = rawget(_G, "ui_gp_pause")
+        if ptxt ~= "" and show_hints then
+            local hint_y = bp.y + 13
+            local pend_y = math.max(554, bp.y - 25)
+            if pause_mod and type(pause_mod.update_columns_hint) == "function" then
+                if not self._gp_cols and type(pause_mod.build_columns_hint) == "function" then
+                    pcall(pause_mod.build_columns_hint, self)
+                end
+                if self._gp_cols then
+                    pend:SetWndPos(vector2():set(bp.x, hint_y))
+                    pend:SetWndSize(vector2():set(bp.w, 24))
+                    pend:SetText("")
+                    pcall(pause_mod.update_columns_hint, self)
+                    pend:SetText(ptxt)
+                end
+            end
+            pend:SetWndPos(vector2():set(bp.x, pend_y))
+            pend:SetWndSize(vector2():set(bp.w, bp.h))
+            sync_fallback_cols_hint(self, hint_y + 12, self._gp_cols == nil)
+        else
+            pend:SetWndPos(vector2():set(bp.x, bp.y))
+            pend:SetWndSize(vector2():set(bp.w, bp.h))
+            if pause_mod and self._gp_cols and type(pause_mod.update_columns_hint) == "function" then
+                pcall(pause_mod.update_columns_hint, self)
+                sync_fallback_cols_hint(self, bp.y + bp.h * 0.5, false)
+            else
+                sync_fallback_cols_hint(self, bp.y + bp.h * 0.5, show_hints and ptxt == "")
+            end
+        end
+    end
+
+    local function ensure_instance_post_update(self)
+        if not self or rawequal(self, cls) then return end
+        if type(self) ~= "table" then
+            self._gp_post_upd_bound = true
+            return
+        end
+        if rawget(self, "_gp_post_upd_bound") then return end
+        rawset(self, "_gp_post_upd_bound", true)
+        rawset(self, "Update", function(s, ...)
+            local r = cls.Update(s, ...)
+            sync_options_post_update(s)
+            return r
+        end)
+    end
+
+    local base_upd = cls.Update
+    cls.Update = function(self, ...)
+        ensure_instance_post_update(self)
+        local r = base_upd and base_upd(self, ...) or nil
+        local is_tbl = (type(self) == "table")
+        local in_upd = is_tbl and rawget(self, "_gp_in_inst_upd") or (not is_tbl and self and self._gp_in_inst_upd)
+        if not in_upd then
+            if is_tbl then rawset(self, "_gp_in_inst_upd", true) elseif self then self._gp_in_inst_upd = true end
+            sync_options_post_update(self)
+            if is_tbl then rawset(self, "_gp_in_inst_upd", nil) elseif self then self._gp_in_inst_upd = nil end
+        end
+        return r
+    end
+    local prev_reset_opt = cls.Reset_opt
+    cls.Reset_opt = function(self, ...)
+        ensure_instance_post_update(self)
+        return prev_reset_opt(self, ...)
+    end
+    local prev_upd_pend = cls.UpdatePending
+    cls.UpdatePending = function(self, ...)
+        ensure_instance_post_update(self)
+        local r = prev_upd_pend(self, ...)
+        sync_options_post_update(self)
+        return r
+    end
+
+    -- Controls window: stock-styled layout, table navigation, tabs through the third column.
+    local cc = ui_gp_controls.UIGpControlsWnd
+    local refresh = cc.RefreshView
+    cc.RefreshView = function(self, ...)
+        local r = refresh(self, ...)
+        layout_controls(self)
+        return r
+    end
+    local controls_update = cc.Update
+    cc.Update = function(self, ...)
+        local r = controls_update(self, ...)
+        if self._native_owner and self._n then
+            if self._n.menu_pad_focus ~= use_native_menu_focus()
+                or self._n.icon_rev ~= icons_revision()
+                or self._n.hints_vis ~= footer_hints_visible() then
+                self:RefreshView()
+            end
+            tick_x_hold(now_ms())
+        end
+        return r
+    end
+    local nav = cc.NavigateSlots
+    cc.NavigateSlots = function(self, dir)
+        if self._native_owner then return navigate_controls(self, dir) end
+        return nav(self, dir)
+    end
+    local switch = cc.SwitchTab
+    cc.SwitchTab = function(self, tab)
+        if self._native_owner then
+            if self.remap_state == "capturing" then self:CancelCapture() end
+            return show_tab(self._native_owner, tab)
+        end
+        return switch(self, tab)
+    end
+    local cycle = cc.CycleTab
+    cc.CycleTab = function(self, delta)
+        if self._native_owner then return cycle_tab(delta) end
+        return cycle(self, delta)
+    end
+    local close = cc.CloseWindow
+    cc.CloseWindow = function(self, ...)
+        if self._native_owner then return cancel_options() end
+        return close(self, ...)
+    end
+    local pad_button = ui_gp_controls.on_gamepad_button
+    ui_gp_controls.on_gamepad_button = function(btn_name, phase, timestamp_ms)
+        local w = controls
+        if w and rawequal(active, w) and w._native_owner and w.remap_state == "browse"
+            and string.lower(tostring(phase or "tap")) ~= "up" then
+            local norm = ui_gp_controls.normalize_button_id(btn_name)
+            if norm == "Y" then
+                return false -- FIX-LIVE2 6: help is always shown; Y = shared Reset
+            elseif norm == "View" then
+                return false
+            elseif norm == "Menu" then
+                return accept_options()
+            end
+        end
+        return pad_button(btn_name, phase, timestamp_ms)
+    end
+
+    -- Aim window: pending values instead of instant apply, stock controls, graph.
+    local ac = ui_gp_aim.UIGpAimWnd
+    local aim_refresh = ac.RefreshUI
+    ac.RefreshUI = function(self, ...)
+        local r = aim_refresh(self, ...)
+        layout_aim(self)
+        return r
+    end
+    local aim_update = ac.Update
+    ac.Update = function(self, ...)
+        local r = aim_update(self, ...)
+        if self._native_owner and self._n then
+            if self._n.menu_pad_focus ~= use_native_menu_focus()
+                or self._n.icon_rev ~= icons_revision()
+                or self._n.hints_vis ~= footer_hints_visible() then
+                self:RefreshUI()
+            end
+            poll_aim_tracks(self)
+            layout_live_dot(self)
+            tick_x_hold(now_ms())
+        end
+        return r
+    end
+    local move, step, defaults = ac.MoveSelection, ac.StepSelected, ac.OnResetClicked
+    ac.MoveSelection = function(self, delta)
+        if self._native_owner then return aim_move(self, delta) end
+        return move(self, delta)
+    end
+    ac.StepSelected = function(self, dir)
+        if self._native_owner then return aim_step(self, dir) end
+        return step(self, dir)
+    end
+    ac.OnResetClicked = function(self, ...)
+        if self._native_owner then return aim_reset_defaults(self) end
+        return defaults(self, ...)
+    end
+    local tab_world, tab_menu, aim_close = ac.OnTabWorld, ac.OnTabMenu, ac.Close
+    ac.OnTabWorld = function(self, ...)
+        if self._native_owner then return cycle_tab(1) end
+        return tab_world(self, ...)
+    end
+    ac.OnTabMenu = function(self, ...)
+        if self._native_owner then return cycle_tab(-1) end
+        return tab_menu(self, ...)
+    end
+    ac.Close = function(self, ...)
+        if self._native_owner then return cancel_options() end
+        return aim_close(self, ...)
+    end
+    local aim_close_clicked = ac.OnCloseClicked
+    ac.OnCloseClicked = function(self, ...)
+        if self._native_owner then return cancel_options() end
+        return aim_close_clicked(self, ...)
+    end
+    local aim_button = ui_gp_aim.on_gamepad_button
+    ui_gp_aim.on_gamepad_button = function(btn_name)
+        local w = aim
+        if w and rawequal(active, w) and w._native_owner then
+            local b = string.upper(tostring(btn_name or ""))
+            if b == "Y" or b == "NORTH" or b == "X" or b == "WEST" then
+                return false -- FIX-LIVE2 6: shared Apply / Reset
+            elseif b == "A" or b == "SOUTH" then
+                local row = w.rows[w.selected_idx or 1]
+                if row and row.spec.kind ~= "slider" then return aim_step(w, 1) end
+                return true
+            elseif b == "BACK" or b == "VIEW" or b == "SELECT" then
+                return false
+            elseif b == "START" or b == "MENU" then
+                return accept_options()
+            end
+        end
+        return aim_button(btn_name)
+    end
+
+    local start = ui_options_gamepad.start_gamepad_controls_ui
+    ui_options_gamepad.start_gamepad_controls_ui = function(self, ...)
+        if self and self.dialog then return show_tab(self, "world") end
+        return start(self, ...)
+    end
+    return true
+end

@@ -1,0 +1,817 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+--[[
+    gp_safe_guard.script  --  Step S1: Global Safe Frame & Input Handler Guard ("Core Armor")
+
+    Purpose:
+      Wraps all entry points, per-frame callbacks (`actor_on_update`, `Update`), button/key
+      handlers, UI lifecycle hooks, and C++ -> Lua bridge functions across all `gp_*.script`
+      modules in a protective `pcall` armor.
+      1. If any unexpected runtime error occurs inside gamepad logic during a frame or button
+         press, the game does NOT crash (`CScriptEngine::lua_pcall_failed`) and does NOT hang --
+         the problematic frame/action is safely skipped and a safe fallback value is returned.
+      2. Writes a clear diagnostic message to the engine log with anti-spam rate-limiting
+         (if the same error repeats every frame, it logs immediately once and then summarizes
+         periodically instead of flooding the log).
+      3. Forwards crash/error reports to `gp_failover` (emergency KBM failover) and
+         `gp_error_log` (structured error report writer) whenever those modules are present.
+--]]
+
+local ANTI_SPAM_WINDOW_MS = 5000
+local ANTI_SPAM_SUMMARY_STEP = 50
+
+local TARGET_MODULES = {
+    "gp_bridge",
+    "gp_compat",
+    "gp_field",
+    "gp_weapon",
+    "gp_wheel_arm",
+    "gp_wheel",
+    "gp_pda",
+    "gp_screens",
+    "gp_inv_pause",
+    "gp_lifecycle",
+    "gp_toasts",
+    "gp_testkit",
+}
+
+local CLASS_METHODS_TO_GUARD = {
+    gp_wheel_arm = {
+        AbstractRadialMenu = { "Update", "OnKeyboard", "OnClick", "Close", "Reset", "SetCellState", "AnimateCell" },
+    },
+    gp_wheel = {
+        QuickActionWheel      = { "Update", "OnKeyboard", "OnMouseWheel", "OnClick", "Close", "Open", "Reset", "AnimateCell", "ApplyHoveredSector", "UpdateHeaderText" },
+        ItemWheelOption       = { "update", "execute", "is_enabled", "get_text" },
+        SlotWheelOption       = { "update", "execute", "is_enabled", "get_text" },
+        AttachmentWheelOption = { "update", "execute", "is_enabled", "get_text" },
+        DetectorWheelOption   = { "update", "execute", "is_enabled", "get_text" },
+        QDetectorWheelOption  = { "update", "execute", "is_enabled", "get_text" },
+        AmmoWheelOption       = { "update", "execute", "is_enabled", "get_text" },
+        ActionWheelOption     = { "update", "execute", "is_enabled", "get_text" },
+        CompanionWheelOption  = { "update", "execute", "is_enabled", "get_text" },
+    },
+    gp_testkit = {
+        UIGpTestTicker      = { "Update" },
+        UIGpTestQuestionWnd = { "Update", "OnKeyboard", "SelectOption", "OnAbortClicked", "CloseWindow" },
+    },
+}
+
+local FALLBACK_RETURNS = {
+    -- Boolean-returning C++ functor entry points & predicates
+    ["gp_bridge.sync_context_hints"]        = false,
+    ["gp_bridge.is_gamepad_active"]         = false,
+    ["gp_bridge.inv_is_lb_modifier_active"] = false,
+    ["gp_bridge.txn_is_item_locked"]        = false,
+    ["gp_bridge.txn_begin"]                 = false,
+    ["gp_bridge.txn_confirm_event"]         = false,
+    ["gp_bridge.txn_verify_and_commit_c"]   = false,
+    ["gp_bridge.txn_cancel"]                = false,
+    ["gp_pda.on_pda_a_extra"]               = false,
+    ["gp_pda.is_paw_modal_open"]            = false,
+    ["gp_pda.close_paw_modal_if_open"]      = false,
+    ["gp_pda.is_npc_pda_active"]            = false,
+    ["gp_pda.handle_npc_pda_back"]          = false,
+    ["gp_pda.on_pda_right_stick_scroll"]    = false,
+    ["gp_pda.on_map_quick_paw"]             = false,
+    ["gp_screens.is_managed_screen_active"] = false,
+    ["gp_screens.on_dpad"]                  = false,
+    ["gp_screens.on_stick_scroll"]          = false,
+    ["gp_screens.on_btn_a"]                 = false,
+    ["gp_screens.on_btn_b"]                 = false,
+    ["gp_screens.on_btn_x"]                 = false,
+    ["gp_screens.on_btn_y"]                 = false,
+    ["gp_screens.on_btn_lb_rb"]             = false,
+    ["gp_screens.on_btn_view"]              = false,
+    ["gp_screens.on_btn_start"]             = false,
+    ["gp_inv_pause.is_pause_enabled"]       = false,
+    ["gp_inv_pause.is_paused_by_inventory"] = false,
+    ["gp_inv_pause.is_fullscreen_ui_selected"] = false,
+    ["gp_lifecycle.is_device_paused"]       = false,
+    ["gp_lifecycle.is_game_paused"]         = false,
+    ["gp_lifecycle.are_hands_free"]         = true,
+    ["gp_compat.is_mags_available"]         = false,
+    ["gp_compat.is_weapon_jammed"]          = false,
+    ["gp_compat.is_shotgun_unjam_busy"]     = false,
+    ["gp_compat.is_reload_blocked_by_ammo_check"] = false,
+
+    -- String-returning C++ functor entry points
+    ["gp_weapon.x_script_use_target"]       = "none",
+    ["gp_weapon.x_reload"]                  = "err:safe_guard_skip",
+    ["gp_weapon.x_ammo_check"]              = "err:safe_guard_skip",
+    ["gp_weapon.x_fast_reload"]             = "err:safe_guard_skip",
+    ["gp_weapon.x_fast_upgrade"]            = "err:safe_guard_skip",
+    ["gp_field.toggle_nvg"]                 = "err:safe_guard_skip",
+    ["gp_field.nvg_brightness_step"]        = "err:safe_guard_skip",
+    ["gp_field.on_torch_tap"]               = "err:safe_guard_skip",
+    ["gp_field.toggle_torch"]               = "err:safe_guard_skip",
+    ["gp_field.on_3d_pda_tap"]              = "err:safe_guard_skip",
+    ["gp_field.clean_mask"]                 = "err:safe_guard_skip",
+    ["gp_field.on_detector_tap"]            = "err:safe_guard_skip",
+    ["gp_field.quick_bolt_or_slot"]         = "err:safe_guard_skip",
+    ["gp_field.vision_draw_slot"]           = "err:safe_guard_skip",
+    ["gp_field.lb_wheel_hold"]              = "err:safe_guard_skip",
+    ["gp_field.on_quick_grenade"]           = "err:safe_guard_skip",
+    ["gp_field.quick_grenade"]              = "err:safe_guard_skip",
+    ["gp_field.on_quick_melee_tap"]         = "err:safe_guard_skip",
+    ["gp_field.on_world_item_pickup"]       = "err:safe_guard_skip",
+    ["gp_bridge.cursor_query_target"]       = "hit:0",
+    ["gp_bridge.cursor_dpad_snap"]          = "snap:0",
+    ["gp_bridge.inv_switch_panel_view"]     = "panel:0",
+    ["gp_bridge.inv_cycle_sort_tab"]        = "err:safe_guard_skip",
+    ["gp_bridge.inv_on_button_y"]           = "err:safe_guard_skip",
+    ["gp_bridge.inv_on_button_x"]           = "err:safe_guard_skip",
+    ["gp_bridge.inv_on_button_a_in_props"]  = "pass",
+    ["gp_bridge.inv_on_button_b"]           = "pass_close_inventory",
+    ["gp_bridge.inv_set_lb_modifier"]       = "ok:lb=0",
+    ["gp_bridge.execute_focus_test_op"]     = "err:safe_guard_skip",
+    ["gp_bridge.get_active_source"]         = "kbm",
+    ["gp_bridge.get_glyph_set"]             = "xbox",
+    ["gp_bridge.get_glyph_override"]        = "auto",
+    ["gp_pda.cursor_query_target"]          = "0",
+    ["gp_pda.cursor_dpad_snap"]             = "0",
+    ["gp_screens.cursor_query_target"]      = "0",
+    ["gp_screens.cursor_dpad_snap"]         = "0",
+    ["gp_wheel.get_state_summary"]          = "err:safe_guard_skip",
+    ["gp_wheel.console_set"]                = "err:safe_guard_skip",
+    ["gp_wheel.open_radial_menu"]           = "err:safe_guard_skip",
+    ["gp_wheel.open_ammo_wheel"]            = "err:safe_guard_skip",
+    ["gp_wheel.open_from_lb_hold"]          = "err:safe_guard_skip",
+    ["gp_wheel.on_gamepad_tab_prev"]        = "err:safe_guard_skip",
+    ["gp_wheel.on_gamepad_tab_next"]        = "err:safe_guard_skip",
+    ["gp_wheel.on_gamepad_confirm"]         = "err:safe_guard_skip",
+    ["gp_wheel.on_gamepad_cancel"]          = "err:safe_guard_skip",
+    ["gp_wheel.on_gamepad_lb_released"]     = "err:safe_guard_skip",
+    ["gp_wheel.on_gamepad_secondary"]       = "err:safe_guard_skip",
+    ["gp_pda.pda_button"]                   = "",
+    ["gp_pda.query"]                        = "hit:0",
+    ["gp_pda.snap"]                         = "snap:0",
+    ["gp_pda.focus_frame_active"]           = false,
+    ["gp_pda.rs_analog"]                    = false,
+    ["gp_pda.is_active"]                    = false,
+    ["gp_bridge.pda_button"]                = "",
+    ["gp_bridge.ws_button"]                 = "",
+    ["gp_inv_rework.lb_press"]              = "",
+    ["gp_inv_rework.rb_press"]              = "",
+    ["gp_inv_rework.x_hold_press"]          = "",
+    ["gp_inv_rework.x_hold_tap"]            = "x:0",
+    ["gp_inv_rework.x_hold_fire"]           = "x:0",
+    ["gp_inv_rework.a_hold_press"]          = "hold:0",
+    ["gp_inv_rework.a_hold_release"]        = "hold:0",
+    ["gp_inv_rework.a_hold_tap"]            = "hold:0",
+    ["gp_inv_rework.a_hold_fire"]           = "hold:0",
+    ["gp_inv_rework.view_hold_press"]       = "vhold:0",
+    ["gp_inv_rework.view_hold_fire"]        = "vhold:0",
+    ["gp_inv_rework.l3_press"]              = false,
+    ["gp_inv_rework.is_active"]             = false,
+    ["gp_inv_rework.cc_scroll_analog"]      = false,
+    ["gp_inv_rework.desc_scroll_analog"]    = false,
+}
+
+local SKIP_WRAP_FUNCTIONS = {
+    selftest                   = true,
+    gp_bridge_selftest         = true,
+    selftest_contours_1_2      = true,
+    selftest_contours_3_4      = true,
+    selftest_fg2_fast_buttons  = true,
+    selftest_f41_transactions  = true,
+    clock                      = true,
+}
+
+local wrapped_fn_marker = setmetatable({}, { __mode = "k" })
+local orig_fn_by_wrapper = setmetatable({}, { __mode = "k" })
+local orig_to_default_wrapper = setmetatable({}, { __mode = "k" })
+local wrapped_env_map = setmetatable({}, { __mode = "k" })
+
+local state = {
+    enabled              = true,
+    in_notify            = false,
+    in_record            = false,
+    hooks_installed      = false,
+    orig_reg_cb          = nil,
+    orig_unreg_cb        = nil,
+    orig_create_te       = nil,
+    cb_wrapper_map       = {},
+    wrapped_count        = 0,
+    total_errors         = 0,
+    reentrant_skips      = 0,
+    suppressed_logs      = 0,
+    failover_notified    = 0,
+    error_log_notified   = 0,
+    last_error_tag       = "",
+    last_error_msg       = "",
+    last_error_ms        = -1,
+    last_error_frame     = -1,
+    error_buckets        = {},
+}
+
+function get_now_ms()
+    if game and type(game.get_time_continual) == "function" then
+        local ok, v = pcall(game.get_time_continual)
+        if ok and type(v) == "number" then return v end
+    end
+    if type(_G.time_continual) == "function" then
+        local ok, v = pcall(_G.time_continual)
+        if ok and type(v) == "number" then return v end
+    end
+    if type(_G.time_global) == "function" then
+        local ok, v = pcall(_G.time_global)
+        if ok and type(v) == "number" then return v end
+    end
+    return 0
+end
+
+function get_now_frame()
+    if type(_G.device) == "function" then
+        local ok, dev = pcall(_G.device)
+        if ok and dev and type(dev.frame) == "number" then
+            return dev.frame
+        end
+    end
+    return 0
+end
+
+function resolve_fallback(tag, custom_fallback)
+    if custom_fallback ~= nil then
+        return custom_fallback
+    end
+    local fb = FALLBACK_RETURNS[tostring(tag or "")]
+    if fb ~= nil then
+        return fb
+    end
+    return nil
+end
+
+function emit_guard_log(tag, err_str, count, suppressed_since_last)
+    local msg
+    if count <= 1 then
+        msg = string.format(
+            "! [gp_safe_guard] S1 caught error in '%s' (frame skipped safely, game continues): %s",
+            tostring(tag), tostring(err_str)
+        )
+    else
+        msg = string.format(
+            "! [gp_safe_guard] S1 repeated error in '%s' (total=%d, suppressed=%d, frame skipped): %s",
+            tostring(tag), count, suppressed_since_last, tostring(err_str)
+        )
+    end
+    if type(_G.printf) == "function" then
+        pcall(_G.printf, "%s", msg)
+    elseif type(_G.log) == "function" then
+        pcall(_G.log, msg)
+    end
+    return msg
+end
+
+function notify_companions(tag, err_str, info)
+    if state.in_notify then
+        state.reentrant_skips = state.reentrant_skips + 1
+        return false
+    end
+    state.in_notify = true
+
+    local mod_name, fn_name = string.match(tostring(tag or ""), "^([^%.]+)%.")
+    if not mod_name then
+        mod_name = tostring(tag or "unknown")
+        fn_name = tostring(tag or "unknown")
+    else
+        fn_name = string.match(tostring(tag or ""), "^[^%.]+%.(.+)$") or tostring(tag)
+    end
+
+    -- 1. Forward to gp_error_log if present (Step S3)
+    local err_mod = rawget(_G, "gp_error_log")
+    if type(err_mod) == "table" then
+        local notified = false
+        local candidate_fns = { "record_error", "on_error", "log_error", "report_error", "push_error", "write_error" }
+        for _, mname in ipairs(candidate_fns) do
+            local fn = unwrap_handler(rawget(err_mod, mname))
+            if type(fn) == "function" then
+                local ok = pcall(fn, tag, err_str, info)
+                if ok then
+                    notified = true
+                    break
+                end
+            end
+        end
+        if notified then
+            state.error_log_notified = state.error_log_notified + 1
+        end
+    end
+
+    -- 2. Forward to gp_failover if present (Step S2)
+    local fail_mod = rawget(_G, "gp_failover")
+    if type(fail_mod) == "table" then
+        local notified = false
+        local candidate_fns = { "on_handler_error", "report_error", "record_error", "on_error", "notify_error", "trigger_failover" }
+        for _, mname in ipairs(candidate_fns) do
+            local fn = unwrap_handler(rawget(fail_mod, mname))
+            if type(fn) == "function" then
+                local ok = pcall(fn, tag, err_str, info, mod_name, fn_name)
+                if ok then
+                    notified = true
+                    break
+                end
+            end
+        end
+        if notified then
+            state.failover_notified = state.failover_notified + 1
+        end
+    end
+
+    state.in_notify = false
+    return true
+end
+
+function record_caught_error(tag, raw_err)
+    if state.in_record then
+        state.total_errors = state.total_errors + 1
+        state.reentrant_skips = state.reentrant_skips + 1
+        return nil
+    end
+    state.in_record = true
+    local now_ms = get_now_ms()
+    local now_frame = get_now_frame()
+    local err_str = tostring(raw_err or "unknown_error")
+    local key = tostring(tag or "unknown") .. "|" .. err_str
+
+    state.total_errors = state.total_errors + 1
+    state.last_error_tag = tostring(tag or "unknown")
+    state.last_error_msg = err_str
+    state.last_error_ms = now_ms
+    state.last_error_frame = now_frame
+
+    local b = state.error_buckets[key]
+    if not b then
+        b = {
+            tag = tostring(tag or "unknown"),
+            err = err_str,
+            count = 0,
+            suppressed = 0,
+            first_ms = now_ms,
+            last_ms = now_ms,
+            last_log_ms = -100000,
+            last_frame = now_frame,
+        }
+        state.error_buckets[key] = b
+    end
+
+    b.count = b.count + 1
+    b.last_ms = now_ms
+    b.last_frame = now_frame
+
+    local should_log = false
+    if b.count == 1 then
+        should_log = true
+    elseif (now_ms - b.last_log_ms) >= ANTI_SPAM_WINDOW_MS then
+        should_log = true
+    elseif (b.count % ANTI_SPAM_SUMMARY_STEP) == 0 then
+        should_log = true
+    end
+
+    if should_log then
+        emit_guard_log(b.tag, b.err, b.count, b.suppressed)
+        b.last_log_ms = now_ms
+        b.suppressed = 0
+    else
+        b.suppressed = b.suppressed + 1
+        state.suppressed_logs = state.suppressed_logs + 1
+    end
+
+    local info = {
+        tag = b.tag,
+        err = b.err,
+        count = b.count,
+        suppressed = b.suppressed,
+        time_ms = now_ms,
+        frame = now_frame,
+    }
+    state.in_record = false
+    if not state.in_notify then
+        notify_companions(b.tag, b.err, info)
+    else
+        state.reentrant_skips = state.reentrant_skips + 1
+    end
+    return info
+end
+
+local function finish_safe_call(tag, ok, ...)
+    if not ok then
+        record_caught_error(tag, (...))
+        return false, resolve_fallback(tag, nil)
+    end
+    return true, ...
+end
+
+local function finish_wrapped_pcall(tag, custom_fallback, ok, ...)
+    if not ok then
+        record_caught_error(tag, (...))
+        return resolve_fallback(tag, custom_fallback)
+    end
+    return ...
+end
+
+function safe_call(tag, fn, ...)
+    if type(fn) ~= "function" then
+        return false, resolve_fallback(tag, nil)
+    end
+    if not state.enabled then
+        return true, fn(...)
+    end
+    return finish_safe_call(tag, pcall(fn, ...))
+end
+
+function wrap_handler(tag, fn, custom_fallback)
+    if type(fn) ~= "function" then
+        return fn
+    end
+    if wrapped_fn_marker[fn] then
+        return fn
+    end
+    if custom_fallback == nil and orig_to_default_wrapper[fn] then
+        return orig_to_default_wrapper[fn]
+    end
+
+    -- Save the environment of `fn` (module table `this` in X-Ray) before wrapping
+    local ok_env, fn_env = pcall(getfenv, fn)
+    local has_mod_env = (ok_env and type(fn_env) == "table" and not rawequal(fn_env, _G))
+
+    local wrapper = function(...)
+        if not state.enabled then
+            return fn(...)
+        end
+        return finish_wrapped_pcall(tag, custom_fallback, pcall(fn, ...))
+    end
+
+    if has_mod_env then
+        wrapped_env_map[wrapper] = fn_env
+    end
+
+    wrapped_fn_marker[wrapper] = tostring(tag or "handler")
+    orig_fn_by_wrapper[wrapper] = fn
+    if custom_fallback == nil then
+        orig_to_default_wrapper[fn] = wrapper
+    end
+    state.wrapped_count = state.wrapped_count + 1
+    return wrapper
+end
+
+function is_wrapped(fn)
+    return type(fn) == "function" and wrapped_fn_marker[fn] ~= nil
+end
+
+function unwrap_handler(fn)
+    if type(fn) == "function" and orig_fn_by_wrapper[fn] then
+        return orig_fn_by_wrapper[fn]
+    end
+    return fn
+end
+
+function is_gp_function(fn)
+    if type(fn) ~= "function" then
+        return false, nil
+    end
+    if wrapped_fn_marker[fn] then
+        return true, wrapped_fn_marker[fn]
+    end
+    local env = wrapped_env_map[fn]
+    if not env then
+        local ok_env, e = pcall(getfenv, fn)
+        if ok_env then env = e end
+    end
+    if type(env) == "table" and type(rawget(env, "script_name")) == "function" then
+        local ok_sn, sname = pcall(rawget(env, "script_name"))
+        if ok_sn and type(sname) == "string" and string.sub(sname, 1, 3) == "gp_" then
+            return true, sname
+        end
+    end
+    return false, nil
+end
+
+function wrap_class_methods(mod_name, mod_tbl)
+    local cls_specs = CLASS_METHODS_TO_GUARD[mod_name]
+    if not cls_specs or type(mod_tbl) ~= "table" then
+        return 0
+    end
+    local count = 0
+    for cls_name, methods in pairs(cls_specs) do
+        local cls_tbl = rawget(mod_tbl, cls_name)
+        if type(cls_tbl) == "table" then
+            for _, mname in ipairs(methods) do
+                local fn = rawget(cls_tbl, mname)
+                if type(fn) == "function" and not wrapped_fn_marker[fn] then
+                    local tag = mod_name .. "." .. cls_name .. ":" .. mname
+                    local fb = nil
+                    if mname == "is_enabled" then
+                        fb = false
+                    elseif mname == "get_text" then
+                        fb = ""
+                    end
+                    rawset(cls_tbl, mname, wrap_handler(tag, fn, fb))
+                    count = count + 1
+                end
+            end
+        end
+    end
+    return count
+end
+
+function guard_module(mod_name, mod_tbl_opt)
+    if type(mod_name) ~= "string" or mod_name == "gp_safe_guard" or mod_name == "gp_error_log" or mod_name == "gp_failover" then
+        return 0
+    end
+    local mod_tbl = mod_tbl_opt or rawget(_G, mod_name)
+    if type(mod_tbl) ~= "table" then
+        return 0
+    end
+
+    local count = 0
+    for k, v in pairs(mod_tbl) do
+        if type(k) == "string" and type(v) == "function" and not SKIP_WRAP_FUNCTIONS[k] and not wrapped_fn_marker[v] then
+            local tag = mod_name .. "." .. k
+            local wrapped = wrap_handler(tag, v)
+            rawset(mod_tbl, k, wrapped)
+            if k == "gp_ui_layout_dump" and rawget(_G, "gp_ui_layout_dump") == v then
+                _G.gp_ui_layout_dump = wrapped
+            end
+            count = count + 1
+        end
+    end
+
+    count = count + wrap_class_methods(mod_name, mod_tbl)
+    return count
+end
+
+function install_callback_and_timer_guards()
+    if type(_G.RegisterScriptCallback) == "function" and not wrapped_fn_marker[_G.RegisterScriptCallback] then
+        local orig_reg = _G.RegisterScriptCallback
+        state.orig_reg_cb = orig_reg
+        local reg_hook = function(name, fn_or_obj)
+            if type(fn_or_obj) == "function" then
+                if wrapped_fn_marker[fn_or_obj] then
+                    return orig_reg(name, fn_or_obj)
+                end
+                local is_gp, src_tag = is_gp_function(fn_or_obj)
+                if is_gp then
+                    local cb_key = tostring(name or "cb")
+                    if not state.cb_wrapper_map[cb_key] then
+                        state.cb_wrapper_map[cb_key] = setmetatable({}, { __mode = "k" })
+                    end
+                    local existing = state.cb_wrapper_map[cb_key][fn_or_obj]
+                    if not existing then
+                        local tag = tostring(src_tag) .. "@" .. cb_key
+                        existing = wrap_handler(tag, fn_or_obj)
+                        state.cb_wrapper_map[cb_key][fn_or_obj] = existing
+                    end
+                    return orig_reg(name, existing)
+                end
+            end
+            return orig_reg(name, fn_or_obj)
+        end
+        wrapped_fn_marker[reg_hook] = "RegisterScriptCallback_hook"
+        _G.RegisterScriptCallback = reg_hook
+    end
+
+    if type(_G.UnregisterScriptCallback) == "function" and not wrapped_fn_marker[_G.UnregisterScriptCallback] then
+        local orig_unreg = _G.UnregisterScriptCallback
+        state.orig_unreg_cb = orig_unreg
+        local unreg_hook = function(name, fn_or_obj)
+            local cb_key = tostring(name or "cb")
+            local map = state.cb_wrapper_map[cb_key]
+            local wrapped = (type(fn_or_obj) == "function" and map and map[fn_or_obj]) or nil
+            if wrapped then
+                map[fn_or_obj] = nil
+                orig_unreg(name, wrapped)
+            end
+            return orig_unreg(name, fn_or_obj)
+        end
+        wrapped_fn_marker[unreg_hook] = "UnregisterScriptCallback_hook"
+        _G.UnregisterScriptCallback = unreg_hook
+    end
+
+    if type(_G.CreateTimeEvent) == "function" and not wrapped_fn_marker[_G.CreateTimeEvent] then
+        local orig_cte = _G.CreateTimeEvent
+        state.orig_create_te = orig_cte
+        local cte_hook = function(ev_id, act_id, timer_sec, fn, ...)
+            if type(fn) == "function" then
+                local ev_str = tostring(ev_id or "")
+                local is_gp, src_tag = is_gp_function(fn)
+                if string.sub(ev_str, 1, 3) == "gp_" or is_gp then
+                    local tag = string.format("timer:%s:%s", ev_str ~= "" and ev_str or tostring(src_tag or "gp"), tostring(act_id or "act"))
+                    -- For CreateTimeEvent, returning `true` on error removes the faulty timer so it does not hang/spam every frame!
+                    local guarded_timer = wrap_handler(tag, fn, true)
+                    return orig_cte(ev_id, act_id, timer_sec, guarded_timer, ...)
+                end
+            end
+            return orig_cte(ev_id, act_id, timer_sec, fn, ...)
+        end
+        wrapped_fn_marker[cte_hook] = "CreateTimeEvent_hook"
+        _G.CreateTimeEvent = cte_hook
+    end
+
+    state.hooks_installed = true
+    return true
+end
+
+function uninstall_callback_and_timer_guards()
+    if not state.hooks_installed then
+        return false
+    end
+    if state.orig_reg_cb then
+        _G.RegisterScriptCallback = state.orig_reg_cb
+        state.orig_reg_cb = nil
+    end
+    if state.orig_unreg_cb then
+        _G.UnregisterScriptCallback = state.orig_unreg_cb
+        state.orig_unreg_cb = nil
+    end
+    if state.orig_create_te then
+        _G.CreateTimeEvent = state.orig_create_te
+        state.orig_create_te = nil
+    end
+    state.hooks_installed = false
+    return true
+end
+
+function guard_all_modules()
+    local total = 0
+    for _, mod_name in ipairs(TARGET_MODULES) do
+        total = total + guard_module(mod_name)
+    end
+    -- Also discover any newly added `gp_*.script` tables in `_G` (excluding companion armor modules gp_failover / gp_error_log)
+    for k, v in pairs(_G) do
+        if type(k) == "string" and (string.sub(k, 1, 3) == "gp_" or string.sub(k, 1, 6) == "ui_gp_") and k ~= "gp_safe_guard" and k ~= "gp_error_log" and k ~= "gp_failover" and type(v) == "table" then
+            if rawget(v, "script_name") ~= nil or rawget(v, "on_game_start") ~= nil or rawget(v, "selftest") ~= nil or rawget(v, "install") ~= nil then
+                total = total + guard_module(k, v)
+            end
+        end
+    end
+    install_callback_and_timer_guards()
+    return total
+end
+
+function set_enabled(flag)
+    state.enabled = (flag ~= false)
+    return state.enabled
+end
+
+function is_enabled()
+    return state.enabled == true
+end
+
+function get_state()
+    return state
+end
+
+function get_status_summary()
+    return string.format(
+        "enabled=%s;hooks=%s;wrapped=%d;errors=%d;suppressed=%d;failover_notified=%d;error_log_notified=%d;last_tag=%s",
+        state.enabled and "1" or "0",
+        state.hooks_installed and "1" or "0",
+        state.wrapped_count,
+        state.total_errors,
+        state.suppressed_logs,
+        state.failover_notified,
+        state.error_log_notified,
+        state.last_error_tag ~= "" and state.last_error_tag or "none"
+    )
+end
+
+function reset_stats()
+    state.in_notify = false
+    state.in_record = false
+    state.total_errors = 0
+    state.reentrant_skips = 0
+    state.suppressed_logs = 0
+    state.failover_notified = 0
+    state.error_log_notified = 0
+    state.last_error_tag = ""
+    state.last_error_msg = ""
+    state.last_error_ms = -1
+    state.last_error_frame = -1
+    state.error_buckets = {}
+end
+
+function on_game_start()
+    guard_all_modules()
+end
+
+--===========================================================================
+-- Self-Test (`gp_safe_guard.selftest()`)
+--===========================================================================
+function selftest()
+    local saved_enabled = state.enabled
+    local saved_failover = rawget(_G, "gp_failover")
+    local saved_error_log = rawget(_G, "gp_error_log")
+
+    state.enabled = true
+    guard_all_modules()
+    reset_stats()
+
+    local fail_reasons = {}
+    local function check(cond, reason)
+        if not cond then
+            table.insert(fail_reasons, reason)
+        end
+    end
+
+    -- 1. Verify all loaded gp_* modules have their entry points wrapped
+    check(state.hooks_installed == true, "hooks_installed")
+    check(state.wrapped_count > 0, "wrapped_count_positive")
+    if type(_G.gp_bridge) == "table" and type(_G.gp_bridge.cursor_dpad_snap) == "function" then
+        check(is_wrapped(_G.gp_bridge.cursor_dpad_snap), "gp_bridge_cursor_dpad_snap_wrapped")
+    end
+
+    -- 2. Simulate an artificial crash inside a per-frame handler and a button handler
+    local failover_hits = 0
+    local err_log_hits = 0
+    _G.gp_failover = {
+        on_handler_error = function(tag, err_str, info)
+            if tag and err_str and info then
+                failover_hits = failover_hits + 1
+            end
+        end,
+    }
+    _G.gp_error_log = {
+        record_error = function(tag, err_str, info)
+            if tag and err_str and info then
+                err_log_hits = err_log_hits + 1
+            end
+        end,
+    }
+
+    local frames_completed = 0
+    local crashing_frame_fn = wrap_handler("gp_bridge.on_actor_update", function(crash_this_frame)
+        if crash_this_frame then
+            error("simulated_frame_crash_s1")
+        end
+        frames_completed = frames_completed + 1
+        return "frame_ok"
+    end)
+
+    -- Frame 1 crashes -> safely caught, game continues to Frame 2 & Frame 3!
+    local res_f1 = crashing_frame_fn(true)
+    local res_f2 = crashing_frame_fn(false)
+    local res_f3 = crashing_frame_fn(false)
+    check(res_f1 == nil, "crashing_frame_returns_nil_safely")
+    check(res_f2 == "frame_ok" and res_f3 == "frame_ok", "subsequent_frames_continue_normally")
+    check(frames_completed == 2, "two_healthy_frames_completed_after_crash")
+    check(state.total_errors == 1, "one_error_recorded_after_frame_crash")
+    check(failover_hits == 1 and state.failover_notified == 1, "gp_failover_notified_on_crash")
+    check(err_log_hits == 1 and state.error_log_notified == 1, "gp_error_log_notified_on_crash")
+
+    -- 3. Verify anti-spam protection when the same frame error repeats 10 times in the same timestamp window
+    for _ = 1, 10 do
+        crashing_frame_fn(true)
+    end
+    check(state.total_errors == 11, "all_11_errors_counted")
+    check(state.suppressed_logs == 10, "10_repeated_frame_logs_suppressed_by_anti_spam")
+
+    -- 4. Verify safe fallback return values for C++ functor contracts (e.g. cursor_dpad_snap -> "snap:0", sync_context_hints -> false)
+    local crashing_snap = wrap_handler("gp_bridge.cursor_dpad_snap", function()
+        error("simulated_snap_crash")
+    end)
+    local crashing_hints = wrap_handler("gp_bridge.sync_context_hints", function()
+        error("simulated_hints_crash")
+    end)
+    check(crashing_snap(512, 384, 1) == "snap:0", "fallback_snap_0_returned")
+    check(crashing_hints(false) == false, "fallback_false_returned")
+
+    -- 5. Verify reentrancy protection (FG.6a): companion handler throwing or calling wrapped handler inside notification must not stack-overflow
+    reset_stats()
+    local nested_throws = 0
+    local nested_faulty = wrap_handler("gp_bridge.nested_during_notify", function()
+        nested_throws = nested_throws + 1
+        error("nested_fault_inside_notify")
+    end)
+    _G.gp_error_log = {
+        record_error = wrap_handler("gp_error_log.record_error", function()
+            nested_faulty()
+            error("error_inside_wrapped_record_error")
+        end),
+    }
+    _G.gp_failover = {
+        on_handler_error = wrap_handler("gp_failover.on_handler_error", function()
+            nested_faulty()
+            error("error_inside_wrapped_on_handler_error")
+        end),
+    }
+    local primary_faulty = wrap_handler("gp_lifecycle.on_gui_hide", function()
+        error("primary_close_inventory_fault")
+    end)
+    local ok_rec = pcall(primary_faulty, "UIInventory")
+    check(ok_rec == true, "reentrant_notification_did_not_stack_overflow")
+    check(state.total_errors >= 2, "errors_counted_during_reentrant_notification")
+    check(state.reentrant_skips >= 1, "reentrant_notify_skipped_without_recursion")
+
+    -- Restore globals and clean stats
+    _G.gp_failover = saved_failover
+    _G.gp_error_log = saved_error_log
+    state.enabled = saved_enabled
+    reset_stats()
+
+    if #fail_reasons > 0 then
+        return "FAIL:" .. table.concat(fail_reasons, ",")
+    end
+    return "PASS"
+end
+
+-- Install guards immediately at script load time so any module already in _G is armored right away
+guard_all_modules()

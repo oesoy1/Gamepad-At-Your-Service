@@ -1,0 +1,1299 @@
+-- =============================================================================
+-- gp_cursor.script — Режим «курсор-мышь» для сторонних окон без поддержки геймпада (CURSOR1)
+-- =============================================================================
+-- Назначение:
+--   1. Определяет, открыто ли стороннее/модовое окно без нашей нативной поддержки
+--      (`is_unsupported_window_open`, `can_toggle_mouse_mode`, `get_window_gate_state`).
+--   2. Управляет состоянием режима курсора-мыши (`is_mouse_mode_active`, `set_mouse_mode`,
+--      `toggle_mouse_mode`, `on_mouse_mode_changed`, `on_denied_toggle`) и тактильным
+--      откликом (в т.ч. вибрация отказа при попытке включить режим в поддерживаемом окне).
+--   3. Хранит и синхронизирует настройки `[cursor]` (`size_pct`, `speed_pct`, `toggle_spec`)
+--      и привязку `MouseCursor` в `[context_MenuUI]` файла `appdata\gamepad\profile.ltx`.
+--   4. Формирует нижнюю плашку подсказок со значками `gp_icons` и локализованными
+--      подписями под активное семейство геймпада (`get_hint_items`, `get_hint_bar_text`).
+-- =============================================================================
+
+_GP_FILE_MARKER = "GAYS_CURSOR1_20261114"
+
+local SIZE_MIN_PCT   = 50
+local SIZE_MAX_PCT   = 200
+local SIZE_STEP_PCT  = 10
+local SIZE_DEF_PCT   = 100
+local SIZE_MIN_CVAR  = 0.50
+local SIZE_MAX_CVAR  = 3.00
+local SIZE_BASE_CVAR = 1.50
+
+local SPEED_MIN_PCT   = 50
+local SPEED_MAX_PCT   = 200
+local SPEED_STEP_PCT  = 10
+local SPEED_DEF_PCT   = 100
+local SPEED_MIN_CVAR  = 0.40
+local SPEED_MAX_CVAR  = 2.50
+local SPEED_BASE_CVAR = 1.00
+
+local DEFAULT_TOGGLE_SPEC = "button:R3"
+
+local TOGGLE_PRESETS = {
+    "button:R3",
+    "hold:L3:300",
+    "chord:LB+L3",
+    "hold:Back:300",
+}
+
+-- Ключи в `_G._GUIs`, принадлежащие штатным и нашим поддерживаемым экранам.
+local SUPPORTED_GUI_KEYS = {
+    ActorMenu              = true,
+    UIInventory            = true,
+    Dialog                 = true,
+    UIPda                  = true,
+    pda                    = true,
+    ui_pda                 = true,
+    ui_save_dialog         = true,
+    UISaveDialog           = true,
+    ui_load_dialog         = true,
+    UILoadDialog           = true,
+    ui_main_menu           = true,
+    main_menu              = true,
+    UIGpControlsWnd        = true,
+    UIGpAimWnd             = true,
+    UIGpOtherWnd           = true,
+    UIGpButtonTest         = true,
+    UIGpQawSettings        = true,
+    UIGpTestQuestionWnd    = true,
+    UICtrlLighting         = true,
+    ui_ctrl_lighting       = true,
+    UIFurnitureLight       = true,
+    UIFurnitureRadio       = true,
+    UIFurniturePiano       = true,
+    UITradingComputer      = true,
+    UIMapKit               = true,
+    UILaserSettings        = true,
+    UIAdvancedControls     = true,
+    UISleep                = true,
+    UIWorkshop             = true,
+    UIFurnitureWorkshop    = true,
+    UIItemSheet            = true,
+    UINumpad               = true,
+    UICreateStash          = true,
+    UIRecipe               = true,
+    UIMcm                  = true,
+    ui_mcm                 = true,
+    UIOptions              = true,
+    ui_options             = true,
+    UINewGame              = true,
+    ui_mm_faction_select   = true,
+    UIBhs                  = true,
+    UICompanionInv         = true,
+    UICompanionWheel       = true,
+    UICompanionQuickMenu   = true,
+    UIHarukaSkills         = true,
+    UIExperienceMenu       = true,
+}
+
+local SLOT_TO_GLYPH = {
+    A    = "south",
+    B    = "east",
+    X    = "west",
+    Y    = "north",
+    LB   = "lshoulder",
+    RB   = "rshoulder",
+    LT   = "ltrigger",
+    RT   = "rtrigger",
+    View = "back",
+    Back = "back",
+    Menu = "start",
+    Start = "start",
+    L3   = "lstick",
+    R3   = "rstick",
+    LS   = "ls",
+    RS   = "rs",
+    DU   = "dpup",
+    DD   = "dpdown",
+    DL   = "dpleft",
+    DR   = "dpright",
+}
+
+local FALLBACK_STRINGS = {
+    ui_gp_act_MouseCursor     = "Курсор-мышь",
+    ui_gp_cursor_hint_move    = "Курсор",
+    ui_gp_cursor_hint_lclick  = "ЛКМ",
+    ui_gp_cursor_hint_rclick  = "ПКМ",
+    ui_gp_cursor_hint_scroll  = "Прокрутка",
+    ui_gp_cursor_hint_exit    = "Выйти",
+    ui_gp_cursor_hold_short   = "Удерж.",
+}
+
+local custom_profile_path = nil
+
+local state = {
+    active            = false,
+    denied_count      = 0,
+    last_reason       = "init",
+    size_pct          = SIZE_DEF_PCT,
+    speed_pct         = SPEED_DEF_PCT,
+    toggle_spec       = DEFAULT_TOGGLE_SPEC,
+    mock_foreign_open = nil,
+}
+
+-- -----------------------------------------------------------------------------
+-- 1. Безопасные обёртки (Luabind-safe: rawequal + pcall)
+-- -----------------------------------------------------------------------------
+
+local function trim_str(s)
+    if type(s) ~= "string" then
+        return ""
+    end
+    return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function clamp_num(v, lo, hi)
+    if v < lo then return lo end
+    if v > hi then return hi end
+    return v
+end
+
+local function safe_index(obj, key)
+    return obj[key]
+end
+
+local function safe_get(obj, key)
+    if rawequal(obj, nil) then
+        return nil
+    end
+    local t = type(obj)
+    if t ~= "table" and t ~= "userdata" then
+        return nil
+    end
+    local ok, val = pcall(safe_index, obj, key)
+    if ok then
+        return val
+    end
+    return nil
+end
+
+local function is_wnd_shown(wnd)
+    if rawequal(wnd, nil) then
+        return false
+    end
+    local fn = safe_get(wnd, "IsShown")
+    if rawequal(fn, nil) then
+        return false
+    end
+    local ok, res = pcall(fn, wnd)
+    return ok and (res == true) or false
+end
+
+local function is_gui_entry_open(entry)
+    if rawequal(entry, nil) or entry == false then
+        return false
+    end
+    local fn = safe_get(entry, "IsShown")
+    if not rawequal(fn, nil) then
+        local ok, res = pcall(fn, entry)
+        return ok and (res == true) or false
+    end
+    if type(entry) == "table" then
+        local inst = safe_get(entry, "instance")
+        if not rawequal(inst, nil) then
+            if not rawequal(safe_get(inst, "IsShown"), nil) then
+                return is_wnd_shown(inst)
+            end
+            return true
+        end
+        local path = safe_get(entry, "path")
+        if type(path) == "string" and path ~= "" then
+            local mod_tbl = rawget(_G, path)
+            local mod_gui = safe_get(mod_tbl, "GUI")
+            if not rawequal(mod_gui, nil) then
+                return is_wnd_shown(mod_gui)
+            end
+        end
+    end
+    return true
+end
+
+local function exec_cmd(cmd)
+    if type(cmd) ~= "string" or cmd == "" then
+        return false
+    end
+    if type(_G.exec_console_cmd) == "function" then
+        local ok = pcall(_G.exec_console_cmd, cmd)
+        return ok == true
+    end
+    if type(_G.get_console) == "function" then
+        local ok_c, con = pcall(_G.get_console)
+        if ok_c and not rawequal(con, nil) then
+            local fn = safe_get(con, "execute")
+            if type(fn) == "function" then
+                local ok_e = pcall(fn, con, cmd)
+                return ok_e == true
+            end
+        end
+    end
+    return false
+end
+
+local function tr(key, fallback)
+    local k = tostring(key or "")
+    if k == "" then
+        return tostring(fallback or "")
+    end
+    if _G.game and type(_G.game.translate_string) == "function" then
+        local ok, res = pcall(_G.game.translate_string, k)
+        if ok and type(res) == "string" and res ~= "" and res ~= k then
+            return res
+        end
+    end
+    if fallback ~= nil then
+        return tostring(fallback)
+    end
+    return FALLBACK_STRINGS[k] or k
+end
+
+local function trigger_haptic(channel, strength)
+    local str_val = tonumber(strength) or 0.20
+    if _G.game and type(_G.game.trigger_gamepad_haptics) == "function" then
+        local ok = pcall(_G.game.trigger_gamepad_haptics, tostring(channel or "ui_tick"), str_val)
+        if ok then
+            return true
+        end
+    end
+    if tostring(channel) == "deny" then
+        return exec_cmd(string.format("gp_rumble_test jam %.2f 120", str_val))
+    end
+    return false
+end
+
+-- -----------------------------------------------------------------------------
+-- 2. Определение окон без нашей поддержки (мир vs наши экраны vs чужие окна)
+-- -----------------------------------------------------------------------------
+
+local function get_main_input_receiver()
+    local lvl = rawget(_G, "level")
+    if type(lvl) == "table" and type(lvl.main_input_receiver) == "function" then
+        local ok, recv = pcall(lvl.main_input_receiver)
+        if ok and not rawequal(recv, nil) then
+            local fn = safe_get(recv, "IsShown")
+            if not rawequal(fn, nil) then
+                local ok_s, shown = pcall(fn, recv)
+                if not ok_s or shown ~= true then
+                    return nil
+                end
+            end
+            return recv
+        end
+    end
+    return nil
+end
+
+local function has_foreign_modal_over_pda(pda_wnd, actor_menu, talk_wnd)
+    if state.mock_foreign_open ~= nil then
+        return state.mock_foreign_open == true
+    end
+    local pda_mod = rawget(_G, "gp_pda")
+    if type(pda_mod) == "table" and type(pda_mod.is_paw_modal_open) == "function" then
+        local ok_paw, paw_open = pcall(pda_mod.is_paw_modal_open)
+        if ok_paw and paw_open == true then
+            return false
+        end
+    end
+    local guis = rawget(_G, "_GUIs")
+    if type(guis) == "table" then
+        for k, v in pairs(guis) do
+            if not SUPPORTED_GUI_KEYS[tostring(k)] and not rawequal(v, pda_wnd) and is_gui_entry_open(v) then
+                return true
+            end
+        end
+    end
+    local recv = get_main_input_receiver()
+    if not rawequal(recv, nil)
+        and not rawequal(recv, pda_wnd)
+        and not rawequal(recv, actor_menu)
+        and not rawequal(recv, talk_wnd)
+    then
+        return true
+    end
+    return false
+end
+
+function is_supported_screen_open()
+    -- 1. Штатные и расширенные экраны gp_screens / gp_screens_ext
+    local scr = rawget(_G, "gp_screens")
+    if type(scr) == "table" and type(scr.is_managed_screen_active) == "function" then
+        local ok, active = pcall(scr.is_managed_screen_active)
+        if ok and active == true then
+            return true
+        end
+    end
+    local scr_ext = rawget(_G, "gp_screens_ext")
+    if type(scr_ext) == "table" and type(scr_ext.get_active_ext_screen) == "function" then
+        local ok_e, kind = pcall(scr_ext.get_active_ext_screen)
+        if ok_e and type(kind) == "string" and kind ~= "" and kind ~= "none" then
+            return true
+        end
+    end
+
+    -- 2. Верстак, мебель и полевые модалки gp_workshop + новая игра gp_new_game
+    local ws = rawget(_G, "gp_workshop")
+    if type(ws) == "table" then
+        if type(ws.ws_gui) == "function" then
+            local ok_w, g = pcall(ws.ws_gui)
+            if ok_w and not rawequal(g, nil) then return true end
+        end
+        if type(ws.furn_gui) == "function" then
+            local ok_f, g = pcall(ws.furn_gui)
+            if ok_f and not rawequal(g, nil) then return true end
+        end
+        if type(ws.field_modal_tag) == "function" then
+            local ok_m, tag = pcall(ws.field_modal_tag)
+            if ok_m and type(tag) == "string" and tag ~= "" and tag ~= "none" then return true end
+        end
+    end
+    local ng = rawget(_G, "gp_new_game")
+    if type(ng) == "table" and type(ng.current) == "function" then
+        local ok_n, g = pcall(ng.current)
+        if ok_n and not rawequal(g, nil) then
+            return true
+        end
+    end
+    local cf = rawget(_G, "gp_companions_furn")
+    if type(cf) == "table" and type(cf.current_modal) == "function" then
+        local ok_cf, kind = pcall(cf.current_modal)
+        if ok_cf and not rawequal(kind, nil) and kind ~= false and kind ~= "" and kind ~= "none" then
+            return true
+        end
+    end
+    local sysd = rawget(_G, "gp_sys_dialogs")
+    if type(sysd) == "table" and type(sysd.active) == "function" then
+        local ok_sd, act = pcall(sysd.active)
+        if ok_sd and not rawequal(act, nil) and act ~= false and act ~= "" and act ~= "none" then
+            return true
+        end
+    end
+    local hdo = rawget(_G, "gp_hideout")
+    if type(hdo) == "table" and type(hdo.current) == "function" then
+        local ok_hd, cur = pcall(hdo.current)
+        if ok_hd and not rawequal(cur, nil) and cur ~= false and cur ~= "" and cur ~= "none" then
+            return true
+        end
+    end
+    local prg = rawget(_G, "gp_progression")
+    if type(prg) == "table" and type(prg.current) == "function" then
+        local ok_pr, cur = pcall(prg.current)
+        if ok_pr and not rawequal(cur, nil) and cur ~= false and cur ~= "" and cur ~= "none" then
+            return true
+        end
+    end
+    local br = rawget(_G, "gp_bridge")
+    if type(br) == "table" and type(br.sample_modal_tag) == "function" then
+        local ok_bt, mtag = pcall(br.sample_modal_tag)
+        if ok_bt and type(mtag) == "string" and mtag ~= "" and mtag ~= "none" then
+            return true
+        end
+    end
+
+    -- 3. Инвентарь / обыск / торговля (ui_inventory)
+    local inv = rawget(_G, "ui_inventory")
+    if type(inv) == "table" and is_wnd_shown(safe_get(inv, "GUI")) then
+        return true
+    end
+
+    -- 4. Колёса оружия/предметов/напарников, наши окна настроек, тест кнопок, пауза, освещение
+    local wh = rawget(_G, "gp_wheel")
+    if type(wh) == "table" and type(wh.is_open) == "function" then
+        local ok_wh, open = pcall(wh.is_open)
+        if ok_wh and open == true then return true end
+    end
+    local ws_sel = rawget(_G, "gp_weapon_select")
+    if type(ws_sel) == "table" and type(ws_sel.is_open) == "function" then
+        local ok_ws, open = pcall(ws_sel.is_open)
+        if ok_ws and open == true then return true end
+    end
+    local btest = rawget(_G, "ui_gp_button_test")
+    if type(btest) == "table" and type(btest.is_open) == "function" then
+        local ok_bt, open = pcall(btest.is_open)
+        if ok_bt and open == true then return true end
+    end
+    local nat = rawget(_G, "ui_gp_native")
+    if type(nat) == "table" and type(nat.get_other_gui) == "function" then
+        local ok_no, og = pcall(nat.get_other_gui)
+        if ok_no and is_wnd_shown(og) then return true end
+    end
+    local ctrl_mod = rawget(_G, "ui_gp_controls")
+    if type(ctrl_mod) == "table" and is_wnd_shown(safe_get(ctrl_mod, "GUI")) then
+        return true
+    end
+    local aim_mod = rawget(_G, "ui_gp_aim")
+    if type(aim_mod) == "table" and is_wnd_shown(safe_get(aim_mod, "GUI")) then
+        return true
+    end
+    local pause_mod = rawget(_G, "ui_gp_pause")
+    if type(pause_mod) == "table" and is_wnd_shown(safe_get(pause_mod, "GUI")) then
+        return true
+    end
+    local tut_mod = rawget(_G, "gp_tutorial_prompt")
+    if type(tut_mod) == "table" and is_wnd_shown(safe_get(tut_mod, "GUI")) then
+        return true
+    end
+    local light_mod = rawget(_G, "ui_ctrl_lighting")
+    if type(light_mod) == "table" and is_wnd_shown(safe_get(light_mod, "GUI")) then
+        return true
+    end
+    local furn_light = rawget(_G, "ui_furniture_light")
+    if type(furn_light) == "table" and is_wnd_shown(safe_get(furn_light, "GUI")) then
+        return true
+    end
+    local guis = rawget(_G, "_GUIs")
+    if type(guis) == "table" then
+        if is_gui_entry_open(guis["UICtrlLighting"]) or is_gui_entry_open(guis["ui_ctrl_lighting"]) then
+            return true
+        end
+        if is_gui_entry_open(guis["UIAdvancedControls"]) then
+            return true
+        end
+    end
+
+    -- 5. ActorMenu (инвентарь / торговля / ремонт / обыск / диалог / КПК без чужой модалки поверх)
+    local am_tbl = rawget(_G, "ActorMenu")
+    local actor_menu_wnd = nil
+    local talk_wnd = nil
+    local pda_wnd = nil
+    if type(am_tbl) == "table" then
+        if type(am_tbl.get_actor_menu) == "function" then
+            local ok_am, w = pcall(am_tbl.get_actor_menu)
+            if ok_am and is_wnd_shown(w) then
+                return true
+            end
+            actor_menu_wnd = ok_am and w or nil
+        end
+        if type(am_tbl.get_talk_wnd) == "function" then
+            local ok_tw, w = pcall(am_tbl.get_talk_wnd)
+            if ok_tw and is_wnd_shown(w) then
+                return true
+            end
+            talk_wnd = ok_tw and w or nil
+        end
+        if type(am_tbl.get_menu_mode) == "function" then
+            local ok_mm, mode = pcall(am_tbl.get_menu_mode)
+            if ok_mm and type(mode) == "number" and mode > 0 then
+                return true
+            end
+        end
+        if type(am_tbl.get_pda_menu) == "function" then
+            local ok_pda, w = pcall(am_tbl.get_pda_menu)
+            if ok_pda and is_wnd_shown(w) then
+                pda_wnd = w
+            end
+        end
+    end
+    local pda_mod = rawget(_G, "gp_pda")
+    local pda_active = (not rawequal(pda_wnd, nil))
+    if not pda_active and type(pda_mod) == "table" and type(pda_mod.is_active) == "function" then
+        local ok_pa, act = pcall(pda_mod.is_active)
+        pda_active = ok_pa and (act == true) or false
+    end
+    if pda_active then
+        if has_foreign_modal_over_pda(pda_wnd, actor_menu_wnd, talk_wnd) then
+            return false
+        end
+        return true
+    end
+
+    return false
+end
+
+local function has_open_foreign_window()
+    if state.mock_foreign_open ~= nil then
+        return state.mock_foreign_open == true
+    end
+    -- Исключаем перехват ввода анимациями FDDA и сном без открытого UI
+    local fdda = rawget(_G, "liz_fdda_input_manager")
+    local fdda_locked = (type(fdda) == "table" and fdda.is_input_disabled == true)
+
+    local guis = rawget(_G, "_GUIs")
+    if type(guis) == "table" then
+        for k, v in pairs(guis) do
+            if not SUPPORTED_GUI_KEYS[tostring(k)] and is_gui_entry_open(v) then
+                return true
+            end
+        end
+    end
+
+    local recv = get_main_input_receiver()
+    if not rawequal(recv, nil) then
+        return true
+    end
+
+    if not fdda_locked then
+        local lvl = rawget(_G, "level")
+        if type(lvl) == "table" and type(lvl.is_input_captured) == "function" then
+            local ok_c, captured = pcall(lvl.is_input_captured)
+            if ok_c and captured == true then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function get_window_gate_state()
+    if is_supported_screen_open() then
+        return "supported"
+    end
+    if has_open_foreign_window() then
+        return "foreign"
+    end
+    return "world"
+end
+
+function is_unsupported_window_open()
+    return get_window_gate_state() == "foreign"
+end
+
+function can_toggle_mouse_mode()
+    return is_unsupported_window_open() == true
+end
+
+function set_mock_foreign_window_open(flag)
+    if flag == nil then
+        state.mock_foreign_open = nil
+    else
+        state.mock_foreign_open = (flag == true)
+    end
+    return state.mock_foreign_open
+end
+
+-- -----------------------------------------------------------------------------
+-- 3. Управление состоянием режима «мышь» и обратная связь
+-- -----------------------------------------------------------------------------
+
+function is_mouse_mode_active()
+    if _G.game and type(_G.game.gamepad_is_mouse_mode) == "function" then
+        local ok, active = pcall(_G.game.gamepad_is_mouse_mode)
+        if ok and type(active) == "boolean" then
+            state.active = active
+            return active
+        end
+    end
+    return state.active == true
+end
+
+function on_denied_toggle()
+    state.denied_count = (state.denied_count or 0) + 1
+    state.last_reason = "denied_supported_or_unavailable"
+    if _G.gp_inv_rework and type(_G.gp_inv_rework.deny) == "function" then
+        pcall(_G.gp_inv_rework.deny)
+    elseif _G.game and type(_G.game.gamepad_inv_focus_deny) == "function" then
+        pcall(_G.game.gamepad_inv_focus_deny)
+    end
+    trigger_haptic("deny", 0.35)
+    return false
+end
+
+function set_mouse_mode(enable, reason)
+    local want = (enable == true)
+    if want and not can_toggle_mouse_mode() then
+        return on_denied_toggle()
+    end
+    if _G.game and type(_G.game.gamepad_set_mouse_mode) == "function" then
+        pcall(_G.game.gamepad_set_mouse_mode, want)
+    end
+    state.active = want
+    state.last_reason = tostring(reason or (want and "manual_on" or "manual_off"))
+    trigger_haptic("ui_tick", 0.15)
+    return true
+end
+
+function toggle_mouse_mode(reason)
+    if is_mouse_mode_active() then
+        return set_mouse_mode(false, reason or "toggle_off")
+    end
+    local gate = get_window_gate_state()
+    if gate == "world" then
+        return false
+    end
+    if gate == "supported" then
+        return on_denied_toggle()
+    end
+    return set_mouse_mode(true, reason or "toggle_on")
+end
+
+function on_mouse_mode_changed(active, reason)
+    state.active = (active == true)
+    state.last_reason = tostring(reason or "cpp_sync")
+    return state.active
+end
+
+function get_status()
+    return {
+        active       = is_mouse_mode_active(),
+        denied_count = state.denied_count,
+        last_reason  = state.last_reason,
+        size_pct     = state.size_pct,
+        speed_pct    = state.speed_pct,
+        toggle_spec  = state.toggle_spec,
+        gate         = get_window_gate_state(),
+    }
+end
+
+-- -----------------------------------------------------------------------------
+-- 4. Настройки размера, скорости и кнопки + сохранение в profile.ltx
+-- -----------------------------------------------------------------------------
+
+function snap_pct(val, def_val)
+    local n = tonumber(val)
+    if not n then
+        return def_val or 100
+    end
+    local snapped = math.floor((n / 10) + 0.5) * 10
+    return clamp_num(snapped, 50, 200)
+end
+
+function size_pct_to_cvar(pct)
+    local p = snap_pct(pct, SIZE_DEF_PCT)
+    local raw = math.floor((p * 0.015) * 100 + 0.5) / 100
+    return clamp_num(raw, SIZE_MIN_CVAR, SIZE_MAX_CVAR)
+end
+
+function cvar_to_size_pct(cvar_val)
+    local v = tonumber(cvar_val)
+    if not v then
+        return SIZE_DEF_PCT
+    end
+    return snap_pct((v / SIZE_BASE_CVAR) * 100, SIZE_DEF_PCT)
+end
+
+function speed_pct_to_cvar(pct)
+    local p = snap_pct(pct, SPEED_DEF_PCT)
+    local raw = math.floor((p * 0.01) * 100 + 0.5) / 100
+    return clamp_num(raw, SPEED_MIN_CVAR, SPEED_MAX_CVAR)
+end
+
+function cvar_to_speed_pct(cvar_val)
+    local v = tonumber(cvar_val)
+    if not v then
+        return SPEED_DEF_PCT
+    end
+    return snap_pct((v / SPEED_BASE_CVAR) * 100, SPEED_DEF_PCT)
+end
+
+function normalize_toggle_spec(spec_str)
+    local raw = trim_str(tostring(spec_str or ""))
+    if raw == "" then
+        return DEFAULT_TOGGLE_SPEC
+    end
+    local ctrl = rawget(_G, "ui_gp_controls")
+    if type(ctrl) == "table"
+        and type(ctrl.parse_trigger_spec) == "function"
+        and type(ctrl.format_trigger_spec) == "function"
+    then
+        local trig = ctrl.parse_trigger_spec(raw)
+        if trig then
+            return ctrl.format_trigger_spec(trig, "MouseCursor")
+        end
+        return DEFAULT_TOGGLE_SPEC
+    end
+    local br = rawget(_G, "gp_bridge")
+    if type(br) == "table" and type(br.parse_binding_trigger_spec) == "function" then
+        local trig = br.parse_binding_trigger_spec(raw)
+        if trig and type(trig.raw) == "string" and trig.raw ~= "" then
+            return trig.raw
+        end
+    end
+    local low = string.lower(raw)
+    if low == "unbound" or low == "none" then
+        return "unbound"
+    end
+    for _, preset in ipairs(TOGGLE_PRESETS) do
+        if string.lower(preset) == low then
+            return preset
+        end
+    end
+    return DEFAULT_TOGGLE_SPEC
+end
+
+function set_profile_path_for_test(path)
+    custom_profile_path = path
+    return custom_profile_path
+end
+
+function resolve_profile_path()
+    if type(custom_profile_path) == "string" and custom_profile_path ~= "" then
+        return custom_profile_path
+    end
+    local ctrl = rawget(_G, "ui_gp_controls")
+    if type(ctrl) == "table" and type(ctrl.resolve_profile_ltx_path) == "function" then
+        local ok, p = pcall(ctrl.resolve_profile_ltx_path)
+        if ok and type(p) == "string" and p ~= "" then
+            return p
+        end
+    end
+    if type(_G.getFS) == "function" then
+        local ok_fs, fs = pcall(_G.getFS)
+        if ok_fs and not rawequal(fs, nil) then
+            local fn = safe_get(fs, "update_path")
+            if type(fn) == "function" then
+                local ok_p, p = pcall(fn, fs, "$app_data_root$", "gamepad\\profile.ltx")
+                if ok_p and type(p) == "string" and p ~= "" then
+                    return p
+                end
+            end
+        end
+    end
+    return "appdata\\gamepad\\profile.ltx"
+end
+
+function is_path_forbidden_for_write(path)
+    local raw = trim_str(tostring(path or ""))
+    if raw == "" then
+        return true, "empty_path"
+    end
+    local ctrl = rawget(_G, "ui_gp_controls")
+    if type(ctrl) == "table" and type(ctrl.is_path_forbidden_for_write) == "function" then
+        local ok, forb, reason = pcall(ctrl.is_path_forbidden_for_write, raw)
+        if ok then
+            return forb == true, reason
+        end
+    end
+    local norm = string.lower(raw):gsub("/", "\\")
+    if norm:find("d:\\" .. "stalker", 1, true) then
+        return true, "forbidden_stalker_root"
+    end
+    local base = norm:match("([^\\]+)$") or norm
+    if base == "user.ltx" or base == "axr_options.ltx" or base == "gamecontrollerdb.txt" then
+        return true, "forbidden_config_file"
+    end
+    return false, nil
+end
+
+function read_profile_raw(explicit_path)
+    local path = explicit_path or resolve_profile_path()
+    if type(io) ~= "table" or type(io.open) ~= "function" then
+        return nil, path
+    end
+    local f = io.open(path, "rb")
+    if not f then
+        return nil, path
+    end
+    local content = f:read("*a")
+    f:close()
+    return content, path
+end
+
+function parse_cursor_from_ltx(ltx_text)
+    local res = {
+        size_pct               = nil,
+        speed_pct              = nil,
+        cursor_toggle_spec     = nil,
+        menu_mouse_cursor_spec = nil,
+    }
+    if type(ltx_text) ~= "string" or ltx_text == "" then
+        return res
+    end
+    local cur_sec = nil
+    for raw_line in ltx_text:gmatch("[^\r\n]+") do
+        local line = trim_str(raw_line)
+        if line ~= "" and line:sub(1, 1) ~= ";" and line:sub(1, 1) ~= "#" and line:sub(1, 2) ~= "//" then
+            if line:sub(1, 1) == "[" then
+                local close_pos = line:find("]", 1, true)
+                cur_sec = close_pos and trim_str(line:sub(2, close_pos - 1)) or nil
+            elseif cur_sec == "cursor" or cur_sec == "context_MenuUI" then
+                local eq = line:find("=", 1, true)
+                if eq and eq > 1 then
+                    local key = trim_str(line:sub(1, eq - 1))
+                    local val = trim_str(line:sub(eq + 1))
+                    local semi = val:find(";", 1, true)
+                    if semi then val = trim_str(val:sub(1, semi - 1)) end
+                    local sl = val:find("//", 1, true)
+                    if sl then val = trim_str(val:sub(1, sl - 1)) end
+                    if cur_sec == "cursor" then
+                        if key == "size_pct" and tonumber(val) then
+                            res.size_pct = snap_pct(tonumber(val), SIZE_DEF_PCT)
+                        elseif key == "speed_pct" and tonumber(val) then
+                            res.speed_pct = snap_pct(tonumber(val), SPEED_DEF_PCT)
+                        elseif key == "toggle_spec" and val ~= "" then
+                            res.cursor_toggle_spec = normalize_toggle_spec(val)
+                        end
+                    elseif cur_sec == "context_MenuUI" then
+                        if key == "MouseCursor" and val ~= "" then
+                            res.menu_mouse_cursor_spec = normalize_toggle_spec(val)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return res
+end
+
+function upsert_ltx_section_keys(ltx_text, section_name, ordered_keys, key_values)
+    local out_lines = {}
+    local found_section = false
+    local in_target = false
+    local written = {}
+
+    local function append_missing()
+        for _, k in ipairs(ordered_keys) do
+            if not written[k] and key_values[k] ~= nil then
+                out_lines[#out_lines + 1] = k .. " = " .. tostring(key_values[k])
+                written[k] = true
+            end
+        end
+    end
+
+    if type(ltx_text) == "string" and ltx_text ~= "" then
+        local norm_text = ltx_text:gsub("\r\n", "\n"):gsub("\r", "\n")
+        for raw_line in (norm_text .. "\n"):gmatch("([^\n]*)\n") do
+            local trimmed = trim_str(raw_line)
+            if trimmed:sub(1, 1) == "[" then
+                local close_pos = trimmed:find("]", 1, true)
+                local sec = close_pos and trim_str(trimmed:sub(2, close_pos - 1)) or ""
+                if in_target and sec ~= section_name then
+                    append_missing()
+                    in_target = false
+                end
+                if sec == section_name then
+                    found_section = true
+                    in_target = true
+                end
+                out_lines[#out_lines + 1] = raw_line
+            elseif in_target and trimmed ~= "" and trimmed:sub(1, 1) ~= ";" and trimmed:sub(1, 1) ~= "#" and trimmed:sub(1, 2) ~= "//" then
+                local eq = trimmed:find("=", 1, true)
+                local key = (eq and eq > 1) and trim_str(trimmed:sub(1, eq - 1)) or nil
+                if key and key_values[key] ~= nil then
+                    if not written[key] then
+                        out_lines[#out_lines + 1] = key .. " = " .. tostring(key_values[key])
+                        written[key] = true
+                    end
+                else
+                    out_lines[#out_lines + 1] = raw_line
+                end
+            else
+                out_lines[#out_lines + 1] = raw_line
+            end
+        end
+        if in_target then
+            append_missing()
+        end
+        while #out_lines > 0 and out_lines[#out_lines] == "" do
+            table.remove(out_lines)
+        end
+    end
+
+    if not found_section then
+        if #out_lines > 0 then
+            out_lines[#out_lines + 1] = ""
+        end
+        out_lines[#out_lines + 1] = "[" .. section_name .. "]"
+        append_missing()
+    end
+
+    out_lines[#out_lines + 1] = ""
+    return table.concat(out_lines, "\n")
+end
+
+function write_profile_raw(new_text, explicit_path)
+    local path = explicit_path or resolve_profile_path()
+    local forbidden, reason = is_path_forbidden_for_write(path)
+    if forbidden then
+        return false, reason, path
+    end
+    if type(io) ~= "table" or type(io.open) ~= "function" then
+        return false, "io_unavailable", path
+    end
+    local f = io.open(path, "wb")
+    if not f then
+        return false, "open_failed", path
+    end
+    f:write(tostring(new_text or ""))
+    f:close()
+    return true, "ok", path
+end
+
+function sync_engine_cursor_cvars()
+    local sz_cvar = size_pct_to_cvar(state.size_pct)
+    local sp_cvar = speed_pct_to_cvar(state.speed_pct)
+    if _G.game then
+        if type(_G.game.gamepad_set_cursor_size) == "function" then
+            pcall(_G.game.gamepad_set_cursor_size, sz_cvar)
+        end
+        if type(_G.game.gamepad_set_cursor_speed) == "function" then
+            pcall(_G.game.gamepad_set_cursor_speed, sp_cvar)
+        end
+    end
+    exec_cmd(string.format("gp_cursor_size %.2f", sz_cvar))
+    exec_cmd(string.format("gp_cursor_speed %.2f", sp_cvar))
+    return sz_cvar, sp_cvar
+end
+
+local function notify_bindings_reloaded()
+    exec_cmd("gp_bind reload")
+    exec_cmd("gp_remap reload")
+    local br = rawget(_G, "gp_bridge")
+    if type(br) == "table" and type(br.reload_binding_profile) == "function" then
+        pcall(br.reload_binding_profile)
+    end
+    local ic = _G.gp_icons
+    if type(ic) == "table" and type(ic.refresh) == "function" then
+        pcall(ic.refresh)
+    end
+end
+
+function load_settings(explicit_path)
+    local raw_txt = read_profile_raw(explicit_path)
+    local parsed = parse_cursor_from_ltx(raw_txt)
+    if parsed.size_pct then
+        state.size_pct = parsed.size_pct
+    end
+    if parsed.speed_pct then
+        state.speed_pct = parsed.speed_pct
+    end
+    if parsed.menu_mouse_cursor_spec then
+        state.toggle_spec = parsed.menu_mouse_cursor_spec
+    elseif parsed.cursor_toggle_spec then
+        state.toggle_spec = parsed.cursor_toggle_spec
+    end
+    return state.size_pct, state.speed_pct, state.toggle_spec
+end
+
+function save_settings(sync_menu_binding, explicit_path)
+    local raw_txt, path = read_profile_raw(explicit_path)
+    local base_txt = raw_txt or ""
+    if sync_menu_binding then
+        base_txt = upsert_ltx_section_keys(
+            base_txt,
+            "context_MenuUI",
+            { "MouseCursor" },
+            { MouseCursor = state.toggle_spec }
+        )
+    end
+    local final_txt = upsert_ltx_section_keys(
+        base_txt,
+        "cursor",
+        { "size_pct", "speed_pct", "toggle_spec" },
+        {
+            size_pct    = tostring(state.size_pct),
+            speed_pct   = tostring(state.speed_pct),
+            toggle_spec = state.toggle_spec,
+        }
+    )
+    local ok, reason, out_path = write_profile_raw(final_txt, path)
+    if sync_menu_binding and ok then
+        notify_bindings_reloaded()
+    end
+    return ok, reason, out_path
+end
+
+function get_size_pct()
+    return state.size_pct
+end
+
+function set_size_pct(pct, save_now)
+    state.size_pct = snap_pct(pct, SIZE_DEF_PCT)
+    sync_engine_cursor_cvars()
+    if save_now ~= false then
+        save_settings(false)
+    end
+    return state.size_pct
+end
+
+function get_speed_pct()
+    return state.speed_pct
+end
+
+function set_speed_pct(pct, save_now)
+    state.speed_pct = snap_pct(pct, SPEED_DEF_PCT)
+    sync_engine_cursor_cvars()
+    if save_now ~= false then
+        save_settings(false)
+    end
+    return state.speed_pct
+end
+
+function get_toggle_spec()
+    local raw_txt = read_profile_raw()
+    if type(raw_txt) == "string" and raw_txt ~= "" then
+        local parsed = parse_cursor_from_ltx(raw_txt)
+        if parsed.menu_mouse_cursor_spec then
+            state.toggle_spec = parsed.menu_mouse_cursor_spec
+        elseif parsed.cursor_toggle_spec then
+            state.toggle_spec = parsed.cursor_toggle_spec
+        end
+    end
+    return state.toggle_spec
+end
+
+function set_toggle_spec(spec, save_now)
+    state.toggle_spec = normalize_toggle_spec(spec)
+    if save_now ~= false then
+        save_settings(true)
+    end
+    return state.toggle_spec
+end
+
+function apply_settings(size_pct, speed_pct, toggle_spec, explicit_path)
+    local raw_txt = read_profile_raw(explicit_path)
+    local parsed = parse_cursor_from_ltx(raw_txt)
+    state.size_pct = snap_pct(size_pct, state.size_pct)
+    state.speed_pct = snap_pct(speed_pct, state.speed_pct)
+    local new_spec = (toggle_spec ~= nil) and normalize_toggle_spec(toggle_spec) or state.toggle_spec
+    local prev_menu_spec = parsed.menu_mouse_cursor_spec or state.toggle_spec
+    local sync_menu = (toggle_spec ~= nil) and (new_spec ~= prev_menu_spec or parsed.menu_mouse_cursor_spec == nil)
+    state.toggle_spec = new_spec
+    sync_engine_cursor_cvars()
+    return save_settings(sync_menu, explicit_path)
+end
+
+-- -----------------------------------------------------------------------------
+-- 5. Подсказка внизу экрана значками и текстом под семейство геймпада
+-- -----------------------------------------------------------------------------
+
+local function resolve_family(pad_family)
+    local ctrl = rawget(_G, "ui_gp_controls")
+    if type(ctrl) == "table" and type(ctrl.resolve_pad_family) == "function" then
+        local ok, fam = pcall(ctrl.resolve_pad_family, pad_family)
+        if ok and type(fam) == "string" and fam ~= "" then
+            return fam
+        end
+    end
+    local low = string.lower(trim_str(tostring(pad_family or "xbox")))
+    if low == "playstation" or low == "ps" or low == "ps4" or low == "ps5" or low == "dualsense" then
+        return "playstation"
+    elseif low == "nintendo" or low == "switch" then
+        return "nintendo"
+    elseif low == "generic" or low == "dinput" then
+        return "generic"
+    end
+    return "xbox"
+end
+
+local function short_slot_label(slot_id, fam)
+    local sid = tostring(slot_id or "")
+    if sid == "LS" or sid == "RS" then
+        return sid
+    end
+    if sid == "Back" then
+        sid = "View"
+    elseif sid == "Start" then
+        sid = "Menu"
+    end
+    local ctrl = rawget(_G, "ui_gp_controls")
+    if type(ctrl) == "table" and type(ctrl.get_slot_display_name) == "function" then
+        local ok, disp = pcall(ctrl.get_slot_display_name, sid, fam)
+        if ok and type(disp) == "string" and disp ~= "" then
+            local clean = trim_str(disp:gsub("%s*%b()", ""))
+            if clean ~= "" then
+                return clean
+            end
+        end
+    end
+    return sid
+end
+
+local function format_toggle_trigger_short(spec_str, fam)
+    local norm = normalize_toggle_spec(spec_str)
+    if norm == "unbound" then
+        return nil, nil
+    end
+    local ctrl = rawget(_G, "ui_gp_controls")
+    local trig = nil
+    if type(ctrl) == "table" and type(ctrl.parse_trigger_spec) == "function" then
+        trig = ctrl.parse_trigger_spec(norm)
+    end
+    if not trig then
+        local low = string.lower(norm)
+        if low:sub(1, 7) == "button:" then
+            trig = { kind = "button", button = norm:sub(8) }
+        elseif low:sub(1, 5) == "hold:" then
+            local rest = norm:sub(6)
+            local c2 = rest:find(":", 1, true)
+            trig = { kind = "hold", button = c2 and rest:sub(1, c2 - 1) or rest }
+        elseif low:sub(1, 6) == "chord:" then
+            local rest = norm:sub(7)
+            local plus = rest:find("+", 1, true)
+            if plus then
+                trig = { kind = "chord", modifier = rest:sub(1, plus - 1), button = rest:sub(plus + 1) }
+            end
+        end
+    end
+    if not trig or trig.kind == "unbound" then
+        return nil, nil
+    end
+    if trig.kind == "button" then
+        return short_slot_label(trig.button, fam), SLOT_TO_GLYPH[trig.button]
+    elseif trig.kind == "hold" then
+        local hold_lbl = tr("ui_gp_cursor_hold_short", "Удерж.")
+        return hold_lbl .. " " .. short_slot_label(trig.button, fam), SLOT_TO_GLYPH[trig.button]
+    elseif trig.kind == "chord" then
+        return short_slot_label(trig.modifier, fam) .. "+" .. short_slot_label(trig.button, fam), SLOT_TO_GLYPH[trig.button]
+    end
+    return nil, nil
+end
+
+local function resolve_icon_info(glyph, fam)
+    local ic = _G.gp_icons
+    local set_code = (fam == "playstation" and "ps") or fam
+    local tex = "ui_gp_white_" .. set_code .. "_" .. tostring(glyph)
+    local w, h = 28, 28
+    if type(ic) == "table" then
+        if type(ic.tex) == "function" then
+            local ok_t, t = pcall(ic.tex, glyph, "round", fam)
+            if ok_t and type(t) == "string" and t ~= "" then
+                tex = t
+            end
+        end
+        if type(ic.dims) == "function" then
+            local ok_d, _, _, dw, dh = pcall(ic.dims, glyph, "round", fam)
+            if ok_d and tonumber(dw) and tonumber(dh) and dw > 0 and dh > 0 then
+                w, h = dw, dh
+            end
+        end
+    end
+    return tex, w, h
+end
+
+function get_hint_items(pad_family)
+    local fam = resolve_family(pad_family)
+    local cur_spec = get_toggle_spec()
+    local b_lbl = short_slot_label("B", fam)
+    local tog_lbl, tog_glyph = format_toggle_trigger_short(cur_spec, fam)
+    local exit_btn_lbl = b_lbl
+    if tog_lbl and tog_lbl ~= "" and tog_lbl ~= b_lbl then
+        exit_btn_lbl = b_lbl .. " / " .. tog_lbl
+    end
+
+    local ls_tex, ls_w, ls_h = resolve_icon_info("ls", fam)
+    local a_tex, a_w, a_h    = resolve_icon_info("south", fam)
+    local x_tex, x_w, x_h    = resolve_icon_info("west", fam)
+    local rs_tex, rs_w, rs_h = resolve_icon_info("rs", fam)
+    local b_tex, b_w, b_h    = resolve_icon_info("east", fam)
+    local tog_tex = tog_glyph and select(1, resolve_icon_info(tog_glyph, fam)) or nil
+
+    return {
+        {
+            id          = "move",
+            slot        = "LS",
+            glyph       = "ls",
+            tex         = ls_tex,
+            w           = ls_w,
+            h           = ls_h,
+            button_text = short_slot_label("LS", fam),
+            label_id    = "ui_gp_cursor_hint_move",
+            label       = tr("ui_gp_cursor_hint_move", "Курсор"),
+        },
+        {
+            id          = "lclick",
+            slot        = "A",
+            glyph       = "south",
+            tex         = a_tex,
+            w           = a_w,
+            h           = a_h,
+            button_text = short_slot_label("A", fam),
+            label_id    = "ui_gp_cursor_hint_lclick",
+            label       = tr("ui_gp_cursor_hint_lclick", "ЛКМ"),
+        },
+        {
+            id          = "rclick",
+            slot        = "X",
+            glyph       = "west",
+            tex         = x_tex,
+            w           = x_w,
+            h           = x_h,
+            button_text = short_slot_label("X", fam),
+            label_id    = "ui_gp_cursor_hint_rclick",
+            label       = tr("ui_gp_cursor_hint_rclick", "ПКМ"),
+        },
+        {
+            id          = "scroll",
+            slot        = "RS",
+            glyph       = "rs",
+            tex         = rs_tex,
+            w           = rs_w,
+            h           = rs_h,
+            button_text = short_slot_label("RS", fam),
+            label_id    = "ui_gp_cursor_hint_scroll",
+            label       = tr("ui_gp_cursor_hint_scroll", "Прокрутка"),
+        },
+        {
+            id           = "exit",
+            slot         = "B",
+            glyph        = "east",
+            tex          = b_tex,
+            w            = b_w,
+            h            = b_h,
+            toggle_spec  = cur_spec,
+            toggle_glyph = tog_glyph,
+            toggle_tex   = tog_tex,
+            button_text  = exit_btn_lbl,
+            label_id     = "ui_gp_cursor_hint_exit",
+            label        = tr("ui_gp_cursor_hint_exit", "Выйти"),
+        },
+    }
+end
+
+function get_hint_bar_text(pad_family)
+    local items = get_hint_items(pad_family)
+    local parts = {}
+    for i = 1, #items do
+        local it = items[i]
+        parts[i] = "[" .. tostring(it.button_text) .. "] " .. tostring(it.label)
+    end
+    return table.concat(parts, "   ")
+end
+
+-- -----------------------------------------------------------------------------
+-- 6. Жизненный цикл, колбэки игры и самопроверка
+-- -----------------------------------------------------------------------------
+
+function on_actor_first_update()
+    load_settings()
+    sync_engine_cursor_cvars()
+end
+
+function on_gui_show()
+    return is_unsupported_window_open()
+end
+
+function on_gui_hide()
+    if state.active and not is_unsupported_window_open() then
+        set_mouse_mode(false, "gui_hide")
+    end
+end
+
+function reset_for_test()
+    custom_profile_path     = nil
+    state.active            = false
+    state.denied_count      = 0
+    state.last_reason       = "init"
+    state.size_pct          = SIZE_DEF_PCT
+    state.speed_pct         = SPEED_DEF_PCT
+    state.toggle_spec       = DEFAULT_TOGGLE_SPEC
+    state.mock_foreign_open = nil
+    return true
+end
+
+function selftest()
+    assert(size_pct_to_cvar(50) == 0.75, "size 50% -> 0.75")
+    assert(size_pct_to_cvar(100) == 1.50, "size 100% -> 1.50")
+    assert(size_pct_to_cvar(200) == 3.00, "size 200% -> 3.00")
+    assert(cvar_to_size_pct(1.50) == 100, "cvar 1.50 -> 100%")
+    assert(speed_pct_to_cvar(50) == 0.50, "speed 50% -> 0.50")
+    assert(speed_pct_to_cvar(100) == 1.00, "speed 100% -> 1.00")
+    assert(speed_pct_to_cvar(200) == 2.00, "speed 200% -> 2.00")
+    assert(cvar_to_speed_pct(1.00) == 100, "cvar 1.00 -> 100%")
+    assert(normalize_toggle_spec("button:R3") == "button:R3", "normalize button:R3")
+    local bar = get_hint_bar_text("xbox")
+    assert(type(bar) == "string" and bar:find("%[LS%]") ~= nil, "hint bar LS")
+    return "PASS"
+end
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    pcall(load_settings)
+    if type(_G.RegisterScriptCallback) == "function" then
+        _G.RegisterScriptCallback("actor_on_first_update", on_actor_first_update)
+        _G.RegisterScriptCallback("GUI_on_show", on_gui_show)
+        _G.RegisterScriptCallback("GUI_on_hide", on_gui_hide)
+    end
+end

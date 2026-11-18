@@ -1,0 +1,320 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- gp_menu_dialogs.script — W5-MENU (docs/ui/concept/00-windows-concept.md §4.1, §4.8, §4.9, §10):
+-- 1. В12 [решено без Миши]: «Оригиналы» в главном меню при активном геймпаде показывает подтверждение
+--    «Открыть сайт в браузере? Игра свернётся.» (короткий X = Да, B = Нет) вместо мгновенного сворачивания.
+-- 2. В13: автозаполнение поля имени сохранения (<Локация> - дд-мм-гггг чч-мм без запрещённых в ui_save_dialog точек)
+--    при открытии UISaveDialog с геймпадом, если поле пустое.
+-- 3. В7: аварийное окно LuaFatalErrorUI (callbacks_gameobject.script, message_box_lua_fatal_error) — сброс зажатых
+--    кнопок при открытии/закрытии и начальная постановка фокуса на безопасную среднюю кнопку «Перезагрузить».
+-- 4. В6 [решено без Миши]: пробуждение у костра Soulslike (soulslike.wakeup_callback и снятие инфопоршня
+--    actor_is_sleeping) блокирует зажатые кнопки до отпускания, чтобы удержание при пробуждении не дало выстрел/прыжок.
+-- Совместим с чистой Anomaly 1.5.3 (PORT-A, инвариант P23): все обращения к GAMMA-скриптам идут через rawget + pcall.
+
+local installed = {}
+local state = {
+    was_sleeping = false,
+    fatal_active = false,
+    wakeup_blocks = 0,
+    fatal_opens = 0,
+}
+
+local CONFIRM_RU = "Открыть сайт в браузере? Игра свернётся."
+local CONFIRM_EN = "Open website in browser? The game will minimize."
+local ZONE_RU = "Зона"
+local ZONE_EN = "Zone"
+
+function is_gamepad()
+    if game and game.is_gamepad_active_source and game.is_gamepad_active_source() then
+        return true
+    end
+    local br = rawget(_G, "gp_bridge")
+    return (br and br.is_gamepad_active and br.is_gamepad_active()) and true or false
+end
+
+function is_russian()
+    local yes = game and game.translate_string and game.translate_string("Btn_Yes") or ""
+    if type(yes) == "string" and yes:find("[\192-\255]") ~= nil then
+        return true
+    end
+    local w = game and game.translate_string and game.translate_string("ui_total_weight") or ""
+    return type(w) == "string" and w:find("[\192-\255]") ~= nil
+end
+
+function consume_held()
+    if game and game.consume_all_gamepad_buttons then
+        pcall(game.consume_all_gamepad_buttons)
+        return true
+    end
+    return false
+end
+
+function originals_confirm_text()
+    if game and game.translate_string then
+        local tr = game.translate_string("st_gp_open_site_confirm")
+        if type(tr) == "string" and tr ~= "" and tr ~= "st_gp_open_site_confirm" then
+            return tr
+        end
+    end
+    return is_russian() and CONFIRM_RU or CONFIRM_EN
+end
+
+-- ui_save_dialog.script:176 считает точку '.' и спецсимволы недопустимыми (message_box_illegal_file_name).
+function sanitize_save_part(str)
+    if type(str) ~= "string" then return "" end
+    local clean = str:gsub("[/\\%.%%%?%*:%|\"<>%^%(%)%[%]']", " ")
+    clean = clean:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    return clean
+end
+
+function default_save_name()
+    local loc = ""
+    if level and level.present and level.present() and level.name then
+        local ok, raw_name = pcall(level.name)
+        if ok and type(raw_name) == "string" and raw_name ~= "" then
+            local tr = (game and game.translate_string) and game.translate_string(raw_name) or raw_name
+            loc = sanitize_save_part(tr)
+        end
+    end
+    if loc == "" then
+        loc = is_russian() and ZONE_RU or ZONE_EN
+    end
+
+    local stamp = ""
+    if level and level.present and level.present() and game and game.get_game_time then
+        local ok, gt = pcall(game.get_game_time)
+        if ok and gt and gt.get then
+            local ok2, y, m, d, h, min = pcall(gt.get, gt, 0, 0, 0, 0, 0, 0, 0)
+            if ok2 and tonumber(y) and tonumber(m) and tonumber(d) then
+                stamp = string.format("%02d-%02d-%04d %02d-%02d", d, m, y, tonumber(h) or 0, tonumber(min) or 0)
+            end
+        end
+    end
+    if stamp == "" and os and os.date then
+        local ok, dt = pcall(os.date, "%d-%m-%Y %H-%M")
+        if ok and type(dt) == "string" and dt ~= "" then
+            stamp = sanitize_save_part(dt)
+        end
+    end
+    if stamp == "" then
+        stamp = "01-05-2018 12-00"
+    end
+    return loc .. " - " .. stamp
+end
+
+function autofill_save_dialog(dlg)
+    if not (dlg and dlg.editbox and is_gamepad()) then return false end
+    local ok, cur = pcall(dlg.editbox.GetText, dlg.editbox)
+    if not ok or (type(cur) == "string" and cur:match("%S")) then
+        return false
+    end
+    if dlg.editbox.SetText then
+        pcall(dlg.editbox.SetText, dlg.editbox, default_save_name())
+        return true
+    end
+    return false
+end
+
+function on_originals_clicked(menu, base_fn)
+    if not is_gamepad() or not (menu and menu.message_box and menu.message_box.InitMessageBox and menu.message_box.ShowDialog) then
+        if base_fn then return base_fn(menu) end
+        if game and game.open_originals_link then game.open_originals_link() end
+        return false
+    end
+    menu._gp_originals_ask = true
+    menu.mbox_mode = 0
+    menu.message_box:InitMessageBox("message_box_yes_no")
+    if menu.message_box.SetText then
+        menu.message_box:SetText(originals_confirm_text())
+    end
+    menu.message_box:ShowDialog(true)
+    return true
+end
+
+function on_main_menu_yes(menu, base_fn)
+    if menu and menu._gp_originals_ask then
+        menu._gp_originals_ask = nil
+        menu.mbox_mode = 0
+        if game and game.open_originals_link then
+            game.open_originals_link()
+        end
+        return true
+    end
+    if base_fn then base_fn(menu) end
+    return false
+end
+
+function on_main_menu_no(menu, base_fn)
+    if menu and menu._gp_originals_ask then
+        menu._gp_originals_ask = nil
+        menu.mbox_mode = 0
+        return true
+    end
+    if base_fn then base_fn(menu) end
+    return false
+end
+
+function focus_fatal_reload_button(wnd)
+    if not is_gamepad() then return false end
+    -- В message_box_lua_fatal_error окно стоит на (240, 256), а безопасная средняя кнопка button_yes
+    -- («Перезагрузить сохранение») имеет x=207, y=195, width=120, height=26 -> центр (507, 464).
+    local cx, cy = 507, 464
+    local mb = wnd and wnd.message_box
+    if mb and mb.GetWndPos then
+        local ok, pos = pcall(mb.GetWndPos, mb)
+        if ok and pos and pos.x and pos.y and (pos.x > 0 or pos.y > 0) then
+            cx = pos.x + 207 + 60
+            cy = pos.y + 195 + 13
+        end
+    end
+    if game and game.gamepad_set_cursor_pos then
+        pcall(game.gamepad_set_cursor_pos, cx, cy)
+        return true
+    end
+    if SetCursorPosition and vector2 then
+        pcall(SetCursorPosition, vector2():set(cx, cy))
+        return true
+    end
+    return false
+end
+
+function on_fatal_error()
+    -- REV-NIGHT: класс LuaFatalErrorUI живёт в callbacks_gameobject и создаётся сразу после
+    -- SendScriptCallback("on_luabind_fatal_error") — обёртки ставим до появления экземпляра.
+    install()
+    state.fatal_active = true
+    state.fatal_opens = state.fatal_opens + 1
+    consume_held()
+end
+
+function on_fatal_ui_show(wnd, base_fn)
+    state.fatal_active = true
+    consume_held()
+    if base_fn then base_fn(wnd) end
+    focus_fatal_reload_button(wnd)
+end
+
+function on_fatal_ui_close(wnd, base_fn)
+    state.fatal_active = false
+    consume_held()
+    if base_fn then base_fn(wnd) end
+end
+
+local function on_soulslike_wakeup(base_fn, ...)
+    state.was_sleeping = false
+    state.wakeup_blocks = state.wakeup_blocks + 1
+    consume_held()
+    if base_fn then
+        local ok, err = pcall(base_fn, ...)
+        consume_held()
+        if not ok then error(err, 0) end
+        return
+    end
+end
+
+local function actor_sleeping_now()
+    local actor = db and db.actor
+    if not (actor and actor.has_info) then return false end
+    local ok, sleeping = pcall(actor.has_info, actor, "actor_is_sleeping")
+    return ok and sleeping == true
+end
+
+function actor_on_update()
+    install()
+    local sleeping = actor_sleeping_now()
+    if state.was_sleeping and not sleeping then
+        state.wakeup_blocks = state.wakeup_blocks + 1
+        consume_held()
+    end
+    state.was_sleeping = sleeping
+end
+
+function get_state()
+    return state
+end
+
+function install()
+    local mm_mod = rawget(_G, "ui_main_menu")
+    local mm_cls = mm_mod and mm_mod.main_menu
+    if mm_cls and not rawequal(installed.main_menu, mm_cls) then
+        installed.main_menu = mm_cls
+        local orig_click = mm_cls.OnButton_originals_clicked
+        mm_cls.OnButton_originals_clicked = function(self)
+            return on_originals_clicked(self, orig_click)
+        end
+        local orig_yes = mm_cls.OnMsgYes
+        mm_cls.OnMsgYes = function(self)
+            return on_main_menu_yes(self, orig_yes)
+        end
+        local orig_no = mm_cls.OnMsgNo
+        mm_cls.OnMsgNo = function(self)
+            return on_main_menu_no(self, orig_no)
+        end
+    end
+
+    local save_mod = rawget(_G, "ui_save_dialog")
+    local save_cls = save_mod and save_mod.UISaveDialog
+    if save_cls and not rawequal(installed.save_dlg, save_cls) then
+        installed.save_dlg = save_cls
+        local orig_fill = save_cls.FillList
+        save_cls.FillList = function(self, ...)
+            if orig_fill then orig_fill(self, ...) end
+            autofill_save_dialog(self)
+        end
+    end
+
+    -- REV-NIGHT: в Anomaly класс объявлен в модуле callbacks_gameobject (class "LuaFatalErrorUI"),
+    -- поэтому в _G его нет; берём из модуля, глобальное имя оставлено для совместимости.
+    local cg_mod = rawget(_G, "callbacks_gameobject")
+    local fatal_cls = rawget(_G, "LuaFatalErrorUI") or (type(cg_mod) == "table" and rawget(cg_mod, "LuaFatalErrorUI")) or nil
+    if fatal_cls and not rawequal(installed.fatal_ui, fatal_cls) then
+        installed.fatal_ui = fatal_cls
+        local orig_show = fatal_cls.Show
+        fatal_cls.Show = function(self)
+            return on_fatal_ui_show(self, orig_show)
+        end
+        for _, method in ipairs({ "OnMsgYes", "OnMsgNo", "OnMsgCopy" }) do
+            local orig_m = fatal_cls[method]
+            if orig_m then
+                fatal_cls[method] = function(self)
+                    return on_fatal_ui_close(self, orig_m)
+                end
+            end
+        end
+    end
+
+    local sl = rawget(_G, "soulslike")
+    if type(sl) == "table" and type(sl.wakeup_callback) == "function" and not rawequal(installed.soulslike_fn, sl.wakeup_callback) then
+        local orig_wakeup = sl.wakeup_callback
+        local wrapped = function(...)
+            return on_soulslike_wakeup(orig_wakeup, ...)
+        end
+        sl.wakeup_callback = wrapped
+        installed.soulslike_fn = wrapped
+    end
+
+    return installed.main_menu ~= nil
+end
+
+function main_menu_on_init()
+    install()
+end
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    if RegisterScriptCallback then
+        RegisterScriptCallback("main_menu_on_init", main_menu_on_init)
+        RegisterScriptCallback("actor_on_update", actor_on_update)
+        -- ANOM-COMPAT: modded-exes callback; on clean Anomaly vanilla axr_main has no such intercept.
+        if gp_compat and gp_compat.register_optional_callback then
+            gp_compat.register_optional_callback("on_luabind_fatal_error", on_fatal_error)
+        else
+            pcall(RegisterScriptCallback, "on_luabind_fatal_error", on_fatal_error)
+        end
+    end
+    -- REV-NIGHT: main_menu:InitCallBacks() запоминает OnButton_originals_clicked/OnMsgYes/OnMsgNo
+    -- до main_menu_on_init, поэтому класс надо обернуть до первого меню: подгружаем модуль заранее.
+    if rawget(_G, "ui_main_menu") == nil then
+        pcall(function() return _G["ui_main_menu"] end)
+    end
+    install()
+end

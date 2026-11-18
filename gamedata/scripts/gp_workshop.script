@@ -1,0 +1,2956 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- gp_workshop.script — WS1 (Миша 2026-11-13): верстак (ui_workshop.UIWorkshop: «Состояние», «Ремонт», «Модификации»,
+-- «Создание») и окошко переносного верстака (ui_furniture_workshop.UIFurnitureWorkshop) под геймпад.
+-- ТЗ: docs/ui/live-layout/workshop-gamepad-final.md (разведка и ответы Миши — workshop-gamepad-spec.md).
+--
+-- Как устроено:
+--   * Рамка вместо курсора (как в инвентаре): gp_bridge.inv_focus_frame_active() -> focus_frame_active().
+--     Движок спрашивает цель под курсором (query) и прыжок LS/крестовины (snap); невидимый курсор стоит в
+--     центре цели, поэтому родное наведение (подсказки, highlight_btn деталей) работает само.
+--   * Кнопки A, B, X, Y, LB, RB, View, LT, RT в окне движок отдаёт сюда (GamepadContextDispatcher::
+--     StepWorkshopButtons -> gp_bridge.ws_button -> ws_button(name, phase)). Ответ на "press": "" — обычный
+--     путь движка (A — клик мыши в точке рамки, B — Escape); "used" — кнопка съедена; "hold:<пауза>:<кольцо>:
+--     x1,y1,x2,y2" — ждать удержания, кольцо в значке кнопки. "release"/"hold" — отпущена до кольца / кольцо полное.
+--   * Действия (клики, смена вкладки, ремонт…) выполняются отложенно в Update окна (CRASH-REPAIR): очередь
+--     state.queue, хуки Update классов окна (install_hooks).
+--   * Родная логика не переписывается: зовутся те же обработчики, что у мыши (UICellContainer:On_Mouse1,
+--     ListSpareParts, OnButton_*, Repair/Upgrade/Craft, list_menu + ListItems) — работают все патчи верстака.
+
+ENABLED = true
+STOP_MS = 150             -- «движение = клик»: рамка стоит на цели столько мс (ТЗ §1 п. 12, уточнить на стенде)
+HOLD_PAUSE = 300          -- удержание: пауза, затем кольцо (ТЗ §1 п. 4)
+HOLD_FILL = 700
+local FIELD_HOLD_FILL = 400
+PICKUP_FILL = 1500        -- «Взять» в окошке: 0,3 + 1,5 с (ТЗ §9)
+RETURN_MS = 3000          -- ждать сброса окна после ремонта/модификации не дольше
+SPARE_RETURN_MS = 1500
+REOPEN_GAP_MS = 400       -- Update окна не шёл дольше — окно открыто заново
+DESC_SCROLL_SPEED = 260   -- как gp_inv_rework (ед. UI в секунду при полном наклоне RS)
+TREE_SCROLL_SPEED = 520
+LIST_SCROLL_SPEED = 520
+SCROLL_MARGIN = 2
+
+TABS = { "state", "repair", "upgrade", "craft" }
+TAB_DLG = { state = "dlg_state", repair = "dlg_repair", upgrade = "dlg_upgrade", craft = "dlg_craft" }
+TAB_OPEN = { state = "OnButton_state", repair = "OnButton_repair", upgrade = "OnButton_upgrade", craft = "OnButton_craft" }
+FIRST_FIELD = { state = "kits", repair = "inv", upgrade = "inv", craft = "sec" }
+-- где рамка на цели = клик после остановки
+CLICK_FIELDS = { craft = { sec = true, rec = true } }
+-- B — шаг назад: поле -> поле (нет записи — выход в игру)
+BACK = { repair = { spares = "parts", parts = "inv" }, upgrade = { tree = "inv" },
+    craft = { comp = "rec", rec = "sec", ins = "sec", flt = "sec" } }
+-- детали ремонта по кругу (ТЗ §6): 6 верх, 1 слева вверху, 2 слева внизу, 3 низ, 4 справа внизу, 5 справа вверху
+PART_NAV = {
+    [6] = { [3] = 1, [4] = 5, [2] = 3 },
+    [1] = { [1] = 6, [2] = 2, [4] = 6 },
+    [2] = { [1] = 1, [2] = 3, [4] = 3 },
+    [3] = { [3] = 2, [4] = 4, [1] = 6 },
+    [4] = { [3] = 3, [1] = 5 },
+    [5] = { [2] = 4, [3] = 6, [1] = 6 },
+}
+ACTION = { repair = { btn = "btn_repair", fn = "Repair", text = "ui_mm_repair" },
+    upgrade = { btn = "btn_upgrade", fn = "Upgrade", text = "ui_mm_upgrade" },
+    craft = { btn = "btn_craft", fn = "Craft", text = "ui_mm_craft" } }
+FURN = {
+    { id = "f:use", btn = "btn_use_workshop", glyph = "X", text = "st_use_workshop" },
+    { id = "f:stash", btn = "btn_access_stash", glyph = "Y", text = "st_access_stash" },
+    { id = "f:pickup", btn = "btn_pickup", glyph = "B", text = "st_pickup" },
+    { id = "f:close", btn = "btn_close", glyph = "B", text = "st_close" },
+}
+SHOULDER = { LB = true, RB = true, LT = true, RT = true }
+CIRCLE_K = 1.5            -- круг значка / высота заглавной подписи (ТЗ §4, В8: провайдер gp_icons Dot Marks)
+RING_SCALE_K = 0.945      -- UICursor::RenderHoldIconRing рисует внешний радиус на 0.945 от половины меньшей стороны
+MELTER_REINIT_MS = 600    -- окно ожидания отложенного перескана melter_reinit (0,1 с в nearby_stashes)
+-- нижняя плашка (ТЗ §3): ед. UI экрана (dialog 124,50 + макет x 49…727, y 678…706)
+STRIP = { x1 = 173, y1 = 728, x2 = 851, y2 = 756 }
+STRIP_ICON_H = 18         -- как полоса меню паузы (ui_gp_pause ICON_H), ед. UI по высоте
+STRIP_GAP_H = 5           -- значок -> подпись, ед. UI по высоте (пересчёт в пиксели — круглые отступы на 21:9)
+STRIP_SPACE_H = 2         -- значок -> значок (LB RB)
+STRIP_STEP_PX = 41        -- между пунктами: 32 px макета x 1,28 = пиксели экрана высотой 1080
+DIM_ALPHA = 110           -- значок на серой (недоступной) кнопке — бледный (ТЗ §4)
+
+LABELS_RU = {
+    select = "Выбрать", parts = "Запчасти", place = "Поставить", mark = "Отметить", layer = "Слой",
+    instructions = "Инструкции", back = "Назад", exit = "Выход",
+    toggle = "Переключить", search = "Поиск", clear = "Сбросить",
+    avail_off = "[ ] Только доступные", avail_on = "[x] Только доступные",
+    search_ph = "Поиск...", search_fmt = "Поиск: %s",
+    no_recipes = "Нет подходящих рецептов",
+    loot_all_hold = "Взять всё (удерж.)",
+    loot_all_tap = "Взять всё",
+    loot_one_hold = "Взять выбранное (удерж.)",
+    melter_last = "Последний заряд плавильни — слияние недоступно",
+    melter_warn2 = "Внимание: после слияния останется 1 заряд",
+}
+LABELS_EN = {
+    select = "Select", parts = "Spare parts", place = "Install", mark = "Mark", layer = "Layer",
+    instructions = "Instructions", back = "Back", exit = "Exit",
+    toggle = "Toggle", search = "Search", clear = "Clear",
+    avail_off = "[ ] Available only", avail_on = "[x] Available only",
+    search_ph = "Search...", search_fmt = "Search: %s",
+    no_recipes = "No matching recipes",
+    loot_all_hold = "Loot all (hold)",
+    loot_all_tap = "Loot all",
+    loot_one_hold = "Loot selected (hold)",
+    melter_last = "Last melter charge — fusion unavailable",
+    melter_warn2 = "Warning: 1 charge left after fusion",
+}
+
+state = {
+    layer = "mod", mem = {}, queue = {}, gui = nil, tab = nil, place = false, last_tick = nil,
+    stop_id = nil, stop_at = 0, stop_done = false, cur_id = nil, cur_field = nil,
+    spare_from = nil, spare_ret = nil, ret = nil, hold = nil, tree_acc = nil,
+    craft_only_avail = false, craft_search = "", craft_cat = nil, flt_from = nil,
+    furn = nil, furn_place = false, last_ftick = nil, fqueue = {},
+    clicks = 0, denies = 0, actions = 0,
+}
+
+-- ---------------------------------------------------------------------------
+-- Общие помощники
+-- ---------------------------------------------------------------------------
+
+function now()
+    local d = device and device()
+    if not d then return 0 end
+    local ok, t = pcall(d.time_continual, d)
+    return ok and tonumber(t) or 0
+end
+
+function shown(w)
+    if not w or not w.IsShown then return false end
+    local ok, res = pcall(w.IsShown, w)
+    return ok and res == true
+end
+
+function enabled(w)
+    if not w or not w.IsEnabled then return false end
+    local ok, res = pcall(w.IsEnabled, w)
+    return ok and res == true
+end
+
+-- Абсолютный прямоугольник окна (ед. UI) без проверки видимости: ячейки вне прокрутки тоже нужны для ходьбы.
+function abs_rect(w)
+    if not w or not w.GetAbsoluteRect or not Frect then return nil end
+    local r = Frect()
+    local ok = pcall(w.GetAbsoluteRect, w, r)
+    if ok and r and r.x1 and r.x2 and (r.x2 - r.x1) > 1 and (r.y2 - r.y1) > 1 then
+        return { x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2 }
+    end
+    return nil
+end
+
+function center(r)
+    return (r.x1 + r.x2) * 0.5, (r.y1 + r.y2) * 0.5
+end
+
+function contains(r, x, y)
+    return r ~= nil and x >= r.x1 and x <= r.x2 and y >= r.y1 and y <= r.y2
+end
+
+-- Прямоугольник целиком в окне прокрутки v (нет окна — виден)
+function inside(r, v)
+    if not v then return true end
+    return r.y1 >= v.y1 - 1 and r.y2 <= v.y2 + 1 and r.x1 >= v.x1 - 1 and r.x2 <= v.x2 + 1
+end
+
+function cursor_xy()
+    if GetCursorPosition then
+        local ok, p = pcall(GetCursorPosition)
+        if ok and p then return p.x or 0, p.y or 0 end
+    end
+    return 0, 0
+end
+
+function move_cursor(x, y)
+    if SetCursorPosition and vector2 then
+        pcall(function() SetCursorPosition(vector2():set(x, y)) end)
+    end
+end
+
+function is_gamepad()
+    local b = _G.gp_bridge
+    if b and b.is_gamepad_active then
+        local ok, res = pcall(b.is_gamepad_active)
+        return ok and res == true
+    end
+    return false
+end
+
+function icons()
+    local m = _G.gp_icons
+    return type(m) == "table" and m or nil
+end
+
+function hints_shown()
+    if not ENABLED or not is_gamepad() then return false end
+    local ic = icons()
+    if ic and ic.hints_visible then
+        return ic.hints_visible("menu") == true
+    end
+    return true
+end
+
+function lower_text(s)
+    if type(s) ~= "string" or s == "" then return "" end
+    local n = #s
+    local out = {}
+    local i = 1
+    while i <= n do
+        local b = s:byte(i)
+        local b2 = (i < n) and s:byte(i + 1) or nil
+        if b >= 65 and b <= 90 then
+            out[#out + 1] = string.char(b + 32)
+            i = i + 1
+        elseif (b == 208 or b == 209) and b2 and b2 >= 128 and b2 <= 191 then
+            if b == 208 and b2 == 129 then
+                out[#out + 1] = string.char(209, 145)
+            elseif b == 208 and b2 >= 144 and b2 <= 159 then
+                out[#out + 1] = string.char(208, b2 + 32)
+            elseif b == 208 and b2 >= 160 and b2 <= 175 then
+                out[#out + 1] = string.char(209, b2 - 32)
+            else
+                out[#out + 1] = s:sub(i, i + 1)
+            end
+            i = i + 2
+        elseif b == 168 then
+            out[#out + 1] = string.char(184)
+            i = i + 1
+        elseif b >= 192 and b <= 223 then
+            out[#out + 1] = string.char(b + 32)
+            i = i + 1
+        else
+            out[#out + 1] = string.char(b)
+            i = i + 1
+        end
+    end
+    return table.concat(out)
+end
+
+function rw()
+    local m = _G.gp_inv_rework
+    return type(m) == "table" and m or nil
+end
+
+-- Недоступное действие — тряска рамки и лёгкая вибрация (ТЗ §1 п. 3)
+function deny()
+    state.denies = state.denies + 1
+    local m = rw()
+    if m and m.deny then pcall(m.deny) end
+    return "used"
+end
+
+function is_russian()
+    local s = game and game.translate_string and game.translate_string("ui_total_weight") or ""
+    return type(s) == "string" and s:find("[\192-\255]") ~= nil
+end
+
+function label(key)
+    local id = "ui_gp_ws_lbl_" .. tostring(key or "")
+    if LABELS_EN[key] and game and game.translate_string then
+        local ok, s = pcall(game.translate_string, id)
+        local w_ok, w_s = pcall(game.translate_string, "ui_total_weight")
+        if ok and type(s) == "string" and s ~= "" and s ~= id and (not w_ok or s ~= w_s) then
+            return s
+        end
+    end
+    local t = is_russian() and LABELS_RU or LABELS_EN
+    return t[key] or key
+end
+
+function tr(id)
+    return game and game.translate_string and game.translate_string(id) or id
+end
+
+-- Сверяем объект с верхним окном движка. На старой сборке используем Lua-стек.
+function top_ok(name, wnd)
+    if game and game.gamepad_is_top_dialog then
+        return game.gamepad_is_top_dialog(wnd)
+    end
+    local st = rawget(_G, "_UI_stack")
+    if type(st) ~= "table" or #st == 0 then return true end
+    return st[#st] == name
+end
+
+function ws_gui()
+    local m = rawget(_G, "ui_workshop")
+    local g = type(m) == "table" and m.GUI or nil
+    if g and shown(g) then return g end
+    return nil
+end
+
+function furn_gui()
+    local m = rawget(_G, "ui_furniture_workshop")
+    local g = type(m) == "table" and m.GUI or nil
+    if g and shown(g) then return g end
+    return nil
+end
+
+-- "furn"/"ws" и окно, если рамка верстака сейчас работает
+function current()
+    if not ENABLED or not is_gamepad() then return nil end
+    local new_game = _G.gp_new_game
+    local character = new_game and new_game.current()
+    if character then return "new_game", character end
+    local f = furn_gui()
+    if f and top_ok("UIFurnitureWorkshop", f) then return "furn", f end
+    local g = ws_gui()
+    if g and top_ok("UIWorkshop", g) then return "ws", g end
+    return field_window()
+end
+
+-- Движок (через gp_bridge.inv_focus_frame_active) каждый кадр: рамка вместо курсора, LS прыгает по целям
+function focus_frame_active()
+    install_hooks()
+    return current() ~= nil
+end
+
+function active_tab(g)
+    if not g then return nil end
+    for _, t in ipairs(TABS) do
+        local d = g[TAB_DLG[t]]
+        if shown(d) then return t, d end
+    end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Цели рамки
+-- ---------------------------------------------------------------------------
+
+function add_target(list, id, field, w, r, kind, extra)
+    if not r then return nil end
+    local t = extra or {}
+    t.id, t.field, t.w, t.r, t.kind = id, field, w, r, kind or "btn"
+    list[#list + 1] = t
+    return t
+end
+
+-- Ячейки UICellContainer: предметы (по id объекта), рецепты и инструкции (по номеру ячейки)
+function cc_targets(list, cc, field)
+    local cells = cc and cc.cell
+    if type(cells) ~= "table" then return end
+    if cc.scroll and not shown(cc.scroll) then return end
+    local view = abs_rect(cc.scroll)
+    for idx = 1, #cells do
+        local ci = cells[idx]
+        if ci and (ci.ID or ci.section) and shown(ci) then
+            local r = abs_rect(ci.cell)
+            if r then
+                local vis = inside(r, view)
+                if vis and cc.IsCellVisible then
+                    local ok, v = pcall(cc.IsCellVisible, cc, ci)
+                    if ok then vis = v and true or false end
+                end
+                local key = ci.ID and tostring(ci.ID) or ("i" .. idx)
+                add_target(list, field .. ":" .. key, field, ci.cell, r, "cell",
+                    { cc = cc, idx = idx, ci = ci, view = view, vis = vis })
+            end
+        end
+    end
+end
+
+function collect_state(list, dlg)
+    for i = 1, 6 do
+        local w = dlg.toolkit_b and dlg.toolkit_b[i]
+        if not shown(w) then w = dlg.toolkit_ico and dlg.toolkit_ico[i] end
+        if shown(w) then add_target(list, "kits:" .. i, "kits", w, abs_rect(w), "btn") end
+    end
+end
+
+function collect_parts(list, dlg)
+    for i = 1, 6 do
+        local b = dlg.itm_b and dlg.itm_b[i]
+        local btn = dlg.itm_btn and dlg.itm_btn[i]
+        if shown(b) and btn then
+            add_target(list, "parts:" .. i, "parts", btn, abs_rect(btn), "btn",
+                { part = i, spares = shown(btn) or (dlg.parts and dlg.parts[i] and dlg.parts[i].sec ~= "na") })
+        end
+    end
+end
+
+function collect_repair(list, dlg)
+    local cc = type(dlg.CC) == "table" and dlg.CC or {}
+    cc_targets(list, cc.inventory, "inv")
+    collect_parts(list, dlg)
+    cc_targets(list, cc.parts, "spares")
+end
+
+-- Дерево модификаций: слой "mod" — картинка/галочка модификации, "kit" — значок набора в правой части клетки
+function collect_tree(list, dlg, layer)
+    layer = layer or state.layer
+    if type(dlg.upgr_xml) ~= "table" then return end
+    local sv = dlg.scroll_upgr
+    local view = abs_rect(sv)
+    for k1, row in pairs(dlg.upgr_xml) do
+        if type(row) == "table" then
+            for k2, t in pairs(row) do
+                local w = type(t) == "table" and (layer == "kit" and t.itm or t.btn) or nil
+                local up = type(dlg.upgr) == "table" and type(dlg.upgr[k1]) == "table" and dlg.upgr[k1][k2] or nil
+                if w and shown(w) and (layer ~= "kit" or (type(up) == "table" and up.tool)) then
+                    local r = abs_rect(w)
+                    if r then
+                        add_target(list, layer .. ":" .. tostring(k1) .. ":" .. tostring(k2), "tree", w, r, "btn",
+                            { k1 = k1, k2 = k2, sv = sv, view = view, vis = inside(r, view) })
+                    end
+                end
+            end
+        end
+    end
+end
+
+function collect_upgrade(list, dlg)
+    cc_targets(list, dlg.CC, "inv")
+    collect_tree(list, dlg)
+end
+
+-- VIDEO1-FIX 2026-11-17: building the filter strip used to throw inside the
+-- per-frame workshop tick (CUIEditBox:Show before AttachChild -> Runtime Error),
+-- so _gpws_flt was never stored and 7 windows + an orphan edit box were created
+-- again every frame until the engine ran out of memory ("not enough memory"
+-- crash on opening the workbench). Now: one attempt per dialog, guarded.
+function ensure_craft_filter_ui(dlg)
+    if not dlg then return nil end
+    if dlg._gpws_flt ~= nil then return dlg._gpws_flt or nil end
+    dlg._gpws_flt = false
+    local ok, f = pcall(build_craft_filter_ui, dlg)
+    if ok and f then
+        dlg._gpws_flt = f
+        return f
+    end
+    return nil
+end
+
+function build_craft_filter_ui(dlg)
+    local x = xmlh()
+    local f = {
+        avail_bg = x:InitStatic("strip", dlg),
+        avail_txt = x:InitTextWnd("measure16", dlg),
+        search_bg = x:InitStatic("strip", dlg),
+        search_txt = x:InitTextWnd("measure16", dlg),
+        clear_bg = x:InitStatic("strip", dlg),
+        clear_txt = x:InitTextWnd("measure16", dlg),
+        empty_txt = x:InitTextWnd("measure16", dlg),
+    }
+    -- VIDEO1-FIX2: a bare CUIEditBox() has no texture/font and throws a C++
+    -- "Runtime Error" on Show (BusyHands popup even inside pcall). Build it from
+    -- XML like MCM does (ui_gp_workshop.xml <edit>), text-window fallback below.
+    if x.InitEditBox then
+        local ok, eb = pcall(x.InitEditBox, x, "edit", dlg)
+        if ok and eb then
+            eb:Show(false)
+            f.edit = eb
+        end
+    end
+    if not f.edit then
+        f.edit = x:InitTextWnd("measure16", dlg)
+        f.edit:Show(false)
+    end
+    f.avail_bg:SetWndPos(vector2():set(34, 64))
+    f.avail_bg:SetWndSize(vector2():set(146, 22))
+    f.avail_txt:SetWndPos(vector2():set(40, 63))
+    f.avail_txt:SetWndSize(vector2():set(136, 24))
+    f.search_bg:SetWndPos(vector2():set(188, 64))
+    f.search_bg:SetWndSize(vector2():set(183, 22))
+    f.search_txt:SetWndPos(vector2():set(194, 63))
+    f.search_txt:SetWndSize(vector2():set(171, 24))
+    f.clear_bg:SetWndPos(vector2():set(375, 64))
+    f.clear_bg:SetWndSize(vector2():set(24, 22))
+    f.clear_txt:SetWndPos(vector2():set(383, 63))
+    f.clear_txt:SetWndSize(vector2():set(16, 24))
+    f.clear_txt:SetText("x")
+    f.empty_txt:SetWndPos(vector2():set(194, 210))
+    f.empty_txt:SetWndSize(vector2():set(171, 24))
+    f.empty_txt:Show(false)
+    return f
+end
+
+function craft_recipe_title(sec)
+    if not sec then return "" end
+    local u = rawget(_G, "ui_item")
+    if type(u) == "table" and type(u.get_sec_name) == "function" then
+        local ok, n = pcall(u.get_sec_name, sec)
+        if ok and type(n) == "string" and n ~= "" then return n .. " " .. tostring(sec) end
+    end
+    return tostring(tr(sec)) .. " " .. tostring(sec)
+end
+
+function build_craft_stock(dlg)
+    local actor = rawget(_G, "db") and db.actor
+    if not (actor and actor.iterate_inventory) then return nil end
+    local belt = {}
+    if actor.iterate_belt then
+        pcall(actor.iterate_belt, actor, function(_, arty)
+            if arty and arty.id then belt[arty:id()] = true end
+        end)
+    end
+    local seen = {}
+    local counts = {}
+    local ammo_boxes = {}
+    local ammo_partials = {}
+    local function add_item(_, item)
+        if not (item and item.id and item.section) then return end
+        local id = item:id()
+        if seen[id] or belt[id] then return end
+        seen[id] = true
+        local sec = item:section()
+        local is_ammo = IsItem and IsItem("ammo", sec)
+        if is_ammo and item.ammo_get_count and item.ammo_box_size then
+            local sz = item:ammo_get_count() or 0
+            local bsz = item:ammo_box_size() or 1
+            if sz >= bsz then
+                ammo_boxes[sec] = (ammo_boxes[sec] or 0) + 1
+            else
+                local prev = ammo_partials[sec]
+                if not prev then
+                    ammo_partials[sec] = sz
+                elseif prev + sz >= bsz then
+                    ammo_boxes[sec] = (ammo_boxes[sec] or 0) + 1
+                    ammo_partials[sec] = nil
+                end
+            end
+        else
+            local cnt = (IsItem and IsItem("multiuse", nil, item) and item.get_remaining_uses and item:get_remaining_uses()) or 1
+            counts[sec] = (counts[sec] or 0) + cnt
+        end
+    end
+    pcall(actor.iterate_inventory, actor, add_item, nil)
+    local stash_id = dlg and (dlg.stashId or (dlg.owner and dlg.owner.stashId))
+    if stash_id and get_object_by_id then
+        local st_obj = get_object_by_id(stash_id)
+        if st_obj and st_obj.iterate_inventory_box then
+            pcall(st_obj.iterate_inventory_box, st_obj, add_item, nil)
+        end
+    end
+    return { counts = counts, ammo = ammo_boxes }
+end
+
+function craft_recipe_available(dlg, v, ci, stock)
+    if ci and ci.flags and ci.flags.available ~= nil then return ci.flags.available == true end
+    if type(v) ~= "table" then return true end
+    if v.available ~= nil then return v.available == true end
+    if v.rsp and dlg.recipes_items and not dlg.recipes_items[v.rsp] then return false end
+    if v.tool and dlg.toolkits_state and not dlg.toolkits_state[v.tool] then return false end
+    if stock then
+        for k = 1, 4 do
+            local comp = v[k]
+            if type(comp) == "table" and comp[1] then
+                local sec, req = comp[1], tonumber(comp[2]) or 1
+                local have = (IsItem and IsItem("ammo", sec)) and (stock.ammo[sec] or 0) or (stock.counts[sec] or 0)
+                if have < req then return false end
+            end
+        end
+    end
+    return true
+end
+
+function apply_craft_filter(dlg)
+    if not dlg or dlg._gpws_filtering then return end
+    local f = ensure_craft_filter_ui(dlg)
+    local cc = type(dlg.CC) == "table" and dlg.CC.list or nil
+    if not cc then return end
+    local q = lower_text(state.craft_search or "")
+    local only = state.craft_only_avail == true
+    if not only and q == "" then
+        if f then f.empty_txt:Show(false) end
+        return
+    end
+    dlg._gpws_filtering = true
+    local r = type(dlg.recipes) == "table" and dlg.last_type and dlg.recipes[dlg.last_type] or nil
+    local stock = only and build_craft_stock(dlg) or nil
+    local had_any, kept = false, 0
+    if type(r) == "table" and type(cc.Reinit) == "function" then
+        local inv, ind = {}, {}
+        for i, v in pairs(r) do
+            had_any = true
+            local title = q ~= "" and lower_text(craft_recipe_title(v.sec)) or ""
+            local ok_q = (q == "" or title:find(q, 1, true) ~= nil)
+            local ok_a = (not only) or craft_recipe_available(dlg, v, nil, stock)
+            if ok_q and ok_a then
+                kept = kept + 1
+                inv[kept] = v.sec
+                ind[kept] = i
+            end
+        end
+        cc:Reinit(inv, ind)
+        if type(cc.cell) == "table" then
+            for _, ci in pairs(cc.cell) do
+                if shown(ci) and ci.Colorize and ci.flags then
+                    local rv = r[ci.flags.info]
+                    local unlocked = rv and (not rv.rsp or (dlg.recipes_items and dlg.recipes_items[rv.rsp]))
+                    ci:Colorize(unlocked and "def" or "hide")
+                end
+            end
+        end
+    elseif type(cc.cell) == "table" then
+        for _, ci in ipairs(cc.cell) do
+            local sec = ci and ci.section
+            if sec or (ci and ci.ID) then
+                had_any = true
+                local rv = r and ci.flags and r[ci.flags.info] or nil
+                local title = q ~= "" and lower_text(craft_recipe_title(sec or tostring(ci.ID))) or ""
+                local ok_q = (q == "" or title:find(q, 1, true) ~= nil)
+                local ok_a = (not only) or craft_recipe_available(dlg, rv, ci, stock)
+                local show_ci = ok_q and ok_a
+                ci:Show(show_ci)
+                if show_ci then kept = kept + 1 end
+            end
+        end
+    end
+    if f then
+        f.empty_txt:SetText(label("no_recipes"))
+        f.empty_txt:Show(had_any and kept == 0)
+    end
+    dlg._gpws_filtering = false
+end
+
+function refresh_craft_list(dlg)
+    if not dlg or type(dlg.ListItems) ~= "function" then return end
+    dlg._gpws_applied = false
+    local ok, err = pcall(dlg.ListItems, dlg)
+    if not ok and printf then printf("! [gp_workshop] ListItems: %s", tostring(err)) end
+    if not dlg._gpws_applied then apply_craft_filter(dlg) end
+end
+
+function set_craft_search(dlg, text)
+    text = tostring(text or "")
+    state.craft_search = text
+    local f = dlg and dlg._gpws_flt
+    if f and f.edit and f.edit.SetText then
+        pcall(f.edit.SetText, f.edit, text)
+    end
+    refresh_craft_list(dlg)
+end
+
+function open_craft_search_osk(dlg)
+    local f = ensure_craft_filter_ui(dlg)
+    if not f or not f.edit then return deny() end
+    pcall(f.edit.SetText, f.edit, state.craft_search or "")
+    f.osk_open = true
+    if game and game.gamepad_new_game_keyboard then
+        pcall(game.gamepad_new_game_keyboard, f.edit)
+    elseif f.edit.CaptureFocus then
+        pcall(f.edit.CaptureFocus, f.edit, true)
+    end
+    return "used"
+end
+
+function collect_craft(list, dlg)
+    local f = ensure_craft_filter_ui(dlg)
+    if f then
+        if shown(f.avail_bg) then add_target(list, "flt:avail", "flt", f.avail_bg, abs_rect(f.avail_bg), "btn") end
+        if shown(f.search_bg) then add_target(list, "flt:search", "flt", f.search_bg, abs_rect(f.search_bg), "btn") end
+        if shown(f.clear_bg) then add_target(list, "flt:clear", "flt", f.clear_bg, abs_rect(f.clear_bg), "btn") end
+    end
+    local lm = dlg.list_menu
+    if shown(lm) and lm.GetSize then
+        local ok, n = pcall(lm.GetSize, lm)
+        local view = abs_rect(lm)
+        for i = 0, (ok and tonumber(n) or 0) - 1 do
+            local ok2, it = pcall(lm.GetItemByIndex, lm, i)
+            local r = ok2 and abs_rect(it) or nil
+            if r then add_target(list, "sec:" .. i, "sec", it, r, "btn", { sec = i, sv = lm, view = view, vis = inside(r, view) }) end
+        end
+    end
+    local cc = type(dlg.CC) == "table" and dlg.CC or {}
+    cc_targets(list, cc.list, "rec")
+    for i = 1, 4 do
+        local b = dlg.itm_b and dlg.itm_b[i]
+        if shown(b) then
+            local r = abs_rect(dlg.itm_ico and dlg.itm_ico[i])
+            if not r or (r.x2 - r.x1) < 8 or (r.y2 - r.y1) < 8 then r = abs_rect(b) end
+            add_target(list, "comp:" .. i, "comp", b, r, "btn", { comp = i })
+        end
+    end
+    cc_targets(list, cc.recipe, "ins")
+end
+
+function collect_furn(list, g)
+    for _, f in ipairs(FURN) do
+        local b = g[f.btn]
+        if shown(b) then add_target(list, f.id, "btns", b, abs_rect(b), "btn", { furn = f }) end
+    end
+end
+
+COLLECT = { state = collect_state, repair = collect_repair, upgrade = collect_upgrade, craft = collect_craft }
+
+-- Все цели окна: list, вкладка, окно вкладки
+function collect(kind, g)
+    local list = {}
+    if kind == "furn" then
+        collect_furn(list, g)
+        return list, "furn", g
+    end
+    local tab, dlg = active_tab(g)
+    if tab then
+        local ok, err = pcall(COLLECT[tab], list, dlg)
+        if not ok and printf then printf("! [gp_workshop] collect %s: %s", tab, tostring(err)) end
+    end
+    return list, tab, dlg
+end
+
+-- Цель под точкой (только видимые; из вложенных — меньшая)
+function target_at(list, x, y, field)
+    local best, ba
+    for _, t in ipairs(list) do
+        if (not field or t.field == field) and t.vis ~= false and contains(t.r, x, y) then
+            local a = (t.r.x2 - t.r.x1) * (t.r.y2 - t.r.y1)
+            if not ba or a < ba then best, ba = t, a end
+        end
+    end
+    return best
+end
+
+function by_id(list, id)
+    if not id then return nil end
+    for _, t in ipairs(list) do
+        if t.id == id then return t end
+    end
+    return nil
+end
+
+function in_field(list, field)
+    local out = {}
+    for _, t in ipairs(list) do
+        if t.field == field then out[#out + 1] = t end
+    end
+    return out
+end
+
+-- Первая в порядке чтения: строка (с допуском), потом x
+function reading_first(ts)
+    local best
+    for _, t in ipairs(ts) do
+        if not best or t.r.y1 < best.r.y1 - 4 or (math.abs(t.r.y1 - best.r.y1) <= 4 and t.r.x1 < best.r.x1) then
+            best = t
+        end
+    end
+    return best
+end
+
+-- Дерево: первая доступная (включённая) клетка верхнего ряда (ТЗ §7, §18 п. 15)
+function tree_first(ts)
+    local top = reading_first(ts)
+    if not top then return nil end
+    local best
+    for _, t in ipairs(ts) do
+        if math.abs(t.r.y1 - top.r.y1) <= 4 and (state.layer ~= "mod" or enabled(t.w)) then
+            if not best or t.r.x1 < best.r.x1 then best = t end
+        end
+    end
+    return best or top
+end
+
+function list_selected_index(lm)
+    if not lm or not lm.GetSelectedIndex then return nil end
+    local ok, i = pcall(lm.GetSelectedIndex, lm)
+    i = ok and tonumber(i) or nil
+    if i and i >= 0 and i < 100000 then return i end
+    return nil
+end
+
+function has_recipes(dlg)
+    local list = {}
+    cc_targets(list, type(dlg.CC) == "table" and dlg.CC.list or nil, "rec")
+    return #list > 0
+end
+
+-- Цель уже выбрана (открыта) — клик «движения» не нужен
+function is_selected(dlg, t)
+    if t.field == "sec" then
+        return list_selected_index(dlg.list_menu) == t.sec and has_recipes(dlg)
+    end
+    if t.cc then return t.cc.selected == t.idx end
+    return false
+end
+
+function selected_in(dlg, ts)
+    for _, t in ipairs(ts) do
+        if (t.cc or t.field == "sec") and is_selected(dlg, t) then return t end
+    end
+    return nil
+end
+
+-- Цель в поле: заданный id -> выбранная -> запомненная -> первая
+function pick_field(tab, dlg, list, field, prefer_id)
+    local ts = in_field(list, field)
+    if #ts == 0 then return nil end
+    local t = by_id(ts, prefer_id)
+    if t then return t end
+    t = selected_in(dlg, ts)
+    if t then return t end
+    t = by_id(ts, state.mem[tostring(tab) .. ":" .. field])
+    if t then return t end
+    if field == "tree" then return tree_first(ts) end
+    return reading_first(ts)
+end
+
+function start_target(kind, tab, dlg, list)
+    if kind == "furn" then return by_id(list, "f:use") or list[1] end
+    -- Миша 2026-11-14: отдельные инструменты (workshop_tool.start_workshop_medic/_ammo/_artefacts через
+    -- z_workshop_tool_double_click_open_tools) сами выбирают раздел и заполняют список — рамка сразу на предметы
+    if tab == "craft" and has_recipes(dlg) then
+        local t = pick_field(tab, dlg, list, "rec")
+        if t then return t end
+    end
+    return pick_field(tab, dlg, list, FIRST_FIELD[tab])
+end
+
+-- ---------------------------------------------------------------------------
+-- Ходьба
+-- ---------------------------------------------------------------------------
+
+-- Ближайшая цель в направлении dir: перекрытие по поперечной оси ценится выше, конус +-63 град.
+function best_dir(cands, r, dir)
+    local cx, cy = center(r)
+    local best, bs
+    for _, t in ipairs(cands) do
+        local tx, ty = center(t.r)
+        local along, across, overlap
+        if dir == 1 or dir == 2 then
+            along = (dir == 2) and (ty - cy) or (cy - ty)
+            overlap = t.r.x1 < r.x2 - 1 and t.r.x2 > r.x1 + 1
+            across = overlap and 0 or math.abs(tx - cx)
+        else
+            along = (dir == 4) and (tx - cx) or (cx - tx)
+            overlap = t.r.y1 < r.y2 - 1 and t.r.y2 > r.y1 + 1
+            across = overlap and 0 or math.abs(ty - cy)
+        end
+        if along > 1 and (overlap or across <= along * 2) then
+            local s = along + across * 2
+            if not bs or s < bs then best, bs = t, s end
+        end
+    end
+    return best
+end
+
+function nav(tab, dlg, list, cur, dir)
+    if tab == "repair" and cur.field == "parts" then
+        local nb = PART_NAV[cur.part] and PART_NAV[cur.part][dir]
+        local t = nb and by_id(list, "parts:" .. nb)
+        if t then return t end
+    end
+    local same = {}
+    for _, t in ipairs(list) do
+        if t.id ~= cur.id and t.field == cur.field then
+            same[#same + 1] = t
+        end
+    end
+    local nxt = best_dir(same, cur.r, dir)
+    if nxt then return nxt end
+    if tab == "craft" then
+        if dir == 1 and (cur.field == "sec" or cur.field == "rec") then
+            state.flt_from = cur
+            return by_id(list, cur.field == "rec" and "flt:search" or "flt:avail")
+        end
+        if dir == 2 and cur.field == "flt" then
+            if cur.id == "flt:avail" then
+                return pick_field(tab, dlg, list, "sec")
+            end
+            return pick_field(tab, dlg, list, "rec") or pick_field(tab, dlg, list, "sec")
+        end
+    end
+    return nil
+end
+
+-- Цель вне окна прокрутки: докрутить список/дерево, прямоугольник сдвинуть на ту же величину
+function ensure_visible(t)
+    if t.vis ~= false or not t.view then return t end
+    local v = t.view
+    local d = 0
+    if t.r.y1 < v.y1 then
+        d = t.r.y1 - v.y1 - SCROLL_MARGIN
+    elseif t.r.y2 > v.y2 then
+        d = t.r.y2 - v.y2 + SCROLL_MARGIN
+    end
+    local shift = 0
+    if d ~= 0 and t.cc then
+        local old = tonumber(t.cc.scroll_pos) or 0
+        pcall(t.cc.Scroll_SetPos, t.cc, old + d, true)
+        shift = (tonumber(t.cc.scroll_pos) or old) - old
+    elseif d ~= 0 and t.sv then
+        local sv = t.sv
+        local ok, old = pcall(sv.GetCurrentScrollPos, sv)
+        old = ok and tonumber(old) or 0
+        local p = old + d
+        local okn, mn = pcall(sv.GetMinScrollPos, sv)
+        local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+        if okn and tonumber(mn) then p = math.max(tonumber(mn), p) end
+        if okx and tonumber(mx) then p = math.min(tonumber(mx), p) end
+        p = math.floor(p + 0.5)
+        pcall(sv.SetScrollPos, sv, p)
+        local ok2, new = pcall(sv.GetCurrentScrollPos, sv)
+        shift = (ok2 and tonumber(new) or p) - old
+    end
+    t.r = { x1 = t.r.x1, x2 = t.r.x2, y1 = t.r.y1 - shift, y2 = t.r.y2 - shift }
+    t.vis = true
+    return t
+end
+
+function remember(t)
+    state.cur_id, state.cur_field = t.id, t.field
+    state.mem[tostring(state.tab or "furn") .. ":" .. t.field] = t.id
+end
+
+-- Рамку на цель: докрутить, запомнить, поставить курсор в центр
+function focus(t, no_move)
+    ensure_visible(t)
+    remember(t)
+    local x, y = center(t.r)
+    if not no_move then move_cursor(x, y) end
+    return x, y
+end
+
+function no_hit(x, y)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=0;h=0;kind=none", x, y)
+end
+
+function stay(x, y)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=none", x, y)
+end
+
+-- Геометрия курсора не меняет активное поле. Его переключают A, B и View.
+function field_target(g, tab, dlg, list, x, y)
+    local same_tab = rawequal(state.gui, g) and state.tab == tab
+    local field = same_tab and state.cur_field or FIRST_FIELD[tab]
+    local t = target_at(list, x, y, field)
+    if t then return t end
+    local saved = same_tab and by_id(list, state.cur_id)
+    return saved and saved.field == field and saved or pick_field(tab, dlg, list, field)
+end
+
+-- gp_bridge.cursor_query_target: цель под курсором (ответ окончательный — иначе движок ищет свои контролы)
+function query(x, y)
+    local kind, g = current()
+    if not kind then return nil end
+    x, y = tonumber(x) or 0, tonumber(y) or 0
+    if kind == "new_game" then return gp_new_game.query(g, x, y) end
+    if kind ~= "ws" and kind ~= "furn" then return field_query(kind, g, x, y) end
+    local list, tab, dlg = collect(kind, g)
+    local t
+    if kind == "ws" then
+        t = field_target(g, tab, dlg, list, x, y)
+    else
+        t = target_at(list, x, y)
+    end
+    if t and t.vis == false then return no_hit(x, y) end
+    if not t then return no_hit(tonumber(x) or 0, tonumber(y) or 0) end
+    remember(t)
+    local cx, cy = center(t.r)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s", cx, cy, t.r.x2 - t.r.x1, t.r.y2 - t.r.y1, t.kind)
+end
+
+-- gp_bridge.cursor_dpad_snap: прыжок крестовины/LS (dir 1 вверх, 2 вниз, 3 влево, 4 вправо)
+function snap(x, y, dir)
+    local kind, g = current()
+    if not kind then return nil end
+    x, y, dir = tonumber(x) or 0, tonumber(y) or 0, tonumber(dir) or 0
+    if kind == "new_game" then return gp_new_game.snap(g, x, y, dir) end
+    if kind ~= "ws" and kind ~= "furn" then return field_snap(kind, g, x, y, dir) end
+    local list, tab, dlg = collect(kind, g)
+    local cur
+    if kind == "ws" then
+        cur = field_target(g, tab, dlg, list, x, y)
+    else
+        cur = target_at(list, x, y) or by_id(list, state.cur_id)
+    end
+    local t
+    if cur then
+        t = nav(tab, dlg, list, cur, dir)
+    else
+        t = kind == "furn" and start_target(kind, tab, dlg, list)
+    end
+    if not t then
+        if cur and kind == "ws" then x, y = center(cur.r) end
+        return stay(x, y)
+    end
+    local cx, cy = focus(t, true)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, t.kind)
+end
+
+-- ---------------------------------------------------------------------------
+-- Действия (выполняются в Update окна)
+-- ---------------------------------------------------------------------------
+
+function defer(fn)
+    state.queue[#state.queue + 1] = fn
+end
+
+function drain(q)
+    local items = {}
+    for i = 1, #q do items[i] = q[i] end
+    for i = #q, 1, -1 do q[i] = nil end
+    for _, fn in ipairs(items) do
+        local ok, err = pcall(fn)
+        if not ok and printf then printf("! [gp_workshop] action: %s", tostring(err)) end
+    end
+end
+
+-- Одиночный клик: выбираем ячейку и вызываем штатный обработчик без распознавания двойного щелчка.
+function click(dlg, t)
+    state.clicks = state.clicks + 1
+    if t.field == "sec" then
+        local prev_cat = state.craft_cat
+        if prev_cat == nil then prev_cat = list_selected_index(dlg.list_menu) end
+        if prev_cat ~= t.sec and state.craft_search ~= "" then
+            state.craft_search = ""
+            if dlg._gpws_flt and dlg._gpws_flt.edit and dlg._gpws_flt.edit.SetText then
+                pcall(dlg._gpws_flt.edit.SetText, dlg._gpws_flt.edit, "")
+            end
+        end
+        state.craft_cat = t.sec
+        local lm = dlg.list_menu
+        pcall(lm.SetSelectedIndex, lm, t.sec)
+        refresh_craft_list(dlg)
+        return
+    end
+    if t.cc then
+        t.cc:On_Select(t.idx)
+        local ok, err = pcall(t.cc.Callback, t.cc, "On_CC_Mouse1", t.cc.ID, t.idx)
+        if not ok and printf then printf("! [gp_workshop] On_Mouse1: %s", tostring(err)) end
+    end
+end
+
+function inv_cc(tab, dlg)
+    if tab == "repair" then return type(dlg.CC) == "table" and dlg.CC.inventory or nil end
+    if tab == "upgrade" then return dlg.CC end
+    return nil
+end
+
+function selected_obj_id(tab, dlg)
+    local cc = inv_cc(tab, dlg)
+    local ci = cc and cc.selected and type(cc.cell) == "table" and cc.cell[cc.selected]
+    return ci and ci.ID or nil
+end
+
+-- Открыть цель (если ещё не открыта) и перевести рамку в поле field
+function open_and_enter(g, t, field)
+    local tab, dlg = active_tab(g)
+    if not tab then return end
+    local list = collect("ws", g)
+    t = by_id(list, t.id)
+    if not t then return end
+    if not is_selected(dlg, t) or #in_field(list, field) == 0 then click(dlg, t) end
+    list = collect("ws", g)
+    local nt = pick_field(tab, dlg, list, field)
+    if field == "comp" then
+        nt = nil
+        for _, c in ipairs(in_field(list, "comp")) do
+            if not nt or c.r.y1 < nt.r.y1 then nt = c end
+        end
+    end
+    if nt then
+        focus(nt)
+        state.stop_id, state.stop_at, state.stop_done = nt.id, now(), false
+    elseif t.field ~= "inv" then
+        deny()
+    end
+end
+
+-- A на детали с запасными: список запасных (ListSpareParts по highlight_btn, как у мыши), рамка в него
+function open_spares(g, part)
+    local tab, dlg = active_tab(g)
+    if tab ~= "repair" then return end
+    dlg.highlight_btn = part
+    local ok, err = pcall(dlg.ListSpareParts, dlg)
+    if not ok and printf then printf("! [gp_workshop] ListSpareParts: %s", tostring(err)) end
+    state.spare_from = part
+    local list = {}
+    cc_targets(list, type(dlg.CC) == "table" and dlg.CC.parts or nil, "spares")
+    local t = reading_first(list)
+    if t then focus(t) else deny() end
+end
+
+-- Удержание X дошло: «Отремонтировать»/«Модифицировать»/«Создать».
+function do_action(g, tab, hold)
+    local t2, dlg = active_tab(g)
+    local a = ACTION[tab]
+    if t2 ~= tab or not a then return end
+    local b = dlg[a.btn]
+    if tab == "craft" then
+        local recipe = hold and hold.recipe
+        if not recipe or dlg.last_type ~= hold.category then return deny() end
+        local list = collect("ws", g)
+        local target = by_id(list, recipe.id)
+        if not target or not rawequal(target.ci, recipe.ci) then return deny() end
+        dlg.craft_allow_r = nil
+        click(dlg, target)
+        if not dlg.craft_allow_r or dlg.selected_index ~= target.ci.flags.info then return deny() end
+    end
+    if not (shown(b) and enabled(b)) then return deny() end
+    local obj_id = selected_obj_id(tab, dlg)
+    if hold and tab ~= "craft" and (not obj_id or hold.obj_id ~= obj_id) then return deny() end
+    if tab == "repair" then
+        if not next(dlg.new_con) then return deny() end
+        dlg:UpdateToolkits(1)
+        if #dlg.toolkit_pick == 0 then return deny() end
+    end
+    if tab ~= "craft" then
+        state.ret = { tab = tab, id = selected_obj_id(tab, dlg), at = now() }
+    end
+    state.actions = state.actions + 1
+    local ok, err = pcall(dlg[a.fn], dlg)
+    if not ok and printf then printf("! [gp_workshop] %s: %s", a.fn, tostring(err)) end
+end
+
+function switch_tab(g, delta)
+    local tab = active_tab(g)
+    local i = 1
+    for k, name in ipairs(TABS) do
+        if name == tab then i = k end
+    end
+    local nxt = TABS[(i - 1 + delta) % #TABS + 1]
+    defer(function()
+        local fn = g[TAB_OPEN[nxt]]
+        fn(g)
+    end)
+end
+
+-- LB — слой «модификации», RB — «наборы» (ТЗ §7): рамка на соседа в той же клетке
+function set_layer(dlg, cur, layer)
+    if state.layer == layer then return deny() end
+    state.layer = layer
+    if cur and cur.field == "tree" then
+        local list = {}
+        collect_tree(list, dlg, layer)
+        local t = by_id(list, layer .. ":" .. tostring(cur.k1) .. ":" .. tostring(cur.k2))
+        if not t then
+            local cx, cy = center(cur.r)
+            local bd
+            for _, c in ipairs(list) do
+                local tx, ty = center(c.r)
+                local d = (tx - cx) ^ 2 + (ty - cy) ^ 2
+                if not bd or d < bd then t, bd = c, d end
+            end
+        end
+        if t then focus(t) end
+    end
+    return "used"
+end
+
+-- Y — описание: общее состояние с инвентарём (gp_inv_rework.state.desc_hidden)
+function toggle_desc(g)
+    local m = rw()
+    if not (m and type(m.state) == "table") then return deny() end
+    m.state.desc_hidden = not m.state.desc_hidden
+    if m.state.desc_hidden then
+        if g.item_info then pcall(g.item_info.Update, g.item_info) end
+        if g.upgr_info then pcall(g.upgr_info.Update, g.upgr_info) end
+    else
+        m.state.desc_force = true
+    end
+    return "used"
+end
+
+function view_next(tab, dlg, list, cur)
+    if tab ~= "craft" then return nil end
+    if (cur and cur.field or state.cur_field) == "ins" then
+        return back_target(tab, dlg, list, "ins")
+    end
+    return pick_field(tab, dlg, list, "ins")
+end
+
+-- B: поле назад; nil — выхода назад нет (верхний уровень)
+function back_target(tab, dlg, list, field)
+    local map = BACK[tab]
+    local to = map and map[field]
+    if tab == "craft" and field == "ins" then
+        local from = state.instructions_from
+        local t = from and by_id(list, from.id)
+        if t then return t end
+        to = from and from.field or to
+    elseif tab == "craft" and field == "flt" then
+        local from = state.flt_from
+        local t = from and by_id(list, from.id)
+        if t then return t end
+        to = from and from.field or to
+    end
+    while to do
+        local prefer = (to == "parts" and state.spare_from) and ("parts:" .. state.spare_from) or nil
+        local t = pick_field(tab, dlg, list, to, prefer)
+        if t then return t end
+        to = map[to]
+    end
+    return nil
+end
+
+function action_hold(tab, dlg, cur, list)
+    local a = ACTION[tab]
+    local b = a and dlg[a.btn]
+    local recipe
+    if tab == "craft" then
+        recipe = cur and cur.field == "rec" and cur or selected_in(dlg, in_field(list, "rec"))
+    end
+    if not (shown(b) and (enabled(b) or recipe)) then return deny() end
+    state.hold = { tab = tab, obj_id = selected_obj_id(tab, dlg), recipe = recipe, category = dlg.last_type }
+    return string.format("hold:%d:%d", HOLD_PAUSE, HOLD_FILL) .. ring_suffix(dlg._gpws_icon)
+end
+
+function press_a(g, tab, dlg, cur)
+    if not cur then return deny() end
+    local f = cur.field
+    if tab == "repair" then
+        if f == "inv" then defer(function() open_and_enter(g, cur, "parts") end) return "used" end
+        if f == "parts" then
+            if not cur.spares then return deny() end
+            defer(function() open_spares(g, cur.part) end)
+            return "used"
+        end
+        if f == "spares" then
+            -- Тот же обработчик, что у мыши, по выбранной ячейке рамки.
+            defer(function()
+                local list, active, current_dlg = collect("ws", g)
+                local target = active == tab and by_id(list, cur.id)
+                if not target then return end
+                state.spare_ret = { i = state.spare_from, at = now() }
+                click(current_dlg, target)
+            end)
+            return "used"
+        end
+    elseif tab == "upgrade" then
+        if f == "inv" then defer(function() open_and_enter(g, cur, "tree") end) return "used" end
+        if f == "tree" then
+            if state.layer ~= "mod" or not enabled(cur.w) or cur.w:GetCheck() then return deny() end
+            defer(function()
+                local list, active, current_dlg = collect("ws", g)
+                local target = active == tab and by_id(list, cur.id)
+                if target and enabled(target.w) and not target.w:GetCheck() then
+                    target.w:SetCheck(true)
+                    current_dlg:EvaluateUpgrades()
+                end
+            end)
+            return "used"
+        end
+    elseif tab == "craft" then
+        if f == "flt" then
+            if cur.id == "flt:avail" then
+                defer(function()
+                    state.craft_only_avail = not state.craft_only_avail
+                    refresh_craft_list(dlg)
+                end)
+                return "used"
+            end
+            if cur.id == "flt:search" then
+                return open_craft_search_osk(dlg)
+            end
+            if cur.id == "flt:clear" then
+                defer(function()
+                    set_craft_search(dlg, "")
+                    local l2 = collect("ws", g)
+                    local st2 = by_id(l2, "flt:search")
+                    if st2 then focus(st2) end
+                end)
+                return "used"
+            end
+        end
+        if f == "sec" then defer(function() open_and_enter(g, cur, "rec") end) return "used" end
+        if f == "rec" then defer(function() open_and_enter(g, cur, "comp") end) return "used" end
+    end
+    return deny()
+end
+
+function ws_press(g, name)
+    local tab, dlg = active_tab(g)
+    if not tab then return "" end
+    local list = collect("ws", g)
+    local x, y = cursor_xy()
+    local cur = field_target(g, tab, dlg, list, x, y)
+    if name == "LT" or name == "RT" then
+        switch_tab(g, name == "RT" and 1 or -1)
+        return "used"
+    end
+    if name == "Y" then return toggle_desc(g) end
+    if name == "View" then
+        if tab ~= "craft" then return "used" end
+        local t = view_next(tab, dlg, list, cur)
+        if not t then return deny() end
+        if t.field == "ins" then state.instructions_from = cur end
+        focus(t)
+        return "used"
+    end
+    if name == "LB" or name == "RB" then
+        if tab ~= "upgrade" then return deny() end
+        return set_layer(dlg, cur, name == "LB" and "mod" or "kit")
+    end
+    if name == "B" then
+        local t = back_target(tab, dlg, list, cur and cur.field or state.cur_field)
+        if not t then return "" end
+        focus(t)
+        return "used"
+    end
+    if name == "X" then
+        if tab == "craft" and cur and cur.field == "flt" and (state.craft_search or "") ~= "" then
+            defer(function()
+                set_craft_search(dlg, "")
+                local l2 = collect("ws", g)
+                local st2 = by_id(l2, "flt:search")
+                if st2 then focus(st2) end
+            end)
+            return "used"
+        end
+        return action_hold(tab, dlg, cur, list)
+    end
+    if name == "A" then
+        local saved = rawequal(state.gui, g) and state.tab == tab and by_id(list, state.cur_id)
+        return press_a(g, tab, dlg, saved or cur)
+    end
+    return ""
+end
+
+function furn_press(g, name)
+    if name == "A" then return "" end
+    if name == "X" then
+        state.fqueue[#state.fqueue + 1] = function() g:UseWorkshop() end
+        return "used"
+    end
+    if name == "Y" then
+        state.fqueue[#state.fqueue + 1] = function() g:AccessStash() end
+        return "used"
+    end
+    if name == "B" then
+        state.hold = { furn = true }
+        return string.format("hold:%d:%d", HOLD_PAUSE, PICKUP_FILL) .. ring_suffix(g._gpws_f and g._gpws_f["f:pickup"])
+    end
+    return deny()
+end
+
+-- Движок: кнопка в верстаке/окошке (phase "press" | "release" | "hold")
+function ws_button(name, phase)
+    local kind, g = current()
+    if not kind then return "" end
+    name, phase = tostring(name), tostring(phase)
+    if kind == "new_game" then return gp_new_game.button(g, name, phase) end
+    if kind ~= "ws" and kind ~= "furn" then return field_button(kind, g, name, phase) end
+    if phase == "press" then
+        local ok, res = pcall(kind == "furn" and furn_press or ws_press, g, name)
+        if not ok then
+            if printf then printf("! [gp_workshop] ws_button %s: %s", name, tostring(res)) end
+            return ""
+        end
+        return res or ""
+    end
+    local h = state.hold
+    if phase == "release" then
+        if kind == "furn" and name == "B" then
+            state.fqueue[#state.fqueue + 1] = function() g:Close() end
+        end
+        state.hold = nil
+    elseif phase == "hold" then
+        state.hold = nil
+        if kind == "furn" and name == "B" then
+            state.fqueue[#state.fqueue + 1] = function() g:Pickup() end
+        elseif kind == "ws" and h and h.tab then
+            defer(function() do_action(g, h.tab, h) end)
+        end
+    end
+    return "used"
+end
+
+-- ---------------------------------------------------------------------------
+-- Каждый кадр (Update окна)
+-- ---------------------------------------------------------------------------
+
+-- Рамка стоит на цели STOP_MS — клик (раз за остановку, уже открытое не трогаем)
+function drain_stop(tab, dlg, list)
+    local x, y = cursor_xy()
+    local t = field_target(state.gui, tab, dlg, list, x, y)
+    if not t then
+        state.stop_id = nil
+        return nil
+    end
+    if t.id ~= state.stop_id then
+        state.stop_id, state.stop_at, state.stop_done = t.id, now(), false
+        return t
+    end
+    local fields = CLICK_FIELDS[tab]
+    if state.stop_done or not (fields and fields[t.field]) or now() - state.stop_at < STOP_MS then return t end
+    state.stop_done = true
+    if not is_selected(dlg, t) then click(dlg, t) end
+    return t
+end
+
+-- После ремонта/модификации окно сбрасывается (~0,2 с, keep-open): рамка на тот же предмет, он открывается снова
+function drain_return(tab, dlg)
+    local r = state.ret
+    if not r then return end
+    local t0 = now()
+    if r.tab ~= tab or not r.id or t0 - r.at > RETURN_MS then
+        state.ret = nil
+        return
+    end
+    if t0 - r.at < STOP_MS then return end
+    local list = {}
+    cc_targets(list, inv_cc(tab, dlg), "inv")
+    local t = by_id(list, "inv:" .. tostring(r.id))
+    if not t or t.cc.selected == t.idx then return end
+    state.ret = nil
+    focus(t)
+    click(dlg, t)
+    state.stop_id, state.stop_at, state.stop_done = t.id, t0, true
+end
+
+-- Запасная поставлена: список закрылся — рамка на эту деталь (ТЗ §6, §18 п. 11)
+function drain_spare(tab, dlg)
+    local s = state.spare_ret
+    if not s then return end
+    if tab ~= "repair" or now() - s.at > SPARE_RETURN_MS then
+        state.spare_ret = nil
+        return
+    end
+    local list = {}
+    cc_targets(list, type(dlg.CC) == "table" and dlg.CC.parts or nil, "spares")
+    if #list > 0 then return end
+    state.spare_ret = nil
+    local parts = {}
+    collect_parts(parts, dlg)
+    local t = by_id(parts, "parts:" .. tostring(s.i))
+    if t then focus(t) end
+end
+
+function reset_open(g)
+    state.gui = g
+    state.layer = "mod"
+    state.mem = {}
+    state.tab = nil
+    state.ret, state.spare_ret, state.spare_from, state.hold = nil, nil, nil, nil
+    state.stop_id, state.cur_id, state.cur_field = nil, nil, nil
+    state.instructions_from, state.flt_from = nil, nil
+    state.craft_only_avail, state.craft_search, state.craft_cat = false, "", nil
+    if g and g.dlg_craft and g.dlg_craft._gpws_flt and g.dlg_craft._gpws_flt.edit and g.dlg_craft._gpws_flt.edit.SetText then
+        pcall(g.dlg_craft._gpws_flt.edit.SetText, g.dlg_craft._gpws_flt.edit, "")
+    end
+    install_desc_hooks(g)
+end
+
+function sync_craft_search_edit(dlg)
+    local f = dlg and dlg._gpws_flt
+    if not (f and f.edit and f.edit.GetText) then return end
+    local ok, txt = pcall(f.edit.GetText, f.edit)
+    txt = ok and tostring(txt or "") or ""
+    if txt ~= (state.craft_search or "") then
+        f.osk_open = false
+        state.craft_search = txt
+        refresh_craft_list(dlg)
+    end
+end
+
+function tick_ws(g)
+    local t0 = now()
+    if state.last_tick == t0 and rawequal(state.gui, g) then return end
+    if not rawequal(state.gui, g) or not state.last_tick or t0 - state.last_tick > REOPEN_GAP_MS then reset_open(g) end
+    state.last_tick = t0
+    drain(state.queue)
+    local tab, dlg = active_tab(g)
+    if not tab then return end
+    if tab ~= state.tab then
+        if state.tab == "craft" and (state.craft_only_avail or state.craft_search ~= "") then
+            state.craft_only_avail, state.craft_search = false, ""
+            if g.dlg_craft and g.dlg_craft._gpws_flt and g.dlg_craft._gpws_flt.edit and g.dlg_craft._gpws_flt.edit.SetText then
+                pcall(g.dlg_craft._gpws_flt.edit.SetText, g.dlg_craft._gpws_flt.edit, "")
+            end
+        end
+        state.tab = tab
+        state.place = true
+        state.cur_id, state.cur_field = nil, nil
+        state.instructions_from, state.flt_from = nil, nil
+        state.stop_id, state.ret, state.spare_ret, state.spare_from = nil, nil, nil, nil
+    end
+    if tab == "craft" then sync_craft_search_edit(dlg) end
+    local pad = is_gamepad()
+    local list = collect("ws", g)
+    local cur
+    if pad and ENABLED then
+        if state.place then
+            local t = start_target("ws", tab, dlg, list)
+            if t then
+                focus(t)
+                state.place = false
+            end
+        end
+        drain_return(tab, dlg)
+        drain_spare(tab, dlg)
+        cur = drain_stop(tab, dlg, list)
+    end
+    g._rw_frame_rect = (pad and cur) and cur.r or nil
+    local ok, err = pcall(paint_ws, g, tab, dlg, list, cur, hints_shown())
+    if not ok and printf then printf("! [gp_workshop] paint: %s", tostring(err)) end
+end
+
+function tick_furn(g)
+    local t0 = now()
+    if state.last_ftick == t0 and rawequal(state.furn, g) then return end
+    if not rawequal(state.furn, g) or not state.last_ftick or t0 - state.last_ftick > REOPEN_GAP_MS then
+        state.furn = g
+        state.furn_place = true
+    end
+    state.last_ftick = t0
+    drain(state.fqueue)
+    if not shown(g) then return end
+    local pad = is_gamepad() and ENABLED
+    if pad and state.furn_place then
+        local list = {}
+        collect_furn(list, g)
+        local t = by_id(list, "f:use")
+        if t then
+            focus(t)
+            state.furn_place = false
+        end
+    end
+    local ok, err = pcall(paint_furn, g, hints_shown())
+    if not ok and printf then printf("! [gp_workshop] paint_furn: %s", tostring(err)) end
+end
+
+-- ---------------------------------------------------------------------------
+-- Правый стик
+-- ---------------------------------------------------------------------------
+
+-- Плавная прокрутка окна прокрутки sv (CUIScrollView): наклон * скорость * время, попиксельно
+function sv_scroll(sv, acc_key, y, dt, speed)
+    local ok, cur = pcall(sv.GetCurrentScrollPos, sv)
+    cur = ok and tonumber(cur) or nil
+    if not cur then return false end
+    local acc = state[acc_key]
+    if not acc or math.floor(acc + 0.5) ~= cur then acc = cur end
+    local okn, mn = pcall(sv.GetMinScrollPos, sv)
+    local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+    mn = okn and tonumber(mn) or 0
+    mx = okx and tonumber(mx) or cur
+    acc = math.max(mn, math.min(mx, acc + (tonumber(y) or 0) * speed * (tonumber(dt) or 0) / 1000))
+    state[acc_key] = acc
+    local ip = math.floor(acc + 0.5)
+    if ip ~= cur then pcall(sv.SetScrollPos, sv, ip) end
+    return true
+end
+
+-- gp_bridge.cursor_rs_analog: описание открыто — листает описание и больше ничего (ТЗ §1 п. 16);
+-- скрыто — дерево модификаций или список под курсором, плавно
+function rs_analog(y, dt)
+    local kind, g = current()
+    if not kind or kind == "furn" or kind == "stove" then return false end
+    if kind == "new_game" then return gp_new_game.scroll(g, y, dt) end
+    if kind == "sleep" or kind == "blackjack" then return true end
+    local m = rw()
+    local hidden = m and m.desc_should_hide and m.desc_should_hide() or false
+    local info = g.item_info
+    if not hidden and info and info.IsShown and info:IsShown() then
+        local r = info._rw
+        if r and r.overflow and m and m.apply_scroll then
+            local mx = r.content_h - r.region_h
+            local o = math.max(0, math.min(mx, r.offset + (tonumber(y) or 0) * DESC_SCROLL_SPEED * (tonumber(dt) or 0) / 1000))
+            if math.abs(o - r.offset) >= 0.01 then
+                r.offset = o
+                pcall(m.apply_scroll, info, r)
+            end
+        end
+        return true
+    end
+    if kind ~= "ws" then
+        if hidden then return field_scroll(kind, g, y, dt) end
+        return true
+    end
+    if not hidden and g.upgr_info and shown(g.upgr_info.dialog) then return true end
+    local tab, dlg = active_tab(g)
+    local x, yy = cursor_xy()
+    if tab == "upgrade" and dlg.scroll_upgr and contains(abs_rect(dlg.scroll_upgr), x, yy) then
+        return sv_scroll(dlg.scroll_upgr, "tree_acc", y, dt, TREE_SCROLL_SPEED)
+    end
+    local ccs = {}
+    if tab == "upgrade" then ccs[1] = dlg.CC
+    elseif type(dlg and dlg.CC) == "table" then
+        for _, cc in pairs(dlg.CC) do ccs[#ccs + 1] = cc end
+    end
+    for _, cc in ipairs(ccs) do
+        if cc and cc.scroll and cc.Scroll_SetPos and shown(cc.scroll) and contains(abs_rect(cc.scroll), x, yy) then
+            local cur = tonumber(cc.scroll_pos) or 0
+            local acc = cc._gp_acc
+            if not acc or math.floor(acc) ~= cur then acc = cur end
+            local okn, mn = pcall(cc.scroll.GetMinScrollPos, cc.scroll)
+            local okx, mx = pcall(cc.scroll.GetMaxScrollPos, cc.scroll)
+            acc = math.max(okn and tonumber(mn) or 0, math.min(okx and tonumber(mx) or cur,
+                acc + (tonumber(y) or 0) * LIST_SCROLL_SPEED * (tonumber(dt) or 0) / 1000))
+            cc._gp_acc = acc
+            if math.floor(acc) ~= cur then pcall(cc.Scroll_SetPos, cc, acc) end
+            return true
+        end
+    end
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- Описание (ТЗ §1 п. 15): узкое, у рамки, Y прячет — средствами gp_inv_rework
+-- ---------------------------------------------------------------------------
+
+-- Окно у рамки: слева, если не влезает — справа (как gp_inv_rework.place_desc)
+function place_box(dialog, w, h, target)
+    local gap = 6
+    local x = target.x1 - gap - w
+    if x < 2 then x = target.x2 + gap end
+    if x + w > 1022 then x = math.max(2, 1022 - w) end
+    local y = (target.y1 + target.y2) * 0.5 - h * 0.5
+    y = math.max(2, math.min(y, 766 - h))
+    dialog:SetWndPos(vector2():set(x, y))
+    return x, y
+end
+
+function install_desc_hooks(g)
+    local m = rw()
+    if m and m.install_info_hook and g.item_info then pcall(m.install_info_hook, g.item_info) end
+    local info = g.upgr_info
+    if not info or info._gpws_hooked then return end
+    info._gpws_hooked = true
+    local orig = info.Update
+    info.Update = function(self, upgr, prereq, installed)
+        local mm = rw()
+        if is_gamepad() and mm and mm.desc_should_hide and mm.desc_should_hide() then return orig(self) end
+        local res = orig(self, upgr, prereq, installed)
+        local tr_ = is_gamepad() and self.owner and self.owner._rw_frame_rect
+        if tr_ and shown(self.dialog) and self.frame then
+            pcall(place_box, self.dialog, self.frame:GetWidth(), self.frame:GetHeight(), tr_)
+        end
+        return res
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Вид: вкладки, значки на кнопках, нижняя плашка, окошко
+-- ---------------------------------------------------------------------------
+
+local XML
+
+function xmlh()
+    if not XML then
+        XML = CScriptXmlInit()
+        XML:ParseFile("ui_gp_workshop.xml")
+    end
+    return XML
+end
+
+function align()
+    return _G.gp_hint_align
+end
+
+function screen_h()
+    local d = device and device()
+    return math.max(1, d and tonumber(d.height) or 1080)
+end
+
+function icon_tex(glyph)
+    local ic = icons()
+    if ic and ic.tex then return ic.tex(glyph, "round") end
+    return glyph
+end
+
+function icon_dims(glyph)
+    local ic = icons()
+    if ic and ic.dims then return ic.dims(glyph, "round") end
+    if SHOULDER[glyph] then return 31, 19, 37, 25 end
+    return 22, 22, 28, 28
+end
+
+function icon_scale()
+    local ic = icons()
+    return (ic and ic.scale_k and ic.scale_k()) or 1
+end
+
+function icon_rev()
+    local ic = icons()
+    return (ic and ic.revision and ic.revision()) or 0
+end
+
+-- Визуальная высота круга Dot Marks (px экрана) под заглавную шрифта font; если передан широкий glyph — его видимая ширина.
+function circle_px(font, glyph)
+    local a = align()
+    local cap = a and a.cap_px(font) or 14
+    local vis_h = math.max(8, math.floor(CIRCLE_K * cap * icon_scale() + 0.5))
+    if glyph then
+        local vw = icon_dims(glyph)
+        if vw and vw ~= 22 then
+            return math.max(8, math.floor(vis_h * vw / 22 + 0.5))
+        end
+    end
+    return vis_h
+end
+
+function icon_vis_w_ui(glyph, base_vis_h)
+    local a = align()
+    local vw, _, tw, th = icon_dims(glyph)
+    local box_h = math.max(8, math.floor(base_vis_h * th / 22 + 0.5))
+    local box_w = (tw == th) and box_h or math.max(8, math.floor(box_h * tw / th + 0.5))
+    local vis_w = box_w * vw / tw
+    return a and a.px_w(vis_w) or (vis_w * 1024 / 1920)
+end
+
+-- Геометрия варианта В. X сегментов в пикселях атласа 969x669, остальные
+-- координаты в ед. UI относительно dialog. Кнопки мыши — ui_workshop_16.xml.
+local TAB_TEXTURE = "ui_gp_workshop_tabs_"
+local TAB_SCALE_X = 775 / 969
+local TAB_FONT = "graffiti19"
+local TAB_CAP_Y = 37
+local TAB_GEOMETRY = {
+    { left = 156, width = 181, center = 205, icon_w = 14, icon_h = 14 },
+    { left = 305, width = 191, center = 321, icon_w = 38, icon_h = 18 },
+    { left = 465, width = 191, center = 450, icon_w = 16, icon_h = 18 },
+    { left = 624, width = 191, center = 579, icon_w = 25, icon_h = 18 },
+}
+
+-- Значок Dot Marks (round): видимый левый край x, середина на линии cy, базовая визуальная высота круга px.
+-- Возвращает видимую ширину значка в ед. UI (с компенсацией прозрачного поля PAD в текстуре).
+function place_icon(st, glyph, x, cy, px, alpha)
+    local a = align()
+    local vw, vh, tw, th = icon_dims(glyph)
+    local box_h = math.max(8, math.floor(px * th / 22 + 0.5))
+    local box_w = (tw == th) and box_h or math.max(8, math.floor(box_h * tw / th + 0.5))
+    local vis_w = box_w * vw / tw
+    local pad_x = (box_w - vis_w) * 0.5
+    local ix, iy, iw, ih, vis_w_ui
+    if a then
+        local shift_x = a.px_w(pad_x)
+        if tw == th then
+            ix, iy, iw, ih = a.icon_rect(x - shift_x, cy, box_h)
+        else
+            local _, iy0, _, ih0 = a.icon_rect(0, cy, box_h)
+            iw, ih = a.px_w(box_w), ih0
+            ix, iy = a.snap_x(x - shift_x), iy0
+        end
+        vis_w_ui = a.px_w(vis_w)
+    else
+        iw, ih = box_w * 1024 / 1920, box_h * 768 / 1080
+        ix, iy = x - pad_x * 1024 / 1920, cy - ih * 0.5
+        vis_w_ui = vis_w * 1024 / 1920
+    end
+    local tex = icon_tex(glyph)
+    if st._gpws_tex ~= tex then
+        st:InitTexture(tex)
+        st._gpws_tex = tex
+    end
+    st._gpws_ring_k = (vh / th) / RING_SCALE_K
+    st:SetWndPos(vector2():set(ix, iy))
+    st:SetWndSize(vector2():set(iw, ih))
+    if GetARGB then st:SetTextureColor(GetARGB(alpha or 255, 255, 255, 255)) end
+    st:Show(true)
+    return vis_w_ui
+end
+
+function paint_tabs(g, active, pad)
+    local al = align()
+    local w, h = al.screen()
+    local tabs = g._gpws.tabs
+    local relayout = not tabs or tabs.w ~= w or tabs.h ~= h
+    if not tabs then
+        local xml = xmlh()
+        local parent = g.dialog
+        tabs = { lt = xml:InitStatic("icon", parent), rt = xml:InitStatic("icon", parent) }
+        for i, name in ipairs(TABS) do
+            local spec = TAB_GEOMETRY[i]
+            local segment = xml:InitStatic("tab_art", parent)
+            segment:SetWndPos(vector2():set(spec.left * TAB_SCALE_X, 21))
+            segment:SetWndSize(vector2():set(spec.width * TAB_SCALE_X, 34))
+            segment:Enable(false)
+            local icon = xml:InitStatic("tab_art", parent)
+            icon:InitTexture(TAB_TEXTURE .. name .. "_icon")
+            icon:Enable(false)
+            local label = xml:InitTextWnd("tab_label", parent)
+            label:SetText(tr("st_tab_" .. name))
+            label:Enable(false)
+            tabs[i] = { segment = segment, icon = icon, label = label }
+        end
+        g.cap_tab:Show(false)
+        g._gpws.tabs = tabs
+    end
+    if relayout then
+        tabs.w, tabs.h = w, h
+        local gap = al.px_w(math.floor(13 * h / 1080 + 0.5))
+        for i, entry in ipairs(tabs) do
+            local spec = TAB_GEOMETRY[i]
+            local icon_px_w = math.floor(spec.icon_w * h / 768 + 0.5)
+            local icon_px_h = math.floor(spec.icon_h * h / 768 + 0.5)
+            local iw = al.px_w(icon_px_w)
+            local ih = al.px_h(icon_px_h)
+            entry.label:AdjustWidthToText()
+            local tw = entry.label:GetWidth()
+            local x = spec.center - (iw + gap + tw) * 0.5
+            entry.icon:SetWndSize(vector2():set(iw, ih))
+            entry.icon:SetWndPos(vector2():set(al.snap_x(x), al.snap_y(TAB_CAP_Y - ih * 0.5)))
+            entry.label:SetWndPos(vector2():set(al.snap_x(x + iw + gap), al.label_y(TAB_CAP_Y, 24, TAB_FONT)))
+        end
+    end
+    if tabs.active ~= active then
+        for i, name in ipairs(TABS) do
+            local entry = tabs[i]
+            local selected = active == name
+            local shade = selected and 240 or 150
+            local tint = GetARGB(255, shade, shade, shade)
+            entry.segment:InitTexture(TAB_TEXTURE .. name .. (selected and "_on" or "_off"))
+            entry.icon:SetTextureColor(tint)
+            entry.label:SetTextColor(tint)
+        end
+        tabs.active = active
+    end
+    if pad then
+        -- Отступ от скоса на уровне заглавных, 14 px на макете 2000x843.
+        local gap = al.px_w(math.floor(18 * h / 1080 + 0.5))
+        local base_px = circle_px(TAB_FONT)
+        local lt_w = icon_vis_w_ui("LT", base_px)
+        place_icon(tabs.lt, "LT", 138 - gap - lt_w, TAB_CAP_Y, base_px)
+        place_icon(tabs.rt, "RT", 639 + gap, TAB_CAP_Y, base_px)
+        tabs.lt:Enable(false)
+        tabs.rt:Enable(false)
+    else
+        tabs.lt:Show(false)
+        tabs.rt:Show(false)
+    end
+end
+
+function ring_suffix(st)
+    local r = st and shown(st) and abs_rect(st)
+    if not r then return "" end
+    local k = st._gpws_ring_k or 1
+    local cx, cy = center(r)
+    local hw = (r.x2 - r.x1) * 0.5 * k
+    local hh = (r.y2 - r.y1) * 0.5 * k
+    return string.format(":%.1f,%.1f,%.1f,%.1f", cx - hw, cy - hh, cx + hw, cy + hh)
+end
+
+-- Ширина надписи шрифтом letterica16 (кнопки верстака), ед. UI
+function text_width(g, text)
+    local h = g._gpws
+    h.measure = h.measure or xmlh():InitTextWnd("measure16", g)
+    h.measure:Show(false)
+    h.measure:SetText(text)
+    h.measure:AdjustWidthToText()
+    return h.measure:GetWidth()
+end
+
+-- X (B на «Состоянии») слева от слова кнопки; линия — середина заглавной (ТЗ §4)
+function paint_btn_icon(g, tab, dlg, pad)
+    local a = ACTION[tab]
+    local bname = a and a.btn or (tab == "state" and "btn_back") or nil
+    local btn = bname and dlg[bname]
+    local st = dlg._gpws_icon
+    if not (pad and btn and shown(btn)) then
+        if st then st:Show(false) end
+        return
+    end
+    if not st then
+        st = xmlh():InitStatic("icon", dlg)
+        dlg._gpws_icon = st
+    end
+    local gname = a and "X" or "B"
+    local text = tr(a and a.text or "ui_mm_back")
+    local tw = text_width(g, text)
+    local p = btn:GetWndPos()
+    local w, h = btn:GetWidth(), btn:GetHeight()
+    local al = align()
+    local cy = p.y + h * 0.5 + (al and al.xmid_below("letterica16") or 0)
+    local px = circle_px("letterica16")
+    local cap = al and al.cap_px("letterica16") or 14
+    local gap = al and al.px_w(math.floor(cap * 0.65 + 0.5)) or cap * 0.65 * 1024 / 1920
+    local iw = icon_vis_w_ui(gname, px)
+    local x = p.x + (w - tw) * 0.5 - gap - iw
+    place_icon(st, gname, x, cy, px, (a and not enabled(btn)) and DIM_ALPHA or 255)
+end
+
+-- Подпись A по месту рамки (ТЗ §3; где Миша не называл — предложение §13 п. 2)
+function a_label(tab, dlg, cur)
+    if not cur then return nil end
+    local f = cur.field
+    if tab == "repair" then
+        if f == "inv" then return label("select") end
+        if f == "parts" then return cur.spares and label("parts") or nil end
+        if f == "spares" then return label("place") end
+    elseif tab == "upgrade" then
+        if f == "inv" then return label("select") end
+        if f == "tree" and state.layer == "mod" then return label("mark") end
+    elseif tab == "craft" then
+        if f == "flt" then
+            if cur.id == "flt:avail" then return label("toggle") end
+            if cur.id == "flt:clear" then return label("clear") end
+            return label("search")
+        end
+        if f == "sec" or f == "rec" then return label("select") end
+    end
+    return nil
+end
+
+function strip_items(tab, dlg, list, cur)
+    local items = {}
+    local a = a_label(tab, dlg, cur)
+    if a then items[#items + 1] = { { "A" }, a } end
+    if tab == "upgrade" then items[#items + 1] = { { "LB", "RB" }, label("layer") } end
+    if tab == "craft" and view_next(tab, dlg, list, cur) then
+        local instructions = (cur and cur.field or state.cur_field) == "ins"
+        items[#items + 1] = { { "View" }, label(instructions and "back" or "instructions") }
+    end
+    local back = back_target(tab, dlg, list, cur and cur.field or state.cur_field)
+    items[#items + 1] = { { "B" }, label(back and "back" or "exit") }
+    return items
+end
+
+function strip_px(h)
+    return math.max(1, math.floor(h * screen_h() / 768 + 0.5))
+end
+
+-- Нижняя плашка: полоса P16, пункты по центру, размеры как у полосы меню паузы, без точек (ТЗ §3)
+function paint_strip(g, items, pad)
+    local h = g._gpws
+    local s = h.strip
+    if not pad then
+        if s then
+            s.bg:Show(false)
+            for _, it in ipairs(s.items) do
+                for _, ic in ipairs(it.icons) do ic:Show(false) end
+                it.label:Show(false)
+            end
+            s.key = nil
+        end
+        return
+    end
+    local x = xmlh()
+    if not s then
+        s = { bg = x:InitStatic("strip", g), items = {} }
+        for i = 1, 4 do
+            s.items[i] = { icons = { x:InitStatic("icon", g), x:InitStatic("icon", g) }, label = x:InitTextWnd("label", g) }
+        end
+        h.strip = s
+    end
+    local key = tostring(screen_h()) .. ":" .. tostring(icon_rev())
+    for _, it in ipairs(items) do key = key .. "|" .. table.concat(it[1], ",") .. ":" .. it[2] end
+    if s.key == key then return end
+    s.key = key
+    local al = align()
+    local pw = function(px) return al and al.px_w(px) or px * 1024 / 1920 end
+    s.bg:SetWndPos(vector2():set(STRIP.x1, STRIP.y1))
+    s.bg:SetWndSize(vector2():set(STRIP.x2 - STRIP.x1, STRIP.y2 - STRIP.y1))
+    s.bg:Show(true)
+    local ipx = math.max(8, math.floor(strip_px(STRIP_ICON_H) * icon_scale() + 0.5))
+    local gap, space, step = pw(strip_px(STRIP_GAP_H)), pw(strip_px(STRIP_SPACE_H)),
+        pw(math.floor(STRIP_STEP_PX * screen_h() / 1080 + 0.5))
+    local total, widths = 0, {}
+    for i, it in ipairs(items) do
+        local w = 0
+        for _, gname in ipairs(it[1]) do
+            w = w + icon_vis_w_ui(gname, ipx) + space
+        end
+        local lab = s.items[i].label
+        lab:SetText(it[2])
+        lab:AdjustWidthToText()
+        widths[i] = w - space + gap + lab:GetWidth()
+        total = total + widths[i] + (i > 1 and step or 0)
+    end
+    local cx = (STRIP.x1 + STRIP.x2) * 0.5 - total * 0.5
+    local cy = (STRIP.y1 + STRIP.y2) * 0.5
+    local _, iy0, _, ih0 = (al and al.icon_rect or function(xx, c, p) return xx, c - p * 0.355, p, p * 0.711 end)(0, cy, ipx)
+    local mid = iy0 + ih0 * 0.5
+    for i = 1, 4 do
+        local it, si = items[i], s.items[i]
+        if it then
+            local xx = cx
+            for k = 1, 2 do
+                local gname = it[1][k]
+                if gname then
+                    xx = xx + place_icon(si.icons[k], gname, xx, mid, ipx, 255) + space
+                else
+                    si.icons[k]:Show(false)
+                end
+            end
+            xx = xx - space + gap
+            si.label:SetWndPos(vector2():set(xx, al and al.label_y(mid, 24, "graffiti19") or (mid - 12)))
+            si.label:SetWndSize(vector2():set(si.label:GetWidth(), 24))
+            si.label:Show(true)
+            cx = cx + widths[i] + step
+        else
+            si.icons[1]:Show(false)
+            si.icons[2]:Show(false)
+            si.label:Show(false)
+        end
+    end
+end
+
+function paint_craft_filter(dlg)
+    local f = ensure_craft_filter_ui(dlg)
+    if not f then return end
+    local on = state.craft_only_avail == true
+    local q = state.craft_search or ""
+    f.avail_bg:Show(true)
+    f.avail_txt:SetText(label(on and "avail_on" or "avail_off"))
+    f.avail_txt:SetTextColor(on and 0xFFF0F0F0 or 0xFFC8C8C8)
+    f.avail_txt:Show(true)
+    f.search_bg:Show(true)
+    if q ~= "" then
+        f.search_txt:SetText(string.format(label("search_fmt"), q))
+        f.search_txt:SetTextColor(0xFFF0F0F0)
+    else
+        f.search_txt:SetText(label("search_ph"))
+        f.search_txt:SetTextColor(0xFF9E9E9E)
+    end
+    f.search_txt:Show(true)
+    local has_q = q ~= ""
+    f.clear_bg:Show(has_q)
+    f.clear_txt:Show(has_q)
+end
+
+function paint_ws(g, tab, dlg, list, cur, pad)
+    g._gpws = g._gpws or {}
+    paint_tabs(g, tab, pad)
+    for _, t in ipairs(TABS) do
+        local d = g[TAB_DLG[t]]
+        if d and not rawequal(d, dlg) and d._gpws_icon then d._gpws_icon:Show(false) end
+    end
+    if tab == "craft" then paint_craft_filter(dlg) end
+    paint_btn_icon(g, tab, dlg, pad)
+    paint_strip(g, pad and strip_items(tab, dlg, list, cur) or {}, pad)
+end
+
+-- Единая колонка значка слева от видимой границы кнопки с фаской (концепт E15, P11, В9)
+function button_col_left(kind, p, bw, bh, cap)
+    local al = align()
+    local pw = function(v) return al and al.px_w(v) or v * 1024 / 1920 end
+    local big = (kind == "cook" or kind == "repair" or kind == "melt")
+    local bevel = big and (bw * 5 / 173) or (bw * 3.5 / 117)
+    local dy = big and 0 or (-bh * 0.5 / 29)
+    local pad_in = pw(math.max(4, math.floor(cap * 0.55 + 0.5)))
+    local left = al and al.snap_x(p.x + bevel + pad_in) or (p.x + bevel + pad_in)
+    return left, p.y + bh * 0.5 + dy, pw
+end
+
+-- Окошко: значки ровным столбцом у левого края кнопок, надписи влево сразу за значком (ТЗ §9, В9)
+function paint_furn(g, pad)
+    g._gpws_f = g._gpws_f or {}
+    local h = g._gpws_f
+    local al = align()
+    local kbm = not is_gamepad()
+    for _, f in ipairs(FURN) do
+        local btn = g[f.btn]
+        local e = h[f.id .. ":e"]
+        if btn and not kbm then
+            if not e then
+                local x = xmlh()
+                e = { icon = x:InitStatic("icon", g.back), label = x:InitTextWnd("label18", g.back) }
+                h[f.id .. ":e"] = e
+                h[f.id] = e.icon
+            end
+            if not e.hidden then
+                pcall(function() btn:TextControl():SetText("") end)
+                e.hidden = true
+            end
+            local p = btn:GetWndPos()
+            local bw, bh = btn:GetWidth(), btn:GetHeight()
+            local px = circle_px("letterica18")
+            local cap = al and al.cap_px("letterica18") or 15
+            local left, cy, pw = button_col_left("furn", p, bw, bh, cap)
+            local lx = left
+            if pad then
+                local iw = place_icon(e.icon, f.glyph, left, cy, px, enabled(btn) and 255 or DIM_ALPHA)
+                lx = left + iw + pw(math.floor(cap * 0.65 + 0.5))
+            else
+                e.icon:Show(false)
+            end
+            e.label:SetText(tr(f.text))
+            e.label:SetWndPos(vector2():set(lx, al and al.label_y(cy, 24, "letterica18") or (cy - 12)))
+            e.label:SetWndSize(vector2():set(math.max(1, p.x + bw - lx), 24))
+            e.label:Show(true)
+        elseif e then
+            e.icon:Show(false)
+            e.label:Show(false)
+            if e.hidden and btn then
+                pcall(function() btn:TextControl():SetText(tr(f.text)) end)
+                e.hidden = false
+            end
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Хуки Update классов окна
+-- ---------------------------------------------------------------------------
+
+-- VIDEO1-FIX3 2026-11-17: tick only from the OUTERMOST hooked Update.
+-- Child tabs (UIWorkshopCraft etc.) are updated by the engine from inside the
+-- parent's CUIWindow::Update loop over m_ChildWndList (UIWindow.cpp:233). A tick
+-- there that lazily creates windows (craft filter strip: 8 AttachChild calls,
+-- hint strips) push_backs into the vector being iterated -> reallocation ->
+-- dangling iterator -> C++ exception "[C] orig" (BusyHands) or AV crash on the
+-- first opening of the "Craft" tab. After the outermost Update returns no child
+-- loop is running, so creating windows is safe.
+UPDATE_DEPTH = 0
+
+function hook_update(cls, tick)
+    if not cls or cls._gpws_hooked then return false end
+    cls._gpws_hooked = true
+    local orig = cls.Update
+    cls.Update = function(self, ...)
+        UPDATE_DEPTH = UPDATE_DEPTH + 1
+        local ok_o, res
+        if type(orig) == "function" then
+            ok_o, res = pcall(orig, self, ...)
+        elseif CUIScriptWnd and CUIScriptWnd.Update then
+            ok_o, res = pcall(CUIScriptWnd.Update, self)
+        else
+            ok_o = true
+        end
+        UPDATE_DEPTH = UPDATE_DEPTH - 1
+        if UPDATE_DEPTH < 0 then UPDATE_DEPTH = 0 end
+        if not ok_o then error(res, 0) end
+        if UPDATE_DEPTH == 0 then
+            local ok, err = pcall(tick, self)
+            if not ok and printf then printf("! [gp_workshop] tick: %s", tostring(err)) end
+        end
+        return res
+    end
+    return true
+end
+
+function root_of(self)
+    return self.owner or self
+end
+
+function tick_any_ws(self)
+    local g = root_of(self)
+    if g and shown(g) then tick_ws(g) end
+end
+
+function install_hooks()
+    local m = rawget(_G, "ui_workshop")
+    if type(m) == "table" then
+        hook_update(m.UIWorkshop, tick_any_ws)
+        hook_update(m.UIWorkshopState, tick_any_ws)
+        hook_update(m.UIWorkshopRepair, tick_any_ws)
+        hook_update(m.UIWorkshopUpgrade, tick_any_ws)
+        hook_update(m.UIWorkshopCraft, tick_any_ws)
+        local ccls = m.UIWorkshopCraft
+        if ccls and not ccls._gpws_list_hooked and type(ccls.ListItems) == "function" then
+            ccls._gpws_list_hooked = true
+            local orig_list = ccls.ListItems
+            ccls.ListItems = function(self, ...)
+                local res = orig_list(self, ...)
+                self._gpws_applied = true
+                apply_craft_filter(self)
+                return res
+            end
+        end
+    end
+    local f = rawget(_G, "ui_furniture_workshop")
+    if type(f) == "table" then hook_update(f.UIFurnitureWorkshop, tick_furn) end
+    install_field_hooks()
+end
+
+-- FW1: shared focus, input and presentation for the five field windows.
+local FIELD_LOOT = {
+    module = "ui_mutant_loot", name = "UIMutantLoot", first = "part", action = "btn_loot_all",
+    buttons = {
+        { "btn_loot_one", "X", "OnButton_LootSelected", "ui_mm_loot_selected" },
+        { "btn_loot_all", "X", "OnButton_LootAll", "ui_mm_loot_all" },
+        { "btn_cancel", "B", "Close", "ui_mm_cancel" },
+    },
+}
+local FIELD_COOK = {
+    module = "item_cooking", name = "UICook", first = "meal", action = "btn_cook",
+    buttons = {
+        { "btn_cook", "X", "OnCook", "ui_mm_cook" },
+        { "btn_cancel", "B", "Close", "ui_mm_back" },
+    },
+}
+local REPAIR_BUTTONS = {
+    { "btn_repair", "X", "OnRepair", "ui_mm_repair" },
+    { "btn_cancel", "B", "OnCancel", "ui_mm_back" },
+}
+local FIELD_REPAIR = { module = "item_repair", name = "UIRepair", first = "item",
+    action = "btn_repair", buttons = REPAIR_BUTTONS }
+local FIELD_MELT = { module = "grok_artefacts_melter", name = "UIRepair", first = "item",
+    action = "btn_repair", buttons = REPAIR_BUTTONS }
+local FIELD_STOVE = {
+    module = "ui_stove_furniture", name = "UICookStove", first = "btn",
+    buttons = {
+        { "btn_use_stove", "X", "UseCook", "st_use_stove" },
+        { "btn_access_stash", "Y", "AccessStash", "st_access_stash" },
+        { "btn_close", "B", "Close", "st_close" },
+    },
+}
+local FIELD_SLEEP = {
+    module = "ui_sleep_dialog", name = "UISleep", first = "time", action = "btn_sleep",
+    buttons = {
+        { "btn_sleep", "X", "OnButtonSleep", "st_sleep" },
+        { "btn_cancel", "B", "Close", "ui_mm_cancel" },
+        { "btn_set_spawn", "Y", "OnButtonSetSpawn", "set_spawn_button" },
+    },
+}
+local FIELD_BLACKJACK = {
+    module = "ui_mod_elements", name = "GABlackjack", first = "rate", action = "get_btn_take_rate",
+    buttons = {
+        { "get_btn_take_rate", "X", "btn_take_rate" },
+        { "get_btn_exit_game", "B", "btn_exit_game" },
+    },
+}
+local BLACKJACK_STAGE = {
+    need_rate = { "rate", "get_btn_take_rate", "get_btn_exit_game", "check_save_rate", "check_increasing" },
+    taked_rate = { "get_btn_play_game", "get_btn_exit_game" },
+    play_game = { "get_btn_send_move", "get_btn_take_else" },
+    end_game = { "get_btn_continue_game" },
+}
+local FIELD_ORDER = { "loot", "cook", "repair", "melt", "stove", "sleep", "blackjack" }
+local FIELD_WINDOWS = {
+    loot = FIELD_LOOT, cook = FIELD_COOK, repair = FIELD_REPAIR, melt = FIELD_MELT, stove = FIELD_STOVE,
+    sleep = FIELD_SLEEP, blackjack = FIELD_BLACKJACK,
+}
+
+function field_window()
+    for _, kind in ipairs(FIELD_ORDER) do
+        local spec = FIELD_WINDOWS[kind]
+        local m = rawget(_G, spec.module)
+        local g = type(m) == "table" and (kind == "blackjack" and m.gamepad_table or m.GUI)
+        local native_track = kind ~= "sleep" or (g and g.time_track and g.time_track.StepValue)
+        if native_track and shown(g) and top_ok(spec.name, g) then
+            return kind, g, spec
+        end
+    end
+end
+
+function field_modal_tag()
+    local _, _, spec = field_window()
+    return spec and spec.name
+end
+
+local function field_state(g)
+    if not g._gpfw then
+        g._gpfw = { mem = {}, queue = {}, buttons = {} }
+    end
+    return g._gpfw
+end
+
+local function collect_field(kind, g, list)
+    local spec = FIELD_WINDOWS[kind]
+    if kind == "blackjack" then
+        local m = ui_mod_elements
+        local stage = m and m.card_game_21_stage
+        for _, id in ipairs(BLACKJACK_STAGE[stage] or {}) do
+            local w = id == "rate" and g.rate_field or g[id]
+            if shown(w) and enabled(w) then
+                local r = abs_rect(w)
+                if id == "rate" then
+                    local left, right = abs_rect(g.get_btn_rate_minus), abs_rect(g.get_btn_rate_plus)
+                    r.x1, r.x2 = math.min(r.x1, left.x1), math.max(r.x2, right.x2)
+                end
+                add_target(list, id, id == "rate" and "rate" or "btn", w, r, "btn")
+            end
+        end
+        return
+    elseif kind == "sleep" then
+        local track = g.time_track
+        if not g.forced and shown(track) and enabled(track) then
+            add_target(list, "time", "time", track, abs_rect(track), "btn")
+        end
+    elseif kind == "loot" or kind == "cook" then
+        cc_targets(list, g.CC, spec.first)
+    elseif spec.first == "item" then
+        cc_targets(list, g.CC[1], "item")
+        cc_targets(list, g.CC[2], "part")
+    end
+    for _, b in ipairs(spec.buttons) do
+        local w = g[b[1]]
+        if shown(w) then
+            add_target(list, b[1], "btn", w, abs_rect(w), "btn", { button = b })
+        end
+    end
+end
+
+function field_collect(kind, g)
+    local list = {}
+    collect_field(kind, g, list)
+    return list
+end
+
+local function first_field_target(kind, list)
+    local spec = FIELD_WINDOWS[kind]
+    if kind == "blackjack" then return list[1] end
+    return reading_first(in_field(list, spec.first))
+        or (kind == "sleep" and by_id(list, "btn_sleep"))
+        or by_id(list, "btn_cancel") or list[1]
+end
+
+local function focused_field_target(kind, g, list)
+    return by_id(list, field_state(g).id) or first_field_target(kind, list)
+end
+
+local function field_focus(g, t, no_move)
+    if not t then return end
+    local st = field_state(g)
+    if st.id ~= t.id then st.hold = nil end
+    st.id, st.mem[t.field] = t.id, t.id
+    st.follow = nil
+    local x, y = center(t.r)
+    if t.cc and t.vis == false and t.view then
+        local d = 0
+        if t.r.y1 < t.view.y1 then
+            d = t.r.y1 - t.view.y1 - SCROLL_MARGIN
+        elseif t.r.y2 > t.view.y2 then
+            d = t.r.y2 - t.view.y2 + SCROLL_MARGIN
+        end
+        if d ~= 0 then
+            st.follow = { id = t.id, cc = t.cc, to = (tonumber(t.cc.scroll_pos) or 0) + d }
+            y = math.max(t.view.y1 + 1, math.min(t.view.y2 - 1, y))
+        end
+    end
+    if not no_move then move_cursor(x, y) end
+    return x, y
+end
+
+local function field_nav(kind, g, list, cur, dir)
+    if kind == "blackjack" then
+        if ui_mod_elements.card_game_21_stage == "need_rate" then
+            if cur.id == "rate" then
+                if dir == 1 then return by_id(list, "check_save_rate") or by_id(list, "check_increasing") end
+                if dir == 2 then return by_id(list, "get_btn_take_rate") end
+                return nil
+            end
+            if cur.id == "check_save_rate" or cur.id == "check_increasing" then
+                if dir == 2 then return by_id(list, "rate") end
+                if dir == 3 then return by_id(list, "check_save_rate") end
+                if dir == 4 then return by_id(list, "check_increasing") end
+                return nil
+            end
+            if dir == 1 then return by_id(list, "rate") end
+        end
+        return best_dir(list, cur.r, dir)
+    end
+    if kind == "sleep" and cur.field == "btn" and dir == 1 then
+        return by_id(list, "time")
+    end
+    local same = in_field(list, cur.field)
+    local next_target = best_dir(same, cur.r, dir)
+    if next_target then return next_target end
+    if kind == "stove" then return nil end
+    local back_field = FIELD_WINDOWS[kind].first == "item" and "part" or FIELD_WINDOWS[kind].first
+    if cur.field == back_field and dir == 2 then
+        return by_id(list, FIELD_WINDOWS[kind].buttons[1][1])
+    end
+    if cur.field == "btn" and dir == 1 then
+        local previous = in_field(list, back_field)
+        return by_id(previous, field_state(g).mem[back_field]) or reading_first(previous)
+    end
+end
+
+function field_query(kind, g, x, y)
+    local list = field_collect(kind, g)
+    local t = focused_field_target(kind, g, list)
+    if kind == "blackjack" then
+        local m = ui_mod_elements
+        if m and field_state(g).stage ~= m.card_game_21_stage then
+            t = first_field_target(kind, list)
+        end
+    end
+    if not t then return no_hit(x, y) end
+    local r = t.r
+    if t.vis == false then
+        if not (field_state(g).follow and t.view) then return no_hit(x, y) end
+        r = { x1 = math.max(r.x1, t.view.x1), y1 = math.max(r.y1, t.view.y1),
+            x2 = math.min(r.x2, t.view.x2), y2 = math.min(r.y2, t.view.y2) }
+        if r.x2 - r.x1 <= 1 or r.y2 - r.y1 <= 1 then return no_hit(x, y) end
+    end
+    local cx, cy = center(r)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s",
+        cx, cy, r.x2 - r.x1, r.y2 - r.y1, t.kind)
+end
+
+local function sleep_step(g, direction, steps)
+    local track = g.time_track
+    if g.forced or not shown(track) or not enabled(track) then return end
+    for _ = 1, steps do track:StepValue(direction, false) end
+end
+
+local field_defer
+
+local function sleep_queue_step(g, direction, steps)
+    return field_defer(g, function()
+        local target = focused_field_target("sleep", g, field_collect("sleep", g))
+        if target and target.id == "time" then sleep_step(g, direction, steps) end
+    end)
+end
+
+function field_snap(kind, g, x, y, dir)
+    local list = field_collect(kind, g)
+    local cur = focused_field_target(kind, g, list)
+    if kind == "blackjack" and cur and cur.id == "rate" and (dir == 3 or dir == 4) then
+        field_defer(g, function()
+            local m = ui_mod_elements
+            if not m or m.card_game_21_stage ~= "need_rate" then return end
+            local control = dir == 3 and g.get_btn_rate_minus or g.get_btn_rate_plus
+            if shown(control) and enabled(control) then
+                if dir == 3 then g:btn_rate_minus() else g:btn_rate_plus() end
+            end
+        end)
+        return stay(x, y)
+    end
+    if kind == "sleep" and cur and cur.id == "time" and (dir == 3 or dir == 4) then
+        sleep_queue_step(g, dir == 3 and -1 or 1, 1)
+        return stay(x, y)
+    end
+    local t = cur and field_nav(kind, g, list, cur, dir)
+    if not t then return stay(x, y) end
+    local cx, cy = field_focus(g, t, true)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, t.kind)
+end
+
+local function scroll_cell_list(cc, delta)
+    local cur = tonumber(cc.scroll_pos) or 0
+    local acc = cc._gp_acc
+    if not acc or math.floor(acc) ~= cur then acc = cur end
+    local mn, mx = cc.scroll:GetMinScrollPos(), cc.scroll:GetMaxScrollPos()
+    acc = math.max(mn, math.min(mx, acc + delta))
+    cc._gp_acc = acc
+    if math.floor(acc) ~= cur then cc:Scroll_SetPos(math.floor(acc)) end
+    return acc
+end
+
+local function follow_field_target(kind, g, elapsed)
+    local st = field_state(g)
+    local f = st.follow
+    if not f then return end
+    local cur = tonumber(f.cc.scroll_pos) or 0
+    local goal = math.max(f.cc.scroll:GetMinScrollPos(), math.min(f.cc.scroll:GetMaxScrollPos(), f.to))
+    local acc = f.cc._gp_acc
+    if not acc or math.floor(acc) ~= cur then acc = cur end
+    local step = math.min(50, elapsed) * LIST_SCROLL_SPEED / 1000
+    local delta = math.max(-step, math.min(step, goal - acc))
+    local pos = scroll_cell_list(f.cc, delta)
+    local t = by_id(field_collect(kind, g), f.id)
+    if not t then
+        st.follow = nil
+        return
+    end
+    local x, y = center(t.r)
+    if t.view then y = math.max(t.view.y1 + 1, math.min(t.view.y2 - 1, y)) end
+    move_cursor(x, y)
+    if math.abs(pos - goal) < 0.01 then st.follow = nil end
+end
+
+function field_scroll(kind, g, y, dt)
+    local st = field_state(g)
+    local list = field_collect(kind, g)
+    local target = focused_field_target(kind, g, list)
+    local cc = target and target.cc
+    if not cc then return false end
+    st.follow = nil
+    local x, cursor_y = center(target.r)
+    scroll_cell_list(cc, (tonumber(y) or 0) * LIST_SCROLL_SPEED * (tonumber(dt) or 0) / 1000)
+    local updated = field_collect(kind, g)
+    local same = by_id(updated, target.id)
+    if same and same.vis ~= false then
+        field_focus(g, same)
+    else
+        local nearest, distance
+        for _, t in ipairs(updated) do
+            if rawequal(t.cc, cc) and t.vis ~= false then
+                local tx, ty = center(t.r)
+                local d = (tx - x)^2 + (ty - cursor_y)^2
+                if not distance or d < distance then nearest, distance = t, d end
+            end
+        end
+        if nearest then field_focus(g, nearest) end
+    end
+    return true
+end
+
+local function selected_ci(cc)
+    return cc and cc.selected and cc.cell[cc.selected] or nil
+end
+
+local function field_key(ci, key)
+    return ci and ci[key] or nil
+end
+
+local function find_field_key(list, field, key, value)
+    if not value then return nil end
+    for _, t in ipairs(list) do
+        if t.field == field and t.ci and t.ci[key] == value then return t end
+    end
+end
+
+local function melter_uses(kind, g)
+    if kind ~= "melt" or not g or not g.obj or type(g.obj.get_remaining_uses) ~= "function" then
+        return nil
+    end
+    local ok, u = pcall(g.obj.get_remaining_uses, g.obj)
+    return ok and tonumber(u) or nil
+end
+
+local function melter_last_charge(kind, g)
+    local u = melter_uses(kind, g)
+    return u ~= nil and u <= 1
+end
+
+local function field_return(kind, g, saved)
+    local list = field_collect(kind, g)
+    local t
+    if kind == "cook" then
+        t = find_field_key(list, "meal", "section", saved.meal)
+        if t and field_key(selected_ci(g.CC), "section") ~= saved.meal then
+            click(g, t)
+        end
+    elseif kind == "repair" or kind == "melt" then
+        local item = find_field_key(list, "item", "ID", saved.item)
+        if item then
+            local selected_item = field_key(selected_ci(g.CC[1]), "ID")
+            local selected_part = field_key(selected_ci(g.CC[2]), "section")
+            if selected_item ~= saved.item or selected_part ~= saved.bonus then
+                click(g, item)
+                list = field_collect(kind, g)
+                local bonus = find_field_key(list, "part", "section", saved.bonus)
+                if bonus then
+                    click(g, bonus)
+                    list = field_collect(kind, g)
+                end
+            end
+            t = find_field_key(list, "part", "section", saved.part)
+            local distance
+            if not t and saved.idx then
+                for _, part in ipairs(in_field(list, "part")) do
+                    local d = math.abs(part.idx - saved.idx)
+                    if not distance or d < distance then t, distance = part, d end
+                end
+            end
+            t = t or item
+        end
+    end
+    field_focus(g, t or first_field_target(kind, list))
+end
+
+local function deselect_meal(g)
+    g.CC:On_Select(false)
+    g.last_cont, g.last_idx = nil, nil
+    g.text_item:SetText("")
+    g.ci_cook:Reset()
+    for _, name in ipairs({ "ingre_b", "ingre_name", "ingre_num", "ingre_ico", "ingre_ico_temp" }) do
+        for _, w in pairs(g[name]) do w:Show(false) end
+    end
+    g.box_campfire:Show(false)
+    g.btn_cook:Enable(false)
+end
+
+local function field_click(kind, g, t)
+    local spec = FIELD_WINDOWS[kind]
+    if kind == "cook" and g.CC.selected == t.idx then
+        return deselect_meal(g)
+    end
+    if kind == "melt" and t.field == "part" and t.cc.selected == t.idx then
+        local item = g.CC[1].selected
+        if item then g:On_CC_Mouse1(1, item) end
+        return
+    end
+    click(g, t)
+    if spec.first == "item" and t.field == "item" then
+        local list = field_collect(kind, g)
+        field_focus(g, reading_first(in_field(list, "part")) or by_id(list, spec.action))
+    end
+end
+
+local function loot_marked(g)
+    for _, ci in ipairs(g.CC.cell) do
+        if ci.flags and ci.flags.selected then return true end
+    end
+    return false
+end
+
+local function action_selection(kind, g)
+    if kind == "cook" then return field_key(selected_ci(g.CC), "section") end
+    if FIELD_WINDOWS[kind].first == "item" then return field_key(selected_ci(g.CC[1]), "ID") end
+end
+
+local function field_action(kind, g, b, hold)
+    local spec = FIELD_WINDOWS[kind]
+    local st = field_state(g)
+    if b[1] == spec.action and melter_last_charge(kind, g) then
+        st.warn_flash = now()
+        return deny()
+    end
+    local control, fn = g[b[1]], g[b[3]]
+    if not shown(control) or not enabled(control) or type(fn) ~= "function" then return deny() end
+    if b[1] == "btn_loot_one" and not loot_marked(g) then return deny() end
+    local selection = action_selection(kind, g)
+    if kind == "sleep" then
+        if hold and hold.selection ~= g.time_track:GetIValue() then return end
+        fn(g)
+    elseif b[1] == spec.action and kind ~= "loot" then
+        if not selection or (hold and (hold.selection ~= selection or hold.blocked)) then return deny() end
+        if st.pending then return deny() end
+        local saved = { at = now() }
+        if kind == "cook" then
+            saved.meal = selection
+        elseif kind == "repair" or kind == "melt" then
+            local list = field_collect(kind, g)
+            local cur = focused_field_target(kind, g, list)
+            local part = selected_ci(g.CC[2])
+            saved.bonus = field_key(part, "section")
+            if cur and cur.field == "part" then
+                part, saved.idx = cur.ci, cur.idx
+            else
+                saved.idx = g.CC[2].selected
+            end
+            saved.item, saved.part = selection, field_key(part, "section")
+        end
+        if kind ~= "melt" then st.pending = saved end
+        fn(g)
+        if kind == "melt" and shown(g) then
+            st.melt_return = saved
+            field_return(kind, g, saved)
+        end
+    else
+        fn(g)
+        if kind == "loot" and shown(g) and b[1] ~= "btn_cancel" then
+            field_return(kind, g, {})
+        end
+    end
+    return "used"
+end
+
+local function field_back(kind, g)
+    local spec = FIELD_WINDOWS[kind]
+    if kind == "cook" and selected_ci(g.CC) then
+        return deselect_meal(g)
+    end
+    if spec.first == "item" then
+        local list = field_collect(kind, g)
+        local cur = focused_field_target(kind, g, list)
+        local item = find_field_key(list, "item", "ID", action_selection(kind, g))
+        if cur and cur.field ~= "item" and item then
+            g:On_CC_Mouse1(1, item.idx)
+            return field_focus(g, item)
+        end
+    end
+    return field_action(kind, g, spec.buttons[#spec.buttons])
+end
+
+field_defer = function(g, fn)
+    local q = field_state(g).queue
+    q[#q + 1] = fn
+    return "used"
+end
+
+local function blackjack_button(g, name, phase)
+    local st, m = field_state(g), ui_mod_elements
+    if not m then return "used" end
+    local stage, rate = m.card_game_21_stage, m.card_game_21_rate
+    if phase ~= "press" then
+        local hold = st.hold
+        st.hold = nil
+        if phase == "hold" and hold and hold.button == name and hold.stage == stage and hold.rate == rate then
+            field_defer(g, function()
+                if m.card_game_21_stage == stage and m.card_game_21_rate == rate and
+                    shown(g.get_btn_take_rate) and enabled(g.get_btn_take_rate) then g:btn_take_rate() end
+            end)
+        end
+        return "used"
+    end
+    local cur = focused_field_target("blackjack", g, field_collect("blackjack", g))
+    if stage == "need_rate" and (name == "X" or (name == "A" and cur and cur.id == "get_btn_take_rate")) then
+        st.hold = { button = name, stage = stage, rate = rate }
+        local entry = st.buttons.get_btn_take_rate
+        return "hold:300:400" .. ring_suffix(entry and entry.icon)
+    end
+    if name == "B" and (stage == "need_rate" or stage == "taked_rate") then
+        st.hold = nil
+        return field_defer(g, function()
+            if m.card_game_21_stage == stage and shown(g.get_btn_exit_game) and enabled(g.get_btn_exit_game) then
+                g:btn_exit_game()
+            end
+        end)
+    end
+    if name == "A" and cur and cur.id ~= "rate" then
+        return field_defer(g, function()
+            if m.card_game_21_stage ~= stage then return end
+            local control = g[cur.id]
+            if not shown(control) or not enabled(control) then return end
+            if cur.id == "check_save_rate" or cur.id == "check_increasing" then
+                control:SetCheck(not control:GetCheck())
+            else
+                local action = g[cur.id:sub(5)]
+                if action then action(g) end
+            end
+        end)
+    end
+    return "used"
+end
+
+function field_button(kind, g, name, phase)
+    if kind == "blackjack" then return blackjack_button(g, name, phase) end
+    local st, spec = field_state(g), FIELD_WINDOWS[kind]
+    if phase ~= "press" then
+        local hold = st.hold
+        st.hold = nil
+        if name == "X" and hold and is_gamepad() then
+            if kind == "loot" then
+                -- FIX-LIVE2 28b: tap (released before the ring starts) = loot all;
+                -- full hold 0.3+0.7 s = loot selected; release once the ring is running = cancel.
+                if phase == "hold" then
+                    return field_defer(g, function() field_action(kind, g, spec.buttons[1], hold) end)
+                elseif phase == "release" and (now() - (hold.t0 or 0)) < HOLD_PAUSE then
+                    return field_defer(g, function() field_action(kind, g, spec.buttons[2]) end)
+                end
+            elseif phase == "hold" then
+                return field_defer(g, function() field_action(kind, g, spec.buttons[1], hold) end)
+            end
+        end
+        return "used"
+    end
+    if kind == "sleep" then
+        if name == "LB" or name == "RB" then
+            return sleep_queue_step(g, name == "LB" and -1 or 1, 4)
+        end
+        if name == "B" then return field_defer(g, function() g:Close() end) end
+        if name == "Y" then
+            if shown(g.btn_set_spawn) and enabled(g.btn_set_spawn) then
+                return field_defer(g, function() field_action("sleep", g, spec.buttons[3]) end)
+            end
+            return deny()
+        end
+        if name ~= "A" and name ~= "X" then return "used" end
+    end
+    if name == "A" then
+        local t = focused_field_target(kind, g, field_collect(kind, g))
+        if not t then return deny() end
+        return field_defer(g, function()
+            local cur = by_id(field_collect(kind, g), t.id)
+            if not cur or cur.vis == false or (t.ci and not rawequal(cur.ci, t.ci)) then return deny() end
+            if cur.button then return field_action(kind, g, cur.button) end
+            if kind ~= "sleep" then return field_click(kind, g, cur) end
+        end)
+    end
+    if name == "B" then return field_defer(g, function() field_back(kind, g) end) end
+    if kind == "stove" and (name == "X" or name == "Y") then
+        return field_defer(g, function() field_action(kind, g, spec.buttons[name == "X" and 1 or 2]) end)
+    end
+    if name == "Y" then return field_defer(g, function() toggle_desc(g) end) end
+    if name == "X" and spec.action then
+        local selection = kind == "sleep" and g.time_track:GetIValue() or action_selection(kind, g)
+        local blocked = false
+        if spec.first == "item" then
+            local t = focused_field_target(kind, g, field_collect(kind, g))
+            blocked = t and t.field == "item" and t.ci.ID ~= selection
+        end
+        if kind ~= "loot" then
+            if melter_last_charge(kind, g) then
+                st.warn_flash = now()
+                return deny()
+            end
+            local act_btn = g[spec.action]
+            if not selection or blocked or not shown(act_btn) or not enabled(act_btn) then
+                return deny()
+            end
+        end
+        st.hold = { selection = selection, blocked = blocked, t0 = now() }
+        if kind == "loot" then
+            -- FIX-LIVE2 28: ring on the "loot selected" badge, 0.3 + 0.7 s
+            local e1 = st.buttons[spec.buttons[1][1]]
+            return string.format("hold:%d:%d", HOLD_PAUSE, HOLD_FILL) .. ring_suffix(e1 and e1.icon)
+        end
+        local e = st.buttons[spec.action]
+        return string.format("hold:%d:%d", HOLD_PAUSE, FIELD_HOLD_FILL) .. ring_suffix(e and e.icon)
+    end
+    return deny()
+end
+
+local function paint_field_buttons(kind, g, pad)
+    local spec, st = FIELD_WINDOWS[kind], field_state(g)
+    local al, parent = align(), g.back or g.dialog or g.card_game_21_point_form
+    local font = kind == "stove" and "letterica18" or "letterica16"
+    local px = circle_px(font)
+    local cap = al and al.cap_px(font) or 15
+    local show_glyph = pad and hints_shown()
+    local uses = melter_uses(kind, g)
+    if uses ~= nil and uses <= 1 and g.btn_repair and enabled(g.btn_repair) then
+        g.btn_repair:Enable(false)
+    end
+    for _, b in ipairs(spec.buttons) do
+        local btn = g[b[1]]
+        local e = st.buttons[b[1]]
+        if btn and shown(btn) then
+            local tc = btn:TextControl()
+            if not e then
+                local xml = xmlh()
+                e = { icon = xml:InitStatic("icon", parent),
+                    label = xml:InitTextWnd(kind == "stove" and "label18" or "measure16", parent),
+                    text = tc:GetText() }
+                st.buttons[b[1]] = e
+            end
+            local current_text = tc:GetText()
+            if current_text and current_text ~= "" then
+                e.text = current_text
+                tc:SetText("")
+            end
+            local p, bw, bh = btn:GetWndPos(), btn:GetWidth(), btn:GetHeight()
+            local left, cy, pw = button_col_left(kind, p, bw, bh, cap)
+            local active = enabled(btn)
+            local lx = left
+            if show_glyph and b[2] then
+                local iw = place_icon(e.icon, b[2], left, cy, px, active and 255 or DIM_ALPHA)
+                lx = left + iw + pw(math.floor(cap * 0.65 + 0.5))
+            else
+                e.icon:Show(false)
+            end
+            local name = e.text and e.text ~= "" and e.text or (b[4] and tr(b[4]) or "")
+            if pad and b[1] == "btn_loot_all" then name = label("loot_all_tap") end
+            if pad and b[1] == "btn_loot_one" then name = label("loot_one_hold") end
+            e.label:SetText(name)
+            e.label:SetTextColor(active and 0xFFF0F0F0 or 0xFF969696)
+            e.label:SetWndPos(vector2():set(lx, al and al.label_y(cy, 24, font) or cy - 12))
+            e.label:SetWndSize(vector2():set(math.max(1, p.x + bw - lx), 24))
+            e.label:Show(true)
+        elseif e then
+            e.icon:Show(false)
+            e.label:Show(false)
+        end
+    end
+    if kind == "melt" and parent then
+        if uses ~= nil and uses <= 2 and g.btn_repair then
+            if not st.charge_warn then
+                st.charge_warn = xmlh():InitTextWnd("measure16", parent)
+            end
+            local p, bw = g.btn_repair:GetWndPos(), g.btn_repair:GetWidth()
+            local flash = st.warn_flash and (now() - st.warn_flash < 900)
+            st.charge_warn:SetText(label(uses <= 1 and "melter_last" or "melter_warn2"))
+            st.charge_warn:SetTextColor(uses <= 1 and (flash and 0xFFFF8888 or 0xFFE86A6A) or 0xFFE8BE68)
+            st.charge_warn:SetWndPos(vector2():set(math.max(4, p.x - 20), math.max(4, p.y - 22)))
+            st.charge_warn:SetWndSize(vector2():set(math.max(220, bw * 2), 20))
+            st.charge_warn:Show(true)
+        elseif st.charge_warn then
+            st.charge_warn:Show(false)
+        end
+    end
+end
+
+local function fit_cook_grid(g)
+    local d = device()
+    local cc = g.CC
+    if not (d and cc and g.b_inv and utils_xml and utils_xml.screen_ratio) then return end
+    local ratio = utils_xml.screen_ratio()
+    if not ratio or ratio <= 0 then return end
+    local cols = math.floor(cc.scroll:GetWidth() / ratio / (cc.grid_size + cc.grid_line))
+    if d.width / d.height > 16 / 9 + 0.01 then
+        local scroll, border = abs_rect(cc.scroll), abs_rect(g.b_inv)
+        if not scroll or not border then return end
+        local pad = cc.pad and cc.pad:GetWidth() or 0
+        local available = border.x2 - scroll.x1 - pad
+        cols = math.min(cols, math.floor(available / (cc.grid_size * ratio + cc.grid_line)))
+    end
+    cc.cols = math.max(1, cols)
+end
+
+local function tick_field(kind, g)
+    local st = field_state(g)
+    local t = now()
+    local spec = FIELD_WINDOWS[kind]
+    if not shown(g) then return end
+    if not st.named then
+        g:SetWindowName(spec.name)
+        st.named = true
+    end
+    local elapsed = st.last and math.max(0, t - st.last) or 0
+    st.last = t
+    local pad = ENABLED and is_gamepad() and top_ok(spec.name, g)
+    if pad and not st.pad then
+        local list = field_collect(kind, g)
+        field_focus(g, focused_field_target(kind, g, list))
+    elseif not pad then
+        st.queue, st.follow, st.hold, st.pending, st.melt_return = {}, nil, nil, nil, nil
+        g._rw_frame_rect = nil
+    end
+    st.pad = pad
+    if kind == "blackjack" then
+        local m = ui_mod_elements
+        if m and st.stage ~= m.card_game_21_stage then
+            st.stage = m.card_game_21_stage
+            st.id, st.hold = nil, nil
+            if pad then field_focus(g, first_field_target(kind, field_collect(kind, g))) end
+        end
+    end
+    if pad then
+        local q = st.queue
+        st.queue = {}
+        for _, fn in ipairs(q) do
+            if not shown(g) or not top_ok(spec.name, g) then break end
+            local ok, err = pcall(fn)
+            if not ok and printf then printf("! [gp_workshop] field %s: %s", kind, tostring(err)) end
+        end
+        if not shown(g) or not top_ok(spec.name, g) then return end
+        if st.pending and t - st.pending.at > RETURN_MS then st.pending = nil end
+        if st.melt_return and t - st.melt_return.at > MELTER_REINIT_MS then st.melt_return = nil end
+        follow_field_target(kind, g, elapsed)
+        local target = focused_field_target(kind, g, field_collect(kind, g))
+        g._rw_frame_rect = target and target.vis ~= false and target.r or nil
+    end
+    if kind == "sleep" and g.time_track.GetSliderCenter and shown(g.time_track) then
+        local cover = abs_rect(g.static_cover)
+        local slider = g.time_track:GetSliderCenter()
+        local marker = g.st_marker:GetWndPos()
+        g.st_marker:SetWndPos(vector2():set(slider - cover.x1 - g.st_marker:GetWidth() * 0.5, marker.y))
+    end
+    paint_field_buttons(kind, g, pad)
+end
+
+local function reset_field(g)
+    local st = field_state(g)
+    st.id, st.mem, st.queue, st.follow, st.hold, st.pending, st.melt_return = nil, {}, {}, nil, nil, nil, nil
+    st.pad, st.last = nil, nil
+end
+
+function install_field_hooks()
+    for _, kind in ipairs(FIELD_ORDER) do
+        local spec = FIELD_WINDOWS[kind]
+        local m = rawget(_G, spec.module)
+        local cls = type(m) == "table" and m[kind == "blackjack" and "card_game_21_point" or spec.name]
+        if cls and not cls._gpfw_hooked then
+            cls._gpfw_hooked = true
+            hook_update(cls, function(g)
+                if kind ~= "sleep" and kind ~= "blackjack" then install_desc_hooks(g) end
+                tick_field(kind, g)
+            end)
+            local reset_name = (kind == "stove" or kind == "sleep") and "Initialize" or "Reset"
+            local reset = cls[reset_name]
+            if type(reset) == "function" then
+                cls[reset_name] = function(g, ...)
+                    reset_field(g)
+                    return reset(g, ...)
+                end
+            end
+            local update_ui = cls.UpdateUi
+            if (kind == "repair" or kind == "cook") and type(update_ui) == "function" then
+                cls.UpdateUi = function(g, ...)
+                    local st = field_state(g)
+                    local saved = st.pending
+                    st.pending = nil
+                    local res = update_ui(g, ...)
+                    if saved and shown(g) and is_gamepad() and top_ok(spec.name, g) then
+                        field_return(kind, g, saved)
+                    end
+                    return res
+                end
+            end
+            if kind == "melt" and type(cls.InitInventory) == "function" then
+                local init_inv = cls.InitInventory
+                cls.InitInventory = function(g, n, ...)
+                    local res = init_inv(g, n, ...)
+                    local st = g and g._gpfw
+                    local saved = (n == 1 and st and st.melt_return) or nil
+                    if saved then
+                        st.melt_return = nil
+                        if now() - saved.at <= MELTER_REINIT_MS and shown(g) and is_gamepad() and top_ok(spec.name, g) then
+                            field_return("melt", g, saved)
+                        end
+                    end
+                    return res
+                end
+            end
+            if kind == "cook" then
+                local load_meals = cls.Load_MealList
+                if type(load_meals) == "function" then
+                    cls.Load_MealList = function(g, ...)
+                        fit_cook_grid(g)
+                        return load_meals(g, ...)
+                    end
+                end
+            end
+        end
+    end
+end
+
+function on_game_start()
+    install_hooks()
+end

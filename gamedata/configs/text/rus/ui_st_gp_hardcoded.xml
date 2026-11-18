@@ -1,0 +1,435 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="ui_gp_failover_kbm_toast">
+        <text>Ошибка геймпада: управление переведено на клавиатуру и мышь</text>
+    </string>
+    <string id="ui_gp_queue_badge_fmt">
+        <text>Очередь: %d (%s)  %s Отмена</text>
+    </string>
+    <string id="ui_gp_inv_hint_section">
+        <text>Раздел</text>
+    </string>
+    <string id="ui_gp_inv_act_use">
+        <text>Использовать</text>
+    </string>
+    <string id="ui_gp_inv_act_equip">
+        <text>Надеть</text>
+    </string>
+    <string id="ui_gp_inv_act_unequip">
+        <text>Снять</text>
+    </string>
+    <string id="ui_gp_inv_act_move">
+        <text>Переложить</text>
+    </string>
+    <string id="ui_gp_inv_act_select">
+        <text>Выбрать</text>
+    </string>
+    <string id="ui_gp_inv_act_action">
+        <text>Действие</text>
+    </string>
+    <string id="ui_gp_inv_act_description">
+        <text>Описание</text>
+    </string>
+    <string id="ui_gp_inv_act_section">
+        <text>Раздел</text>
+    </string>
+    <string id="ui_gp_inv_act_menu">
+        <text>Меню</text>
+    </string>
+    <string id="ui_gp_inv_act_replace">
+        <text>Заменить</text>
+    </string>
+    <string id="ui_gp_inv_act_install">
+        <text>Установить</text>
+    </string>
+    <string id="ui_gp_inv_act_charge">
+        <text>Зарядить</text>
+    </string>
+    <string id="ui_gp_inv_act_load">
+        <text>Зарядить</text>
+    </string>
+    <string id="ui_gp_inv_act_place">
+        <text>Положить</text>
+    </string>
+    <string id="ui_gp_inv_act_apply">
+        <text>Применить</text>
+    </string>
+    <string id="ui_gp_inv_side_transfer">
+        <text>Перенос</text>
+    </string>
+    <string id="ui_gp_inv_side_panel">
+        <text>Панель</text>
+    </string>
+    <string id="ui_gp_inv_side_to_cart">
+        <text>В корзину</text>
+    </string>
+    <string id="ui_gp_inv_side_desc">
+        <text>Описание</text>
+    </string>
+    <string id="ui_gp_inv_side_desc_short">
+        <text>Опис.</text>
+    </string>
+    <string id="ui_gp_inv_side_menu">
+        <text>Меню</text>
+    </string>
+    <string id="ui_gp_pda_lbl_tabs">
+        <text>Вкладки</text>
+    </string>
+    <string id="ui_gp_pda_lbl_tasks_legend">
+        <text>Задания / Легенда</text>
+    </string>
+    <string id="ui_gp_pda_lbl_select">
+        <text>Выбрать</text>
+    </string>
+    <string id="ui_gp_pda_lbl_toggle">
+        <text>Переключить</text>
+    </string>
+    <string id="ui_gp_pda_lbl_open">
+        <text>Открыть</text>
+    </string>
+    <string id="ui_gp_pda_lbl_refresh">
+        <text>Обновить</text>
+    </string>
+    <string id="ui_gp_pda_lbl_take">
+        <text>Взять</text>
+    </string>
+    <string id="ui_gp_pda_lbl_orders">
+        <text>Приказы</text>
+    </string>
+    <string id="ui_gp_pda_lbl_text_refresh">
+        <text>Текст / Обновл.</text>
+    </string>
+    <string id="ui_gp_pda_lbl_known_refresh">
+        <text>Известные / Обновл.</text>
+    </string>
+    <string id="ui_gp_pda_lbl_img_msg">
+        <text>Картинки / Сообщ.</text>
+    </string>
+    <string id="ui_gp_pda_lbl_press">
+        <text>Нажать</text>
+    </string>
+    <string id="ui_gp_ws_lbl_select">
+        <text>Выбрать</text>
+    </string>
+    <string id="ui_gp_ws_lbl_parts">
+        <text>Запчасти</text>
+    </string>
+    <string id="ui_gp_ws_lbl_place">
+        <text>Поставить</text>
+    </string>
+    <string id="ui_gp_ws_lbl_mark">
+        <text>Отметить</text>
+    </string>
+    <string id="ui_gp_ws_lbl_layer">
+        <text>Слой</text>
+    </string>
+    <string id="ui_gp_ws_lbl_instructions">
+        <text>Инструкции</text>
+    </string>
+    <string id="ui_gp_ws_lbl_back">
+        <text>Назад</text>
+    </string>
+    <string id="ui_gp_ws_lbl_exit">
+        <text>Выход</text>
+    </string>
+    <string id="ui_gp_err_ctx_world">
+        <text>Во время обычной игры (ходьба, бой или исследование мира)</text>
+    </string>
+    <string id="ui_gp_err_ctx_menu">
+        <text>В открытом окне инвентаря, обыска, торговли, КПК или меню</text>
+    </string>
+    <string id="ui_gp_err_ctx_wheel">
+        <text>При открытом быстром колесе выбора предметов или патронов</text>
+    </string>
+    <string id="ui_gp_err_ctx_sleep">
+        <text>В окне сна</text>
+    </string>
+    <string id="ui_gp_err_ctx_cutscene">
+        <text>Во время сюжетной сцены или анимации использования предмета</text>
+    </string>
+    <string id="ui_gp_err_ctx_text">
+        <text>Во время ввода текста или настройки клавиш</text>
+    </string>
+    <string id="ui_gp_err_ctx_place">
+        <text>Во время расстановки мебели в убежище</text>
+    </string>
+    <string id="ui_gp_err_ctx_default">
+        <text>Во время работы игры</text>
+    </string>
+    <string id="ui_gp_err_when_fmt">
+        <text>%s (режим: %s).</text>
+    </string>
+    <string id="ui_gp_err_mod_wheel">
+        <text>Сбой в быстром колесе выбора предметов или патронов</text>
+    </string>
+    <string id="ui_gp_err_mod_wheel_arm">
+        <text>Сбой в отрисовке кругового меню</text>
+    </string>
+    <string id="ui_gp_err_mod_bridge">
+        <text>Сбой при управлении курсором или действием с предметом в инвентаре</text>
+    </string>
+    <string id="ui_gp_err_mod_weapon">
+        <text>Сбой при перезарядке, проверке магазина или взаимодействии с оружием</text>
+    </string>
+    <string id="ui_gp_err_mod_field">
+        <text>Сбой при быстром действии (фонарик, ПНВ, детектор, граната или подбирание предмета)</text>
+    </string>
+    <string id="ui_gp_err_mod_compat">
+        <text>Сбой при взаимодействии с внешним модом оружия или магазинов</text>
+    </string>
+    <string id="ui_gp_err_mod_pda">
+        <text>Сбой при управлении КПК с геймпада</text>
+    </string>
+    <string id="ui_gp_err_mod_screens">
+        <text>Сбой при управлении окном диалога, ремонта, сна или главного меню</text>
+    </string>
+    <string id="ui_gp_err_mod_inv_pause">
+        <text>Сбой в управлении паузой при открытом инвентаре</text>
+    </string>
+    <string id="ui_gp_err_mod_lifecycle">
+        <text>Сбой при проверке состояния паузы или анимации рук</text>
+    </string>
+    <string id="ui_gp_err_mod_toasts">
+        <text>Сбой при показе всплывающего уведомления на экране</text>
+    </string>
+    <string id="ui_gp_err_mod_testkit">
+        <text>Сбой в сценарии встроенной проверки</text>
+    </string>
+    <string id="ui_gp_err_mod_failover">
+        <text>Сработала аварийная защита управления геймпада</text>
+    </string>
+    <string id="ui_gp_err_mod_default">
+        <text>Внутренняя ошибка в обработчике управления геймпада</text>
+    </string>
+    <string id="ui_gp_err_what_fmt">
+        <text>%s (узел: %s; деталь: %s).</text>
+    </string>
+    <string id="ui_gp_err_rec_failover">
+        <text>Проблемное действие пропущено без вылета игры; все зажатые кнопки, стики, вибрация и пауза сброшены, управление переведено на клавиатуру и мышь</text>
+    </string>
+    <string id="ui_gp_err_rec_normal">
+        <text>Проблемный шаг безопасно пропущен без вылета игры; игра продолжает работу в штатном режиме</text>
+    </string>
+    <string id="ui_gp_err_rep_title">
+        <text>ОТЧЁТ ЗАЩИТЫ ГЕЙМПАДА (gamepad_last_error.log)</text>
+    </string>
+    <string id="ui_gp_err_rep_s1">
+        <text>1. ЧТО ПРОИЗОШЛО:</text>
+    </string>
+    <string id="ui_gp_err_rep_s2">
+        <text>2. В КАКОЙ МОМЕНТ ИГРЫ:</text>
+    </string>
+    <string id="ui_gp_err_rep_s3">
+        <text>3. ЧТО СДЕЛАЛА ЗАЩИТА:</text>
+    </string>
+    <string id="ui_gp_err_rep_tech">
+        <text>ТЕХНИЧЕСКИЕ ДЕТАЛИ:</text>
+    </string>
+    <string id="ui_gp_tk_abort_btn">
+        <text>[End / 0] Стоп теста</text>
+    </string>
+    <string id="ui_gp_tk_hint">
+        <text>Выбор: мышь | клавиши 1-4 | Вверх/Вниз + Enter/Пробел | End - Стоп теста</text>
+    </string>
+    <string id="ui_gp_tk_yes">
+        <text>Да</text>
+    </string>
+    <string id="ui_gp_tk_no">
+        <text>Нет</text>
+    </string>
+    <string id="ui_gp_tk_hdr_fmt">
+        <text>Автотест — Шаг %d/%d: %s</text>
+    </string>
+    <string id="ui_gp_tk_question_pfx">
+        <text>Вопрос: </text>
+    </string>
+    <string id="ui_gp_tk_why_pfx">
+        <text>Зачем: </text>
+    </string>
+    <string id="ui_gp_tk_why_default">
+        <text>проверка глазами человека</text>
+    </string>
+    <string id="ui_gp_tk_wait_ask">
+        <text>[T] Ожидание завершения анимации рук перед открытием окна вопроса...</text>
+    </string>
+    <string id="ui_gp_tk_aborted_fmt">
+        <text>[T] СТОП ТЕСТА: сценарий прерван (%s)</text>
+    </string>
+    <string id="ui_gp_tk_wait_start">
+        <text>[T] Ожидание завершения анимации рук перед стартом сценария...</text>
+    </string>
+    <string id="ui_gp_tk_step_fmt">
+        <text>Шаг %d/%d: %s</text>
+    </string>
+    <string id="ui_gp_tk_done_fmt">
+        <text>Тест завершён (%s): Шагов %d, PASS %d, FAIL %d. Можно выходить из игры.</text>
+    </string>
+    <string id="ui_gp_tk_already_running">
+        <text>[T] Сценарий уже выполняется (End — Стоп теста).</text>
+    </string>
+    <string id="ui_gp_toast_sample_1">
+        <text>Модифицированный бронекостюм «Носорог» Долга М2 [Сост: 84%] 14.5 кг</text>
+    </string>
+    <string id="ui_gp_toast_sample_2">
+        <text>Штурмовая винтовка АН-94 «Абакан» тактическая [5.45x39: 30+1] 3.9 кг</text>
+    </string>
+    <string id="ui_gp_toast_sample_3">
+        <text>Стойкость к бронебойным пулям (BR Class 4) .... 78% (+12%)</text>
+    </string>
+    <string id="ui_gp_toast_sample_4">
+        <text>Стоимость ремонта комплектом у техника ........ 48 650 RU</text>
+    </string>
+    <string id="ui_gp_toast_test_no_ammo">
+        <text>Нет подходящих патронов</text>
+    </string>
+    <string id="ui_gp_uidbg_title">
+        <text>Редактор интерфейса</text>
+    </string>
+    <string id="ui_gp_uidbg_select_el">
+        <text>Выберите элемент в списке или щелчком по экрану.</text>
+    </string>
+    <string id="ui_gp_uidbg_grp_layout">
+        <text>Расположение</text>
+    </string>
+    <string id="ui_gp_uidbg_dx">
+        <text>Сдвиг X</text>
+    </string>
+    <string id="ui_gp_uidbg_dy">
+        <text>Сдвиг Y</text>
+    </string>
+    <string id="ui_gp_uidbg_dw">
+        <text>Ширина +</text>
+    </string>
+    <string id="ui_gp_uidbg_dh">
+        <text>Высота +</text>
+    </string>
+    <string id="ui_gp_uidbg_offscreen">
+        <text>Элемент сейчас не на экране.</text>
+    </string>
+    <string id="ui_gp_uidbg_grp_style">
+        <text>Оформление</text>
+    </string>
+    <string id="ui_gp_uidbg_bg_color">
+        <text>Цвет фона</text>
+    </string>
+    <string id="ui_gp_uidbg_txt_color">
+        <text>Цвет текста</text>
+    </string>
+    <string id="ui_gp_uidbg_reset_el">
+        <text>Сбросить элемент</text>
+    </string>
+    <string id="ui_gp_uidbg_no_screen">
+        <text>— экран не определён —</text>
+    </string>
+    <string id="ui_gp_uidbg_auto_sfx">
+        <text> (авто)</text>
+    </string>
+    <string id="ui_gp_uidbg_screen">
+        <text>Экран</text>
+    </string>
+    <string id="ui_gp_uidbg_auto_opt">
+        <text>Автоопределение</text>
+    </string>
+    <string id="ui_gp_uidbg_undo">
+        <text>Отменить</text>
+    </string>
+    <string id="ui_gp_uidbg_reset_scr">
+        <text>Сбросить экран</text>
+    </string>
+    <string id="ui_gp_uidbg_save_prof">
+        <text>Сохранить профиль</text>
+    </string>
+    <string id="ui_gp_uidbg_save_err">
+        <text>Не удалось сохранить профиль</text>
+    </string>
+    <string id="ui_gp_uidbg_dirty">
+        <text>Есть несохранённые правки</text>
+    </string>
+    <string id="ui_gp_uidbg_frames">
+        <text>Рамки</text>
+    </string>
+    <string id="ui_gp_uidbg_click_pick">
+        <text>Выбор щелчком</text>
+    </string>
+    <string id="ui_gp_uidbg_dbl_hint">
+        <text>Двойной щелчок мимо окон отдаёт управление игре.</text>
+    </string>
+    <string id="ui_gp_uidbg_open_hint">
+        <text>Откройте экран игры (например, «Настройки» из меню паузы).</text>
+    </string>
+    <string id="ui_gp_uidbg_tip_enable">
+        <text>Включите галочку «Редактор интерфейса» в настройках геймпада.</text>
+    </string>
+    <string id="ui_gp_uidbg_scr_options">
+        <text>Настройки</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_bg">
+        <text>Фон за окном</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_dialog">
+        <text>Окно настроек целиком</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_accept">
+        <text>Кнопка «Применить»</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_reset">
+        <text>Кнопка «Сбросить»</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_cancel">
+        <text>Кнопка «Отмена»</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_pending">
+        <text>Надпись о несохранённых изменениях</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_scroll">
+        <text>Список параметров</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_preset_cap">
+        <text>Подпись «Пресет»</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_preset">
+        <text>Выбор пресета</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_panel">
+        <text>Геймпад: панель страницы кнопок</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_pad">
+        <text>Геймпад: картинка геймпада</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_card">
+        <text>Геймпад: карточка подсказки</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_title">
+        <text>Геймпад: заголовок подсказки</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_long">
+        <text>Геймпад: длинная подсказка</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_panel">
+        <text>Геймпад: панель прицеливания</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_title">
+        <text>Прицеливание: заголовок справки</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_line">
+        <text>Прицеливание: строка пределов</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_long">
+        <text>Прицеливание: длинная подсказка</text>
+    </string>
+    <string id="ui_gp_uidbg_page_buttons">
+        <text>кнопки</text>
+    </string>
+    <string id="ui_gp_uidbg_page_aiming">
+        <text>прицеливание</text>
+    </string>
+    <string id="ui_gp_uidbg_foot_icon_fmt">
+        <text>Нижняя полоса (%s): значки %d</text>
+    </string>
+    <string id="ui_gp_uidbg_foot_label_fmt">
+        <text>Нижняя полоса (%s): подпись %d</text>
+    </string>
+	<string id="st_gp_open_site_confirm">
+		<text>Открыть сайт авторов мода в браузере (игра может свернуться)?</text>
+	</string>
+</string_table>

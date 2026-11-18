@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<string_table>
+	<string id="ui_gp_icons_group">
+		<text>Значки та підказки</text>
+	</string>
+	<string id="ui_gp_icons_pad_type">
+		<text>Тип геймпада</text>
+	</string>
+	<string id="ui_gp_icons_pad_type_desc">
+		<text>Які кнопки малювати на підказках. У режимі «Авто» марка визначається сама; якщо звичайний геймпад підписаний літерами A/B/X/Y, можна вручну вибрати Xbox.</text>
+	</string>
+	<string id="ui_gp_icons_pad_auto">
+		<text>Авто</text>
+	</string>
+	<string id="ui_gp_icons_pad_xbox">
+		<text>Xbox</text>
+	</string>
+	<string id="ui_gp_icons_pad_ps">
+		<text>PlayStation</text>
+	</string>
+	<string id="ui_gp_icons_pad_nintendo">
+		<text>Nintendo</text>
+	</string>
+	<string id="ui_gp_icons_pad_generic">
+		<text>Звичайний</text>
+	</string>
+	<string id="ui_gp_icons_style">
+		<text>Вигляд значків</text>
+	</string>
+	<string id="ui_gp_icons_style_desc">
+		<text>Оформлення кнопок геймпада у стилі клавіш гри: світлі, темні потерті або світлі з кольоровими літерами й фігурами.</text>
+	</string>
+	<string id="ui_gp_icons_style_white">
+		<text>Світлі</text>
+	</string>
+	<string id="ui_gp_icons_style_dark">
+		<text>Темні</text>
+	</string>
+	<string id="ui_gp_icons_style_color">
+		<text>Кольорові</text>
+	</string>
+	<string id="ui_gp_icons_scale">
+		<text>Розмір значків</text>
+	</string>
+	<string id="ui_gp_icons_scale_desc">
+		<text>Масштаб значків кнопок геймпада на екрані та у вікнах (від 50 до 150 відсотків).</text>
+	</string>
+	<string id="ui_gp_icons_hints">
+		<text>Підказки кнопок на екрані</text>
+	</string>
+	<string id="ui_gp_icons_hints_desc">
+		<text>Чи показувати значки кнопок геймпада: усюди, лише в меню та інвентарі (без підказок біля предметів у світі) або повністю сховати значки, залишивши роботу кнопок.</text>
+	</string>
+	<string id="ui_gp_icons_hints_always">
+		<text>Завжди</text>
+	</string>
+	<string id="ui_gp_icons_hints_menu">
+		<text>Лише в меню</text>
+	</string>
+	<string id="ui_gp_icons_hints_off">
+		<text>Сховати</text>
+	</string>
+</string_table>

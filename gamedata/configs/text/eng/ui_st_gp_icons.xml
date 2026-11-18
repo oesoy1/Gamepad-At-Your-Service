@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<string_table>
+	<string id="ui_gp_icons_group">
+		<text>Icons &amp; Prompts</text>
+	</string>
+	<string id="ui_gp_icons_pad_type">
+		<text>Gamepad Type</text>
+	</string>
+	<string id="ui_gp_icons_pad_type_desc">
+		<text>Which button icons to show in prompts. Auto detects your controller brand; pick Xbox manually if your generic controller uses A/B/X/Y labels.</text>
+	</string>
+	<string id="ui_gp_icons_pad_auto">
+		<text>Auto</text>
+	</string>
+	<string id="ui_gp_icons_pad_xbox">
+		<text>Xbox</text>
+	</string>
+	<string id="ui_gp_icons_pad_ps">
+		<text>PlayStation</text>
+	</string>
+	<string id="ui_gp_icons_pad_nintendo">
+		<text>Nintendo</text>
+	</string>
+	<string id="ui_gp_icons_pad_generic">
+		<text>Generic</text>
+	</string>
+	<string id="ui_gp_icons_style">
+		<text>Icon Style</text>
+	</string>
+	<string id="ui_gp_icons_style_desc">
+		<text>Visual style of gamepad button icons matching in-game keycaps: light, worn dark, or light with colored symbols.</text>
+	</string>
+	<string id="ui_gp_icons_style_white">
+		<text>Light</text>
+	</string>
+	<string id="ui_gp_icons_style_dark">
+		<text>Dark</text>
+	</string>
+	<string id="ui_gp_icons_style_color">
+		<text>Colored</text>
+	</string>
+	<string id="ui_gp_icons_scale">
+		<text>Icon Scale</text>
+	</string>
+	<string id="ui_gp_icons_scale_desc">
+		<text>Scale of gamepad button icons on screen and in menus (50% to 150%).</text>
+	</string>
+	<string id="ui_gp_icons_hints">
+		<text>On-Screen Button Prompts</text>
+	</string>
+	<string id="ui_gp_icons_hints_desc">
+		<text>Where to show gamepad button prompts: everywhere, in menus and inventory only (hiding world prompts), or hide all icon prompts while keeping buttons active.</text>
+	</string>
+	<string id="ui_gp_icons_hints_always">
+		<text>Always</text>
+	</string>
+	<string id="ui_gp_icons_hints_menu">
+		<text>Menus Only</text>
+	</string>
+	<string id="ui_gp_icons_hints_off">
+		<text>Hide</text>
+	</string>
+</string_table>

@@ -1,0 +1,1285 @@
+-- Gamepad overlay for locally installed Haru QAW / GAMMA Balance.
+local qaw, arm, manager
+local layouts, quick, held, moving = {{}, {}}, nil, {}, nil
+local profile_schema = 0
+local window, ammo, ammo_index, ammo_options, selected
+local keep_open, hold_button, ammo_button
+local ammo_classes = {}
+local pause_token
+local edited_tabs = {}
+local laid_out_options
+local stick_was_active, rebound_until
+local REBOUND_MS = 70
+local REBOUND_ANGLE = math.rad(135)
+local CENTER_ITEM_OFFSET = 24
+local labels = {"st_gp_qaw_meds", "st_gp_qaw_grenades", "st_gp_qaw_devices", "st_gp_qaw_companions"}
+local categories = {"ui_gp_qaw_category_meds", "ui_gp_qaw_category_grenades", "ui_gp_qaw_category_devices", "ui_gp_qaw_category_companions"}
+local defaults = {
+    {"act:mask_wipe", "act:laser", "act:binocular", "act:nvg_brightness"},
+    {"comp:1", "comp:2", "comp:3", "comp:4", "comp:5", "act:comp_move_to_point", "act:comp_idiots_ui"}
+}
+local actions = {{}, {}}
+local devices = {}
+local order, enabled = {1, 2, 3, 4}, {true, true, true, true}
+local art = "ui_gp_qaw_addon_"
+local class_tabs = {
+    QConsumableWheelOption = 1, QGrenadeWheelOption = 2, QGrenadeLauncherWheelOption = 2,
+    QSilencerWheelOption = 2, QScopeWheelOption = 2,
+}
+local function clock()
+    return game.get_time_continual and game.get_time_continual() or time_global()
+end
+local function tr(key)
+    return game.translate_string(key)
+end
+local function notify(key)
+    if actor_menu and actor_menu.set_msg then actor_menu.set_msg(1, tr(key), 2) end
+end
+local function shown(gui)
+    return gui and gui:IsShown()
+end
+local function find(tab, section)
+    for i, entry in ipairs(manager.tabs[tab]) do
+        if entry.section == section then return i, entry end
+    end
+end
+local function first_empty(slots)
+    for i = 1, 8 do if not slots[i] then return i end end
+end
+local function reconcile(tab)
+    local slots = layouts[tab]
+    for i = 1, 8 do
+        if slots[i] and not find(tab, slots[i]) then slots[i] = nil end
+    end
+    for _, entry in ipairs(manager.tabs[tab]) do
+        local used = false
+        for i = 1, 8 do used = used or slots[i] == entry.section end
+        if not used then
+            local free = first_empty(slots)
+            if free then slots[free] = entry.section end
+        end
+    end
+end
+local function clear_time()
+    if pause_token then
+        if game and game.release_pause_token then game.release_pause_token(pause_token) end
+        pause_token = nil
+    end
+    if game and game.release_time_factor then game.release_time_factor("gp_qaw") end
+end
+local function refresh(gui)
+    if shown(gui) then gui:UpdateItems() end
+end
+local function cursor_at(gui, angle)
+    local r = gui.cursor:GetHeight() / 2
+    local d = device()
+    local x = gui.center.x + math.sin(angle) * r * (d.height / d.width) / .75
+    local y = gui.center.y - math.cos(angle) * r
+    arm.move_and_center_element(gui.cursor, x, y)
+    gui.cursor:SetHeading(2 * math.pi - angle)
+end
+local WEDGE_MS, TAB_MS = 95, 60
+local function update_wedge(gui, now, frame_ms)
+    if not selected then
+        gui.gp_wedge = nil
+        return
+    end
+    local target = (selected - 1) * math.pi / 4
+    local motion = gui.gp_wedge
+    if motion and target == motion.target and now >= motion.start + WEDGE_MS and motion.angle == target then return end
+    if not motion then
+        motion = {angle = target, from = target, target = target, start = now - WEDGE_MS}
+        gui.gp_wedge = motion
+    elseif target ~= motion.target then
+        motion.from, motion.target, motion.start = motion.angle, target, now - frame_ms
+    end
+    local t = math.min(1, (now - motion.start) / WEDGE_MS)
+    local delta = (motion.target - motion.from + math.pi) % (2 * math.pi) - math.pi
+    motion.angle = t == 1 and target or motion.from + delta * (1 - (1 - t)^2)
+    cursor_at(gui, motion.angle % (2 * math.pi))
+end
+local ICON_SCALE, ICON_MS = 1.30, 100
+local function update_item_scale(option, hovered, now, frame_ms)
+    local motion = option.gp_icon_motion
+    if not motion then
+        if not hovered then return end
+        local cell = option.gp_entry and option:GetCellItem()
+            or (option.gp_cell and option.gp_cell.cell[1])
+        local icon = cell and cell.cell
+        if not icon then return end
+        local pos = icon:GetWndPos()
+        motion = {icon = icon, x = pos.x, y = pos.y, w = icon:GetWidth(), h = icon:GetHeight(),
+            scale = 1, from = 1, target = 1}
+        option.gp_icon_motion = motion
+    end
+    local target = hovered and ICON_SCALE or 1
+    if target ~= motion.target then
+        motion.from, motion.target, motion.start = motion.scale, target, now - frame_ms
+    elseif motion.scale == target then
+        return
+    end
+    local t = math.min(1, (now - motion.start) / ICON_MS)
+    motion.scale = t == 1 and target or motion.from + (target - motion.from) * (1 - (1 - t)^2)
+    local w, h = motion.w * motion.scale, motion.h * motion.scale
+    motion.icon:SetWndSize(vector2():set(w, h))
+    motion.icon:SetWndPos(vector2():set(motion.x + (motion.w - w) / 2, motion.y + (motion.h - h) / 2))
+    if t == 1 and not hovered then option.gp_icon_motion = nil end
+end
+local function update_tab_transition(gui, now)
+    local start = gui.gp_tab_transition
+    if not start then return end
+    local t = math.min(1, (now - start) / TAB_MS)
+    local opacity = 0.48 + 0.52 * (1 - (1 - t)^3)
+    gui.tab_category:SetTextureColor(GetARGB(math.floor(255 * opacity), 255, 255, 255))
+    gui.title:SetTextColor(GetARGB(math.floor(255 * opacity), 240, 240, 240))
+    if t == 1 then gui.gp_tab_transition = nil end
+end
+local function make_action(xml, gui, spec)
+    local action = spec and gp_wheel.make_qaw_action(spec)
+    local option = arm.WheelOption(xml, gui)
+    option.gp_action = action
+    option.gp_spec = spec -- FIX-LIVE3 p.18: pinnable action spec ("act:laser", "device:wpn_binoc", ...)
+    option.gp_empty = not action
+    function option:Draw(x, y)
+        arm.WheelOption.Draw(self, x, y)
+        if not action then return end
+        local section = action.section or action.icon_sec or "device_pda_1"
+        self.gp_cell = utils_ui.UICellContainer("gp_qaw_action_" .. self.idx, self, "cont_item", "cont_item", self.container, true)
+        self.gp_cell.disable_drag = true
+        self.gp_cell.disable_info = true
+        self.gp_cell.showcase = true
+        self.gp_cell:AddItemManual(nil, section, 1)
+        local cell = self.gp_cell.cell[1]
+        if cell then
+            cell.cell:SetWndSize(vector2():set(cell.W * utils_xml.screen_ratio() * 1.25, cell.H * 1.25))
+            cell.cell:SetWndPos(vector2():set((self.gp_cell.prof:GetWidth() - cell.cell:GetWidth()) / 2,
+                (self.gp_cell.prof:GetHeight() - cell.cell:GetHeight()) / 2))
+        end
+        self:CenterElement(self.gp_cell.prof)
+    end
+    function option:Update()
+        if not action then return end
+        action:update()
+        local cell = self.gp_cell.cell[1]
+        if cell then cell:Colorize(action:is_enabled() and "def" or "hide") end
+    end
+    function option:OnClick()
+        if action and action:is_enabled() then action:execute() end
+    end
+    return option
+end
+local function wrap_item(option, tab, slot, entry)
+    option.gp_entry = entry
+    local update = option.Update
+    local right = option.OnRightClick
+    local click = option.OnClick
+    local resize = option.ResizeAndCenterCell
+    if resize then
+        function option:ResizeAndCenterCell()
+            resize(self)
+            local ci = self:GetCellItem()
+            local cell = ci and ci.cell
+            if not cell then return end
+            cell:SetWndSize(vector2():set(cell:GetWidth() * 1.25, cell:GetHeight() * 1.25))
+            local parent = self.item_cont and self.item_cont.prof
+            if not parent then return end
+            cell:SetWndPos(vector2():set((parent:GetWidth() - cell:GetWidth()) / 2,
+                (parent:GetHeight() - cell:GetHeight()) / 2))
+        end
+    end
+    if option.UpdateCounter then
+        function option:UpdateCounter()
+            local cell = self:GetCellItem()
+            if not cell or not cell.cnt then return end
+            cell.cnt:Show(true)
+            cell.cnt:TextControl():SetText("x" .. tostring(self.count or 0))
+        end
+    end
+    function option:Update()
+        local result = update(self)
+        if db.actor and self.count_itr and not self.parent.gp_opened and (not self.gp_next_count or clock() >= self.gp_next_count) then
+            self.gp_next_count = clock() + 125
+            self.count = 0
+            db.actor:iterate_inventory(self.count_itr, db.actor)
+            self:UpdateCounter()
+        end
+        if self.count_itr and (self.count or 0) <= 0 then
+            local ci = self:GetCellItem()
+            if ci then ci:Colorize("hide") end
+        end
+        return result
+    end
+    function option:OnClick()
+        if self.count_itr and (self.count or 0) <= 0 then return end
+        return click(self)
+    end
+    function option:OnRightClick()
+        if not right then return end
+        local idx = find(tab, entry.section)
+        if idx then manager:RemoveItem(tab, idx) end
+        refresh(self.parent)
+    end
+end
+local function refresh_counts(gui, now)
+    if not db.actor then return end
+    local groups = {}
+    for _, option in ipairs(gui.options) do
+        if option.gp_entry and option.count_itr and (not option.gp_next_count or now >= option.gp_next_count) then
+            local group = groups[option.section] or {}
+            groups[option.section] = group
+            group[#group + 1] = option
+            option.count = 0
+            option.gp_next_count = now + 125
+        end
+    end
+    if not next(groups) then return end
+    db.actor:iterate_inventory(function(owner, item)
+        local group = groups[item:section()]
+        if group then
+            for _, option in ipairs(group) do option.count_itr(owner, item) end
+        end
+    end, db.actor)
+    for _, group in pairs(groups) do
+        for _, option in ipairs(group) do option:UpdateCounter() end
+    end
+end
+local function option_info(option)
+    if not option then return nil end
+    if option.gp_entry then
+        return ui_item.get_sec_name(option.section), option.section, option.count_itr and option.count or nil
+    end
+    local action = option.gp_action
+    if action then return action:get_text(), action.section or action.icon_sec end
+end
+-- Visible alpha bounds of the 128 px QAW category cells.
+local category_bounds = {{12, 16, 116, 112}, {0, 0, 119, 128},
+                         {0, 0, 117, 127}, {37, 33, 89, 126}}
+local function layout_category(gui, tab)
+    local d = device()
+    local b = category_bounds[tab]
+    local scale = 82 / math.max(b[3] - b[1], b[4] - b[2])
+    local sx, sy = scale * 1024 / d.width, scale * 768 / d.height
+    local cx, cy = gui.bg:GetWidth() / 2, gui.bg:GetHeight() / 2
+    local category = gui.tab_category
+    category:SetWndSize(vector2():set(128 * sx, 128 * sy))
+    category:SetWndPos(vector2():set(cx - (b[1] + b[3]) * sx / 2, cy - (b[2] + b[4]) * sy / 2))
+    return cy + (b[4] - b[2]) * sy / 2 + 12 * 768 / d.height
+end
+local function show_center(gui, index)
+    local option = gui.options[index]
+    local text, section, count = option_info(option)
+    local tab = manager.current_tab
+    local suffix = count and ("  x" .. count) or ""
+    if option and option.gp_entry and quick and quick.section == option.section and quick.tab == tab then suffix = suffix .. "  [LB]" end
+    if moving then suffix = suffix .. "  [" .. tr("st_gp_qaw_moving") .. "]" end
+    local title = (text or tr(labels[tab])) .. suffix
+    local key = title .. ":" .. tostring(section)
+    if gui.gp_center_key == key then return end
+    gui.gp_center_key = key
+    local font = GetFontLetterica18Russian or GetFontLetterica25
+    if gui.title then
+        if font then gui.title:SetFont(font()) end
+        local pos = gui.title:GetWndPos()
+        local top = section and (gui.bg:GetHeight() / 2 + 2 + CENTER_ITEM_OFFSET)
+            or layout_category(gui, tab)
+        gui.title:SetWndPos(vector2():set(pos.x, top))
+    end
+    gui:SetTitle(title)
+    local texture = section and (utils_xml.get_icons_texture(section) or [[ui\ui_icon_equipment]])
+    gui.tab_category:Show(not texture)
+    if not texture then gui.tab_category:InitTexture(categories[tab]) end
+    if gui.gp_preview then
+        gui.gp_preview:Show(texture ~= nil)
+        if texture then
+            local x, y, x2, y2 = utils_xml.get_item_axis(section, 50, true)
+            if type(x) == "number" and type(y) == "number" and type(x2) == "number" and type(y2) == "number" and x2 > x and y2 > y then
+                gui.gp_preview:InitTexture(texture)
+                gui.gp_preview:SetTextureRect(Frect():set(x, y, x2, y2))
+                local d = device()
+                local w, h = x2 - x, y2 - y
+                local scale = 108 / math.max(w, h)
+                w, h = w * scale * 1024 / d.width, h * scale * 768 / d.height
+                gui.gp_preview:SetWndSize(vector2():set(w, h))
+                gui.gp_preview:SetWndPos(vector2():set(gui.center.x - w / 2, gui.center.y - 48 + CENTER_ITEM_OFFSET - h / 2))
+            else
+                gui.gp_preview:Show(false)
+            end
+        end
+    end
+end
+local function set_selected(gui, index)
+    if index and gui.options[index] then gui:OnButtonHover(index) end
+    if selected ~= index or not index then gui.gp_center_key = nil end
+    selected = index
+end
+local function layout_tabs(gui)
+    local count = 0
+    for _, id in ipairs(order) do if enabled[id] then count = count + 1 end end
+    local d = device()
+    local w, h = 52 * 1024 / d.width, 52 * 768 / d.height
+    local pitch = 62 * 1024 / d.width
+    local position = 0
+    for _, id in ipairs(order) do
+        local marker = gui.gp_tabs[id]
+        if enabled[id] then
+            position = position + 1
+            local x = gui.center.x + (position - (count + 1) / 2) * pitch
+            for _, widget in ipairs({marker.frame, marker.symbol}) do
+                widget:SetWndPos(vector2():set(x - w / 2, 636 - h / 2))
+                widget:SetWndSize(vector2():set(w, h))
+            end
+            marker.symbol:SetTextureColor(GetARGB(id == manager.current_tab and 255 or 176, 255, 255, 255))
+        end
+        marker.frame:Show(enabled[id] and id == manager.current_tab)
+        marker.symbol:Show(enabled[id])
+    end
+end
+local function layout_hints(gui)
+    if not (gui.gp_hints and gui.gp_hints.X and gui.gp_hints.Y) then return end
+    local y = 680
+    if gui.gp_hint_strip then
+        local strip = gui.gp_hint_strip
+        strip:SetWndPos(vector2():set(gui.center.x - strip:GetWidth() / 2, y - strip:GetHeight() / 2))
+    end
+    local d = device()
+    local icon_gap = 10 * 1024 / d.width
+    local axis_gap = 58 * 1024 / d.width
+    for _, key in ipairs({"Y", "X"}) do
+        local hint = gui.gp_hints[key]
+        local icon, label = hint.btn_icon, hint.label
+        if GetFontGraffiti19Russian then label:SetFont(GetFontGraffiti19Russian()) end
+        label:AdjustWidthToText()
+        local x = gui.center.x + axis_gap
+        if key == "Y" then
+            x = gui.center.x - axis_gap - label:GetWidth() - icon_gap - icon:GetWidth()
+        end
+        icon:SetWndPos(vector2():set(x, y - icon:GetHeight() / 2))
+        local align = gp_hint_align and gp_hint_align.label_y
+        local label_y = align and align(y, label:GetHeight(), "graffiti19") or y - label:GetHeight() / 2
+        label:SetWndPos(vector2():set(x + icon:GetWidth() + icon_gap, label_y))
+    end
+end
+local function update_hints(gui, now)
+    if not gui.gp_hints then return end
+    for key, hint in pairs(gui.gp_hints) do
+        local press = held[key]
+        local step = press and math.max(0, math.min(1, (now - press.start - 300) / 700)) or 0
+        if hint.progress then hint.progress:SetProgressPos(step) end
+        local label = key == "X" and "st_gp_qaw_remove"
+            or (moving and "st_gp_qaw_place" or "st_gp_qaw_move")
+        local text = tr(label)
+        if hint.current_text ~= text then
+            hint.label:SetText(text)
+            hint.current_text = text
+            layout_hints(gui)
+        end
+    end
+end
+local function current_slots(tab)
+    if tab <= 2 then return layouts[tab] end
+    if tab == 3 then
+        local slots = {}
+        for i = 1, 8 do slots[i] = devices[i] or actions[1][i] end
+        return slots
+    end
+    return actions[2]
+end
+local function consume_option(stay)
+    local opt = shown(window) and window.options[selected]
+    if not opt or opt.gp_empty or moving or (opt.gp_entry and opt.count_itr and (opt.count or 0) <= 0) then return false end
+    keep_open = stay == true
+    local ok = gp_compat.safe_call("qaw_action", opt.Click, opt)
+    keep_open = false
+    if ok and shown(window) then
+        opt.gp_next_count = nil
+        refresh_counts(window, clock())
+        opt:Update()
+        show_center(window, selected)
+    end
+    return ok
+end
+local function edit(tab, slot, key, hold)
+    local changed = false
+    local slots = current_slots(tab)
+    local value = slots[slot]
+    if key == "X" then
+        if not value then return end
+        changed = true
+        if tab <= 2 then
+            local i = find(tab, value)
+            if i then manager:RemoveItem(tab, i) end
+        else
+            slots[slot] = nil
+            if tab == 4 then save_profile() end
+        end
+    elseif hold then
+        local entry
+        if tab <= 2 then local _, item = find(tab, value); entry = item end
+        if entry and entry.class == "QConsumableWheelOption" then
+            quick = {tab = tab, section = value}
+            changed = true
+
+        end
+    elseif moving then
+        if moving.tab == tab then
+            changed = true
+            slots[slot], slots[moving.slot] = slots[moving.slot], slots[slot]
+            if tab == 4 then save_profile() end
+        end
+        moving = nil
+    elseif value then
+        moving = {tab = tab, slot = slot}
+        changed = true
+    end
+    if not changed then return end
+    edited_tabs[tab] = true
+    if tab == 3 then
+        for i = 1, 8 do
+            local spec = slots[i]
+            local device = spec and spec:match("^device:")
+            devices[i] = device and spec or nil
+            actions[1][i] = not device and spec or nil
+        end
+        save_profile()
+    end
+    refresh(window)
+    if shown(window) and window.gp_opened then
+        set_selected(window, slot)
+        cursor_at(window, (slot - 1) * math.pi / 4)
+        show_center(window, slot)
+    end
+end
+local function update_gamepad(gui)
+    CUIScriptWnd.Update(gui)
+    local idx = ((game and game.update_wheel_sector and game.update_wheel_sector(8, selected and selected - 1 or -1)) or -1) + 1
+    local active = (game and game.is_wheel_stick_active and game.is_wheel_stick_active()) or false
+    local now = clock()
+    local frame_ms = math.max(1, math.min(16, now - (gui.gp_last_update or now - 8)))
+    gui.gp_last_update = now
+    if not rawequal(laid_out_options, gui.options) then
+        laid_out_options = gui.options
+        stick_was_active, rebound_until = false, nil
+        gui.gp_wedge = nil
+        layout_tabs(gui)
+        layout_hints(gui)
+        gui.gp_center_key = nil
+        show_center(gui, selected)
+    end
+    if not active and stick_was_active then
+        rebound_until = selected and now + REBOUND_MS or nil
+    end
+    stick_was_active = active
+    if active then wheel_stick_at = now end
+    if active and idx >= 1 and idx <= 8 and idx ~= selected
+        and not (held.X and not held.X.done) and not (held.Y and not held.Y.done) then
+        local stick_angle = (game and game.get_wheel_stick_angle and game.get_wheel_stick_angle()) or 0
+        local difference = selected and math.abs(
+            (stick_angle - (selected - 1) * math.pi / 4 + math.pi)
+            % (2 * math.pi) - math.pi)
+        -- A brief opposite deflection after neutral is likely stick snapback.
+        local rebound = rebound_until and now < rebound_until and difference and difference >= REBOUND_ANGLE
+        if not rebound then
+            rebound_until = nil
+            set_selected(gui, idx)
+        end
+    end
+    update_wedge(gui, now, frame_ms)
+    gui.cursor:Show(selected ~= nil)
+    refresh_counts(gui, now)
+    for i, option in ipairs(gui.options) do
+        option:Update()
+        update_item_scale(option, i == selected, now, frame_ms)
+    end
+    if selected then show_center(gui, selected) end
+    update_tab_transition(gui, now)
+    update_hints(gui, now)
+    for key, press in pairs(held) do
+        if not press.done and now - press.start >= 1000 then
+            press.done = true
+            edit(press.tab, press.slot, key, true)
+        end
+    end
+end
+local function add_hints(gui, xml)
+    gui.gp_hints = {}
+    if not gp_inv_pause or not gp_inv_pause.draw_hint_pill then return end
+    gui.gp_hint_strip = xml:InitStatic("hint_strip", gui)
+    local hints = {{"Y","st_gp_qaw_move"}, {"X","st_gp_qaw_remove"}}
+    for _, info in ipairs(hints) do
+        local tex = gp_inv_pause.get_button_icon_texture(info[1])
+        local icon = xml:InitStatic("hint_icon", gui)
+        local d = device()
+        icon:SetWndSize(vector2():set(31 * 1024 / d.width, 31 * 768 / d.height))
+        if tex then icon:InitTexture(tex) end
+        local hint = {btn_icon = icon, btn_tex = tex}
+        if ui_circular_progress and gp_dotmarks and gp_dotmarks.fit_ring then
+            hint.progress = ui_circular_progress.init_new_indicator({
+                width = icon:GetWidth(), offset_x = 0, offset_y = 0,
+                progress_argb = GetARGB(255, 245, 245, 245)
+            }, "gp_qaw_hold_" .. info[1], icon)
+            gp_dotmarks.fit_ring({longpress = hint.progress}, icon:GetWidth(), icon:GetHeight())
+        end
+        if hint then
+            local text = xml:InitTextWnd("hint", gui)
+            text:SetText(tr(info[2]))
+            hint.label = text
+            gui.gp_hints[info[1]] = hint
+        end
+    end
+    layout_hints(gui)
+end
+local function update_items(self, option_xml)
+    local tab = manager.current_tab
+    if not enabled[tab] then
+        for _, visible in ipairs(order) do
+            if enabled[visible] then tab = visible; break end
+        end
+        manager.current_tab = tab
+    end
+    self:Reset()
+    self.gp_center_key = nil
+    selected = nil
+    if tab <= 2 then reconcile(tab) end
+    local slots = current_slots(tab)
+    for i = 1, 8 do
+        local option
+        if tab <= 2 and slots[i] then
+            local _, entry = find(tab, slots[i])
+            if entry then
+                option = manager.classes[entry.class](option_xml, self, unpack(entry.args))
+                wrap_item(option, tab, i, entry)
+            end
+        end
+        self:AddOption(option or make_action(option_xml, self, tab > 2 and slots[i]))
+    end
+    self:DrawOptions()
+    refresh_counts(self, clock())
+    for _, icon in ipairs(self.tab_icons) do icon:Show(false) end
+    layout_tabs(self)
+    if self.gp_hint_strip then self.gp_hint_strip:Show(self.gp_opened == true) end
+    for _, hint in pairs(self.gp_hints) do
+        if hint.bg then hint.bg:Show(self.gp_opened == true) end
+        if hint.btn_icon then hint.btn_icon:Show(self.gp_opened == true) end
+        hint.label:Show(self.gp_opened == true)
+    end
+    show_center(self)
+end
+local function attach(gui)
+    if gui.gp_qaw_patched then return end
+    gui.gp_qaw_patched = true
+    local callback, close = gui.UpdateCallback, gui.Close
+    local title = gui.title
+    local title_width = gui.bg:GetWidth() * .48
+    title:SetWndSize(vector2():set(title_width, title:GetHeight()))
+    title:SetWndPos(vector2():set((gui.bg:GetWidth() - title_width) / 2, gui.bg:GetHeight() / 2 + 2))
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ui_gp_qaw.xml")
+    local option_xml = CScriptXmlInit()
+    option_xml:ParseFile("ui_gp_qaw_option.xml")
+    gui.bg:InitTexture(art .. "bg")
+    gui.cursor:InitTexture(art .. "cursor")
+    gui.gp_preview = xml:InitStatic("preview", gui)
+    gui.gp_preview:Show(false)
+    gui.gp_tabs = {}
+    for id in ipairs(categories) do
+        local symbol = xml:InitStatic("tab_symbol", gui)
+        symbol:InitTexture("ui_gp_qaw_tab_" .. id)
+        local frame = xml:InitStatic("tab_frame", gui)
+        gui.gp_tabs[id] = {frame = frame, symbol = symbol}
+    end
+    add_hints(gui, xml)
+    function gui:UpdateItems() update_items(self, option_xml) end
+    function gui:OnButtonHover(i)
+        arm.UIAdvancedRadialMenu.OnButtonHover(self, i)
+        if not self.gp_opened then show_center(self, i) end
+    end
+    local keyboard = gui.OnKeyboardCallback
+    function gui:OnKeyboardCallback(dik, event)
+        if self.gp_opened then return false end
+        return keyboard(self, dik, event)
+    end
+    function gui:UpdateCallback()
+        if not self.gp_opened then callback(self) end
+    end
+    function gui:Close()
+        if keep_open and self.gp_opened then return end
+        self.gp_opened = false
+        hold_button = nil
+        held, moving, selected = {}, nil, nil
+        clear_time()
+        if game.consume_all_gamepad_buttons then game.consume_all_gamepad_buttons() end
+        return close(self)
+    end
+end
+local function add_device(obj)
+    local slot = first_empty(current_slots(3))
+    if not slot then notify("st_gp_qaw_full"); return end
+    devices[slot] = "device:" .. obj:section()
+    refresh(window)
+end
+local function route(obj)
+    if not obj then return end
+    if gp_qaw_tabs.device_slot(obj:section()) then return 3 end
+    if IsWeapon and IsWeapon(obj) and not (IsGrenade and IsGrenade(obj)) then return end
+    return class_tabs[manager:CanAddItem(obj, obj:section())]
+end
+local vanilla_haru_backup, gp_saved_tabs
+local function clone_plain(v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    for k, sv in pairs(v) do out[clone_plain(k)] = clone_plain(sv) end
+    return out
+end
+local function patch_manager()
+    local set_count, load, save = manager.SetTabCount, manager.load_state, manager.save_state
+    local add, remove = manager.AddItem, manager.RemoveItem
+    local function sanitize_tabs(self)
+        self.tabs = clone_plain(self.tabs or {})
+        if gp_saved_tabs then
+            for t = 1, 2 do
+                if gp_saved_tabs[t] then self.tabs[t] = clone_plain(gp_saved_tabs[t]) end
+            end
+        end
+        set_count(self, 4)
+        if not self.tabs[self.current_tab] or self.current_tab < 1 or self.current_tab > 4 then self.current_tab = 1 end
+        for tab = 1, 4 do
+            local items = self.tabs[tab]
+            for i = #items, 1, -1 do
+                if class_tabs[items[i].class] ~= tab or i > 8 then remove(self, tab, i) end
+            end
+        end
+    end
+    if vanilla_haru_backup == nil and manager.tabs then
+        vanilla_haru_backup = {current_tab = manager.current_tab, tabs = clone_plain(manager.tabs)}
+    end
+    sanitize_tabs(manager)
+    function manager:SetTabCount() set_count(self, 4) end
+    function manager:LoadDynamicTab() end
+    function manager:AddItem(tab, obj, sec)
+        if tab ~= route(obj) or not self.tabs[tab] or #self.tabs[tab] >= 8 then return end
+        add(self, tab, obj, sec)
+        reconcile(tab)
+    end
+    function manager:RemoveItem(tab, index)
+        local entry = self.tabs[tab] and self.tabs[tab][index]
+        if not entry then return end
+        remove(self, tab, index)
+        if layouts[tab] then reconcile(tab) end
+        if quick and quick.tab == tab and quick.section == entry.section then quick = nil end
+    end
+    function manager:load_state(data)
+        vanilla_haru_backup = data.haru_qaw and clone_plain(data.haru_qaw) or nil
+        load(self, data)
+        sanitize_tabs(self)
+    end
+    function manager:save_state(data)
+        if vanilla_haru_backup ~= nil then
+            data.haru_qaw = clone_plain(vanilla_haru_backup)
+        elseif save then
+            save(self, data)
+        end
+    end
+end
+local function configure_qaw()
+    qaw.MCM_SETTINGS.override_ammo_wheel = false
+    qaw.MCM_SETTINGS.slowmo = false
+    qaw.MCM_SETTINGS.tab_count = 4
+    manager.dynamic_tabs = {[3] = "gp_devices", [4] = "gp_companions"}
+    manager.dynamic_tab_handlers.gp_devices = {GetUITexture = function() return categories[3] end}
+    manager.dynamic_tab_handlers.gp_companions = {GetUITexture = function() return categories[4] end}
+    manager.tab_by_handler = {}
+    for key in pairs(qaw.override_quick_keys) do qaw.override_quick_keys[key] = nil end
+end
+local function install()
+    if qaw and manager then return true end
+    local ok, mod, ok_arm, arm_mod
+    if gp_compat.qaw_fallback_needed and gp_compat.qaw_fallback_needed() then
+        -- ANOM-COMPAT 2026-11-16: clean Anomaly without Haru QAW -> bundled fallback copy (gp_qaw_fallback).
+        local fb = gp_compat.optional_module and gp_compat.optional_module("gp_qaw_fallback")
+        ok = fb ~= nil and type(fb.activate) == "function" and fb.activate() == true
+        mod = ok and fb or nil
+        ok_arm, arm_mod = ok, ok and fb.get_arm() or nil
+    else
+        ok, mod = pcall(function() return haru_quick_action_wheel_mcm end)
+        ok_arm, arm_mod = pcall(function() return haru_arm end)
+    end
+    if not ok or not mod or not mod.TAB_MANAGER or not ok_arm or not arm_mod or not arm_mod.UIAdvancedRadialMenu then return false end
+    qaw, arm, manager = mod, arm_mod, mod.TAB_MANAGER
+    printf("[gp_qaw] provider=%s", qaw.GP_FALLBACK and "gp_fallback" or (qaw.MCM_SETTINGS.tab_slot and "gamma_balance" or "haru"))
+    patch_manager()
+    configure_qaw()
+    local update = arm.UIAdvancedRadialMenu.Update
+    function arm.UIAdvancedRadialMenu:Update()
+        if not self.gp_opened then return update(self) end
+        local ok = gp_compat.safe_call("qaw_patch", update_gamepad, self)
+        if not ok then self:Close() end
+    end
+    local option_change = qaw.on_option_change
+    if option_change then
+        UnregisterScriptCallback("on_option_change", option_change)
+        function qaw.on_option_change(config)
+            if shown(window) then window:Close() end
+            option_change(config)
+            configure_qaw()
+        end
+        RegisterScriptCallback("on_option_change", qaw.on_option_change)
+    end
+    local patch_gui = qaw.patch_GUI
+    function qaw.patch_GUI(gui)
+        gui = patch_gui(gui)
+        window = gui
+        attach(gui)
+        return gui
+    end
+    if qaw.GUI then window = qaw.GUI; attach(window); window:UpdateItems() end
+    local ok_cfa, cfa
+    if gp_compat.module_present and not gp_compat.module_present("custom_functor_autoinject") then
+        -- ANOM-COMPAT 2026-11-16: clean Anomaly -> bundled copy of Custom Dynamic Functors.
+        cfa = gp_compat.optional_module("gp_cfa_fallback")
+        ok_cfa = cfa ~= nil and type(cfa.activate) == "function" and cfa.activate() == true
+    else
+        ok_cfa, cfa = pcall(function() return custom_functor_autoinject end)
+    end
+    if ok_cfa and cfa and type(cfa.remove_functor) == "function" and type(cfa.add_functor) == "function" then
+        cfa.remove_functor("add_to_qaw")
+        for _, tab in ipairs({1, 2}) do
+            local target = tab
+            cfa.add_functor("gp_qaw_add_" .. target,
+                function(obj)
+                    return route(obj) == target and not find(target, obj:section())
+                end,
+                function() return "st_gp_qaw_add" end,
+                nil,
+                function(obj)
+                    if #manager.tabs[target] >= 8 then notify("st_gp_qaw_full"); return end
+                    manager:AddItem(target, obj, obj:section())
+                    refresh(window)
+                end)
+        end
+        cfa.add_functor("gp_qaw_add_device",
+            function(obj)
+                if route(obj) ~= 3 then return false end
+                local spec = "device:" .. obj:section()
+                for _, entry in pairs(devices) do if entry == spec then return false end end
+                return true
+            end,
+            function() return "st_gp_qaw_add" end, nil, add_device)
+    end
+    return true
+end
+function open(button)
+    if not db.actor then return "blocked:no_actor" end
+    if main_hud_shown and not main_hud_shown() then return "blocked:hud_hidden" end
+    local installed, ready = gp_compat.safe_call("qaw_patch", install)
+    if not installed or not ready then notify("st_gp_qaw_unavailable"); return "wheel_unavailable" end
+    if shown(qaw.GUI) then return "wheel_already_open" end
+    edited_tabs = {}
+    shortcut_used = false
+    wheel_stick_at = nil
+    configure_qaw()
+    local ok = gp_compat.safe_call("qaw_patch", function()
+        if not qaw.GUI then qaw.create_GUI() end
+        window = qaw.GUI
+        if window.gp_tab_transition then update_tab_transition(window, clock() + TAB_MS) end
+        window.gp_opened = true
+        hold_button = button or gp_wheel.get_wheel_bound_button("WeaponWheel", "LB", "World_Gameplay")
+        if not enabled[manager.current_tab] then
+            for _, tab in ipairs(order) do if enabled[tab] then manager.current_tab = tab; break end end
+        end
+        hide_hud_inventory()
+        manager:SetCurrentTab(manager.current_tab)
+        window:ShowDialog(true)
+        _GUIs_keyfree.UIHaruQAW = true
+        Register_UI("UIHaruQAW", qaw.GP_FALLBACK and "gp_qaw_fallback" or "haru_quick_action_wheel_mcm")
+        local mode = gp_wheel.get_time_mode()
+        if mode == "slowmo" and game and game.request_time_factor then game.request_time_factor("gp_qaw", .2)
+        elseif mode == "pause" and game and game.acquire_pause_token then pause_token = game.acquire_pause_token("gp_qaw") end
+    end)
+    if not ok and shown(window) then window:Close() end
+    return ok and "wheel_opened:" .. gp_wheel.get_time_mode() or "wheel_error"
+end
+function tab_step(step)
+    if not shown(window) then return "wheel_not_open" end
+    if shown(ammo) then return "ammo_no_tabs" end
+    local current = 1
+    for i, id in ipairs(order) do if id == manager.current_tab then current = i end end
+    for offset = 1, 4 do
+        local tab = order[(current - 1 + step * offset) % 4 + 1]
+        if enabled[tab] then
+            held, moving = {}, nil
+            if tab ~= manager.current_tab then
+                manager:SetCurrentTab(tab)
+                window.gp_tab_transition = clock()
+                update_tab_transition(window, window.gp_tab_transition)
+            end
+            return "tab:" .. tab
+        end
+    end
+end
+function press_edit(key)
+    if shown(window) and window.gp_opened and selected then
+        held[key] = {tab = manager.current_tab, slot = selected, start = clock()}
+    end
+end
+function release_edit(key)
+    local press = held[key]
+    held[key] = nil
+    if not press or press.done then return end
+    local duration = clock() - press.start
+    if duration >= 1000 then edit(press.tab, press.slot, key, true)
+    elseif key == "Y" then edit(press.tab, press.slot, key, false) end
+end
+local function ammo_target()
+    if game and game.update_wheel_sector then game.update_wheel_sector(3, -1) end
+    local index
+    if game and game.is_wheel_stick_active and game.is_wheel_stick_active() then
+        local angle = (game and game.get_wheel_stick_angle and game.get_wheel_stick_angle()) or 0
+        local best
+        for _, entry in ipairs(ammo_options) do
+            local score = math.cos(angle - entry.angle)
+            if not best or score > best then best, index = score, entry.index end
+        end
+    end
+    return index
+end
+local function paint_ammo(gui)
+    local focus = ammo_index or ((gui.ammo_type or -1) + 1)
+    for index, box in pairs(gui.box) do
+        local highlight = index == focus and box:IsShown()
+        if gui.box_hl_1 and gui.box_hl_1[index] then gui.box_hl_1[index]:Show(highlight) end
+        if gui.box_hl_2 and gui.box_hl_2[index] then gui.box_hl_2[index]:Show(highlight) end
+        if gui.box_icon_r[index] then gui.box_icon_r[index]:Show(highlight) end
+        if gui.box_txt_r[index] then gui.box_txt_r[index]:Show(highlight) end
+    end
+end
+local function update_ammo(gui)
+    CUIScriptWnd.Update(gui)
+    ammo_index = ammo_target() or ammo_index
+    paint_ammo(gui)
+end
+function confirm()
+    if shown(ammo) then
+        return "ammo_waiting_release"
+    end
+    if pin_pending_active() then return pin_confirm() end
+    return consume_option(true) and "applied:qaw" or "wheel_no_selection"
+end
+function cancel()
+    if pin_pending_active() then pin_cancel() end
+    if shown(ammo) then ammo:Close(); ammo = nil end
+    if shown(window) then window:Close() end
+    return "closed:qaw"
+end
+-- FIX-LIVE2 п.15 (Миша 2026-11-16, 15а/15.1): шорткаты на любом круге открытого колеса (C++ StepRadialWheelButtons,
+-- контекст RadialWheel, действия WheelMaskClean / WheelLaser, по умолчанию R3 / D-pad вправо при зажатом LB).
+-- Недоступно (нет маски/лазера/мода) -> лёгкий толчок. После шортката отпускание LB закрывает колесо без сектора.
+shortcut_used = false
+SHORTCUT_ACTS = { mask = "mask_wipe", laser = "laser" }
+
+function shortcut(name)
+    if shown(ammo) then return "ammo_open" end
+    local in_wheel = shown(window) and window.gp_opened and true or false
+    local id = SHORTCUT_ACTS[tostring(name)]
+    local opt = id and gp_qaw_tabs and gp_qaw_tabs.make and gp_qaw_tabs.make("act:" .. id)
+    if not opt then return "unknown:" .. tostring(name) end
+    if not opt:is_enabled() then
+        if game and game.trigger_gamepad_haptics then pcall(game.trigger_gamepad_haptics, "deny", 0.20) end
+        return "denied:" .. id
+    end
+    if in_wheel then shortcut_used = true end
+    gp_compat.safe_call("qaw_shortcut", function() opt:execute() end)
+    return (in_wheel and "shortcut:" or "direct:") .. id
+end
+
+function release(button)
+    if shortcut_used and not shown(ammo) then
+        shortcut_used = false
+        if shown(window) then window:Close() end
+        return "closed_lb_release_shortcut"
+    end
+    if shown(ammo) then
+        if button and ammo_button and button ~= ammo_button then return "ignored_wrong_hold_button:" .. button end
+        local gui, target = ammo, ammo_index
+        ammo = nil
+        if target and gui.avail[target] then gui:OnAmmo(target) else gui:Close() end
+        return "closed:ammo"
+    end
+    if shown(window) and window.gp_opened then
+        if button and hold_button and button ~= hold_button then return "ignored_wrong_hold_button:" .. button end
+        local ok, applied = gp_compat.safe_call("qaw_patch", function()
+            if edited_tabs[manager.current_tab] or held.X or held.Y then return false end
+            return consume_option()
+        end)
+        if shown(window) then window:Close() end
+        return ok and applied and "closed_lb_release_applied" or "closed_lb_release_center"
+    end
+end
+function quick_use()
+    if not quick or not manager or not db.actor then notify("st_gp_qaw_quick_missing"); return "quick_empty" end
+    local _, entry = find(quick.tab, quick.section)
+    if not entry or entry.class ~= "QConsumableWheelOption" or not db.actor:object(quick.section) then notify("st_gp_qaw_quick_spent"); return "quick_empty" end
+    local ok = gp_compat.safe_call("qaw_action", function()
+        local obj = db.actor:object(entry.section)
+        if CInventory__eat(obj) ~= false then db.actor:eat(obj) end
+    end)
+    return ok and "quick_used" or "quick_error"
+end
+-- FIX-LIVE3 p.18 (Misha 2026-11-16): D-pad pins. Four directions (up/down/left/right) hold an item section
+-- ("item:<sec>", consumables and grenades) or a wheel action spec ("act:<id>", "device:<sec>", "comp:<n>").
+-- Pin: D-pad inside the open wheel (hovered sector) or LB + D-pad on a hovered backpack item.
+-- Use: LB + D-pad in the world (C++ StepWorldWeaponButtons, before the wheel opens).
+-- An occupied direction asks "Replace?" (A = yes, B = no; 5 s timeout).
+PIN_DIRS = {up = true, down = true, left = true, right = true}
+PIN_DIR_BY_CODE = {"up", "down", "left", "right"}
+PIN_PENDING_MS = 5000
+pins = {}
+pin_pending = nil
+local function pin_dir(dir)
+    if type(dir) == "number" then dir = PIN_DIR_BY_CODE[dir] end
+    return PIN_DIRS[dir] and dir or nil
+end
+local function deny()
+    if game and game.trigger_gamepad_haptics then pcall(game.trigger_gamepad_haptics, "deny", 0.20) end
+end
+local function msg(key, a, b)
+    local text = tr(key)
+    if a then text = text:gsub("%%1", (tostring(a):gsub("%%", "%%%%"))) end
+    if b then text = text:gsub("%%2", (tostring(b):gsub("%%", "%%%%"))) end
+    if actor_menu and actor_menu.set_msg then actor_menu.set_msg(1, text, 3) end
+    return text
+end
+function item_pin_kind(sec)
+    if type(sec) ~= "string" or sec == "" then return nil end
+    if ini_sys and ini_sys.r_float_ex and ini_sys:r_float_ex(sec, "slot") == 3 then return "grenade" end
+    if IsItem and IsItem("consumable", sec) and not IsItem("scope", sec) then return "eat" end
+    return nil
+end
+function pin_spec_of_option(opt)
+    if not opt or opt.gp_empty then return nil end
+    local entry = opt.gp_entry
+    if entry and entry.section then
+        return item_pin_kind(entry.section) and ("item:" .. entry.section) or nil
+    end
+    return opt.gp_spec
+end
+function pin_label(spec)
+    if type(spec) ~= "string" then return "?" end
+    local sec = spec:match("^item:(.+)$")
+    if sec then
+        return (ui_item and ui_item.get_sec_name and ui_item.get_sec_name(sec)) or tr(sec)
+    end
+    local opt = gp_qaw_tabs and gp_qaw_tabs.make and gp_qaw_tabs.make(spec)
+    return opt and opt.get_text and opt:get_text() or spec
+end
+function get_pin(dir)
+    dir = pin_dir(dir)
+    return dir and pins[dir] or nil
+end
+function pin(dir, spec)
+    dir = pin_dir(dir)
+    if not dir then return "pin_bad_dir" end
+    if type(spec) ~= "string" or spec == "" then deny(); msg("st_gp_pin_unpinnable"); return "pin_unpinnable" end
+    local cur = pins[dir]
+    if cur == spec then msg("st_gp_pin_same", pin_label(spec)); return "pin_same:" .. dir end
+    if cur then
+        pin_pending = {dir = dir, spec = spec, at = clock()}
+        msg("st_gp_pin_ask", pin_label(cur), pin_label(spec))
+        return "pin_ask:" .. dir
+    end
+    pins[dir] = spec
+    msg("st_gp_pin_set", pin_label(spec))
+    return "pinned:" .. dir .. ":" .. spec
+end
+function pin_pending_active()
+    if pin_pending and clock() - pin_pending.at > PIN_PENDING_MS then pin_pending = nil end
+    return pin_pending ~= nil
+end
+function pin_confirm()
+    if not pin_pending_active() then return "pin_no_pending" end
+    local p = pin_pending
+    pin_pending = nil
+    pins[p.dir] = p.spec
+    msg("st_gp_pin_set", pin_label(p.spec))
+    return "pin_replaced:" .. p.dir .. ":" .. p.spec
+end
+function pin_cancel()
+    if not pin_pending then return "pin_no_pending" end
+    pin_pending = nil
+    msg("st_gp_pin_kept")
+    return "pin_cancelled"
+end
+function pin_from_wheel(dir)
+    if shown(ammo) then return "ammo_open" end
+    if not (shown(window) and window.gp_opened) then return "wheel_not_open" end
+    local opt = selected and window.options and window.options[selected]
+    if not opt then deny(); msg("st_gp_pin_no_sector"); return "pin_no_sector" end
+    local res = pin(dir, pin_spec_of_option(opt))
+    if res:match("^pin") and not res:match("^pin_unpinnable") and not res:match("^pin_bad") then shortcut_used = true end
+    return res
+end
+-- FIX-LIVE5 (Misha 2026-11-16): D-pad in the open wheel. RS pointing at a sector (now or within
+-- WHEEL_STICK_GRACE_MS) = pin that sector; RS centred = use the pin, like LB + D-pad in the world, so a
+-- slow LB press that already opened the wheel (on any ring) still fires the shortcut.
+WHEEL_STICK_GRACE_MS = 200
+wheel_stick_at = nil
+function wheel_dpad(dir)
+    if shown(ammo) then return "ammo_open" end
+    if not (shown(window) and window.gp_opened) then return "wheel_not_open" end
+    local active = game and game.is_wheel_stick_active and game.is_wheel_stick_active()
+    if active or (wheel_stick_at and clock() - wheel_stick_at <= WHEEL_STICK_GRACE_MS) then
+        return pin_from_wheel(dir)
+    end
+    local res = use_pin(dir)
+    if res ~= "pin_bad_dir" then shortcut_used = true end
+    return res
+end
+function pin_item(sec, dir)
+    if not item_pin_kind(sec) then return "not_pinnable" end
+    return pin(dir, "item:" .. sec)
+end
+local function use_item(sec)
+    local actor = db.actor
+    local obj = actor and actor:object(sec)
+    if not obj then return nil end
+    if item_pin_kind(sec) == "grenade" then
+        local in_slot = actor:item_in_slot(4)
+        if not (in_slot and in_slot:id() == obj:id()) then actor:move_to_slot(obj, 4) end
+        if gp_field and gp_field.quick_grenade then gp_field.quick_grenade() end
+        return "thrown"
+    end
+    if CInventory__eat(obj) ~= false then actor:eat(obj) end
+    return "used"
+end
+function use_pin(dir)
+    dir = pin_dir(dir)
+    if not dir then return "pin_bad_dir" end
+    if not db.actor then return "blocked:no_actor" end
+    local spec = pins[dir]
+    if not spec then deny(); msg("st_gp_pin_empty"); return "pin_empty:" .. dir end
+    local sec = spec:match("^item:(.+)$")
+    if sec then
+        local ok, res = gp_compat.safe_call("qaw_pin", use_item, sec)
+        if not ok then return "pin_error" end
+        if not res then deny(); msg("st_gp_pin_spent", pin_label(spec)); return "pin_spent:" .. dir end
+        return "pin_" .. res .. ":" .. sec
+    end
+    local opt = gp_qaw_tabs and gp_qaw_tabs.make and gp_qaw_tabs.make(spec)
+    if not opt then deny(); return "pin_unknown:" .. spec end
+    if opt.update then opt:update() end
+    if not opt:is_enabled() then deny(); msg("st_gp_pin_unavailable", pin_label(spec)); return "pin_denied:" .. spec end
+    gp_compat.safe_call("qaw_pin", function() opt:execute() end)
+    return "pin_action:" .. spec
+end
+function open_ammo(button)
+    local ok = gp_compat.safe_call("qaw_ammo", function()
+        if install() then configure_qaw() end
+        item_weapon.start_ammo_wheel()
+        ammo = item_weapon.GUI
+        if not shown(ammo) then ammo = nil; return end
+        ammo_button = button
+        ammo_index, ammo_options = nil, {}
+        local center = ammo.box_r:GetWndPos()
+        for _, index in ipairs(ammo.key) do
+            local section, box = ammo.ammo_list[index], ammo.box[index]
+            if section and box then
+                local pos = box:GetWndPos()
+                local hidden = not box:IsShown() or pos.y >= 768 or pos.y < 0
+                    or section:match("_bad$") or section:match("_verybad$")
+                    or section == "ammo_12x70_buck_self"
+                if hidden then
+                    box:Show(false)
+                    ammo.avail[index] = false
+                else
+                    local dx = pos.x + box:GetWidth() / 2 - center.x - ammo.box_r:GetWidth() / 2
+                    local dy = pos.y + box:GetHeight() / 2 - center.y - ammo.box_r:GetHeight() / 2
+                    local d = device()
+                    ammo_options[#ammo_options + 1] = {index = index, angle = math.atan2(dx * d.width / 1024, -dy * d.height / 768)}
+                end
+            end
+        end
+        paint_ammo(ammo)
+        local classes = {}
+        if item_weapon.UIWheelAmmo then classes[1] = item_weapon.UIWheelAmmo end
+        local ok_mags, mags = pcall(function() return mags_patches end)
+        if ok_mags and mags and mags.UIWheelAmmoWuut then classes[#classes + 1] = mags.UIWheelAmmoWuut end
+        for _, class in ipairs(classes) do
+            if not ammo_classes[class] then
+                local update = class.Update
+                class.Update = function(self)
+                    if not rawequal(self, ammo) then return update(self) end
+                    local updated = gp_compat.safe_call("qaw_ammo", update_ammo, self)
+                    if not updated then self:Close() end
+                end
+                ammo_classes[class] = true
+            end
+        end
+    end)
+    return ok and shown(ammo) and "ammo_wheel_opened:native" or "ammo_wheel_unavailable"
+end
+function save_state(data)
+    local gp_tabs = (manager and manager.tabs) and {clone_plain(manager.tabs[1]), clone_plain(manager.tabs[2])} or gp_saved_tabs
+    data.gp_qaw = {layouts = layouts, quick = quick, devices = devices, tabs = gp_tabs, pins = clone_plain(pins)}
+end
+function load_state(data)
+    if data.haru_qaw then vanilla_haru_backup = clone_plain(data.haru_qaw) end
+    local saved = data.gp_qaw or {}
+    gp_saved_tabs = saved.tabs and clone_plain(saved.tabs) or nil
+    if manager and manager.tabs and gp_saved_tabs then
+        for t = 1, 2 do
+            if gp_saved_tabs[t] then manager.tabs[t] = clone_plain(gp_saved_tabs[t]) end
+        end
+    end
+    cancel()
+    layouts = {saved.layouts and saved.layouts[1] or {}, saved.layouts and saved.layouts[2] or {}}
+    quick = saved.quick
+    devices = saved.devices or {}
+    pins = saved.pins and clone_plain(saved.pins) or {}
+    pin_pending = nil
+    held, moving, selected = {}, nil, nil
+end
+local function profile()
+    return gp_bridge.resolve_binding_profile_path()
+end
+local function load_profile()
+    for i = 1, 2 do for slot, spec in ipairs(defaults[i]) do actions[i][slot] = spec end end
+    local path = profile()
+    if not path then return end
+    local file = io.open(path, "r") or io.open(path .. ".qaw.previous", "r")
+    if not file then return end
+    local section, fields, legacy = "", {}, {}
+    for line in file:lines() do
+        section = line:match("^%s*%[([^%]]+)%]") or section
+        local key, value = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+        if key and section == "wheel_qaw" then fields[key] = value
+        elseif key and section == "wheel_slots" then legacy[key] = value end
+    end
+    file:close()
+    profile_schema = tonumber(fields.schema_version) or 0
+    if profile_schema > 1 then return end
+    if fields.time_mode then gp_wheel.set_time_mode(fields.time_mode) end
+    local parsed, seen = {}, {}
+    for value in (fields.order or ""):gmatch("[1-4]") do
+        local id = tonumber(value)
+        if not seen[id] then parsed[#parsed + 1], seen[id] = id, true end
+    end
+    if #parsed == 4 then order = parsed end
+    for i = 1, 4 do enabled[i] = fields["tab" .. i] ~= "off" end
+    if not (enabled[1] or enabled[2] or enabled[3] or enabled[4]) then enabled[1] = true end
+    for i, name in ipairs({"devices_light", "companions"}) do
+        for slot = 1, 8 do
+            local spec = fields[name .. "_" .. slot] or legacy[name .. "_" .. slot]
+            if spec == "empty" then actions[i][slot] = nil
+            elseif spec then
+                for _, allowed in ipairs(defaults[i]) do
+                    if spec == allowed then actions[i][slot] = spec; break end
+                end
+            end
+        end
+    end
+end
+function save_profile()
+    if profile_schema > 1 then return false end
+    local path = profile()
+    if not path then return end
+    local old = io.open(path, "rb")
+    local text = old and old:read("*a") or ""
+    if old then old:close() end
+    local lines, skip = {}, false
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        local section = line:match("^%s*%[([^%]]+)%]")
+        if section then skip = section == "wheel_qaw" end
+        if not skip then lines[#lines + 1] = line end
+    end
+    lines[#lines + 1] = "\n[wheel_qaw]\nschema_version = 1\norder = " .. table.concat(order, ",") .. "\ntime_mode = " .. gp_wheel.get_time_mode()
+    for i = 1, 4 do lines[#lines + 1] = "tab" .. i .. " = " .. (enabled[i] and "on" or "off") end
+    for i, name in ipairs({"devices_light", "companions"}) do
+        for slot = 1, 8 do lines[#lines + 1] = name .. "_" .. slot .. " = " .. (actions[i][slot] or "empty") end
+    end
+    local tmp = path .. ".qaw.tmp"
+    local output = io.open(tmp, "wb")
+    if not output then return false end
+    local ok = output:write(table.concat(lines, "\n"), "\n")
+    local closed = output:close()
+    if not ok or not closed then os.remove(tmp); return false end
+    local backup = path .. ".qaw.previous"
+    os.remove(backup)
+    if old and not os.rename(path, backup) then os.remove(tmp); return false end
+    if not os.rename(tmp, path) then
+        if old then os.rename(backup, path) end
+        os.remove(tmp)
+        return false
+    end
+    os.remove(backup)
+    return true
+end
+function get_settings()
+    return order, enabled, actions, defaults, quick, labels, devices
+end
+function set_tab_enabled(tab)
+    local count = 0
+    for i = 1, 4 do if enabled[i] then count = count + 1 end end
+    if enabled[tab] and count <= 1 then return end
+    enabled[tab] = not enabled[tab]
+    save_profile()
+end
+function swap_tab(position, direction)
+    local other = position + direction
+    if other < 1 or other > 4 then return end
+    order[position], order[other] = order[other], order[position]
+    save_profile()
+end
+function set_action(group, slot, spec)
+    if group == 1 and devices[slot] then return end
+    actions[group][slot] = spec
+    save_profile()
+end
+function move_action(group, slot, step)
+    local next_slot = slot + step
+    if next_slot < 1 or next_slot > 8 or (group == 1 and devices[next_slot]) then return end
+    local slots = actions[group]
+    slots[slot], slots[next_slot] = slots[next_slot], slots[slot]
+    save_profile()
+end
+function reset_quick()
+    quick = nil
+end
+function get_window() return window end
+function get_hold_button() return hold_button end
+function is_open()
+    return shown(window) or shown(ammo) or false
+end
+function on_option_change()
+    local ok, ready = gp_compat.safe_call("qaw_patch", install)
+    if ok and ready then configure_qaw() end
+    if type(_G.CreateTimeEvent) == "function" and type(_G.RemoveTimeEvent) == "function" then
+        local classes = ok and ready and manager and manager.classes
+        local has_mag = classes and classes.QMagazineWheelOption and classes.QMagazineWheelOption.OnState
+        local has_ammo = classes and ((classes.QMagazineWheelOption and classes.QMagazineWheelOption.LoadInActiveWeapon)
+            or (classes.QAmmoWheelOption and classes.QAmmoWheelOption.LoadInActiveWeapon))
+        if not has_mag or not has_ammo then
+            _G.CreateTimeEvent("gp_qaw_patch", "cleanup_mags_timers", 0.25, function()
+                local cur = manager and manager.classes
+                if not (cur and cur.QMagazineWheelOption and cur.QMagazineWheelOption.OnState) then
+                    _G.RemoveTimeEvent("qaw_mags_ammo_display_patch", "install")
+                end
+                if not (cur and ((cur.QMagazineWheelOption and cur.QMagazineWheelOption.LoadInActiveWeapon)
+                        or (cur.QAmmoWheelOption and cur.QAmmoWheelOption.LoadInActiveWeapon))) then
+                    _G.RemoveTimeEvent("mags_bone_hider_qaw_patch", "install")
+                end
+                return true
+            end)
+        else
+            _G.RemoveTimeEvent("gp_qaw_patch", "cleanup_mags_timers")
+        end
+    end
+end
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    load_profile()
+    RegisterScriptCallback("save_state", save_state)
+    RegisterScriptCallback("load_state", load_state)
+    RegisterScriptCallback("actor_on_first_update", on_option_change)
+    RegisterScriptCallback("on_option_change", on_option_change)
+end

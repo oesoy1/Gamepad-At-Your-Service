@@ -1,0 +1,459 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- ICONS-1 (2026-11-14): Единая точка выдачи значков геймпада «Dot Marks» (round / key),
+-- метрик видимой части и пользовательских настроек стиля, масштаба и режима подсказок.
+-- Хранение настроек: appdata\gamepad\profile.ltx, секция [glyphs] (+ зеркало [gp_icons]
+-- на случай перезаписи [glyphs] движком фазы 1 при смене style_override).
+
+PAD = 3
+PNG_SCALE = 4
+local PAD_GAME_PX = PAD
+
+local VALID_STYLES = {
+    white = "white",
+    light = "white",
+    dark  = "dark",
+    bw    = "dark",
+    color = "color",
+}
+
+local VALID_HINT_MODES = {
+    always = "always",
+    menu   = "menu",
+    off    = "off",
+}
+
+local SET_ALIASES = {
+    xbox        = "xbox",
+    xb          = "xbox",
+    xinput      = "xbox",
+    abxy        = "xbox",
+    steamdeck   = "xbox",
+    auto        = "xbox",
+    ps          = "ps",
+    playstation = "ps",
+    ps4         = "ps",
+    ps5         = "ps",
+    sony        = "ps",
+    dualshock   = "ps",
+    dualsense   = "ps",
+    nintendo    = "nintendo",
+    switch      = "nintendo",
+    nx          = "nintendo",
+    bayx        = "nintendo",
+    generic     = "generic",
+    classb      = "generic",
+    standard    = "generic",
+    numbered    = "generic",
+}
+
+local GLYPH_SUFFIX = {
+    -- Позиционные суффиксы движка
+    south = "south", east = "east", west = "west", north = "north",
+    back = "back", guide = "guide", start = "start", share = "share",
+    lstick = "lstick", rstick = "rstick",
+    lshoulder = "lshoulder", rshoulder = "rshoulder",
+    ltrigger = "ltrigger", rtrigger = "rtrigger",
+    dpup = "dpup", dpdown = "dpdown", dpleft = "dpleft", dpright = "dpright",
+    dpad = "dpad", ls = "ls", rs = "rs",
+    -- Короткие имена слотов UI и канонические имена gp_bridge
+    a = "south", b = "east", x = "west", y = "north",
+    cross = "south", circle = "east", square = "west", triangle = "north",
+    lb = "lshoulder", rb = "rshoulder", lt = "ltrigger", rt = "rtrigger",
+    l1 = "lshoulder", r1 = "rshoulder", l2 = "ltrigger", r2 = "rtrigger",
+    leftshoulder = "lshoulder", rightshoulder = "rshoulder",
+    lefttrigger = "ltrigger", righttrigger = "rtrigger",
+    view = "back", select = "back",
+    menu = "start", options = "start",
+    home = "guide", capture = "share",
+    l3 = "lstick", r3 = "rstick",
+    leftstick = "lstick", rightstick = "rstick",
+    ls_press = "lstick", rs_press = "rstick",
+    ls_click = "lstick", rs_click = "rstick",
+    lstick_move = "ls", rstick_move = "rs",
+    du = "dpup", dd = "dpdown", dl = "dpleft", dr = "dpright",
+    dpadup = "dpup", dpaddown = "dpdown", dpadleft = "dpleft", dpadright = "dpright",
+    dpad_up = "dpup", dpad_down = "dpdown", dpad_left = "dpleft", dpad_right = "dpright",
+    up = "dpup", down = "dpdown", left = "dpleft", right = "dpright",
+}
+
+-- Длина подписи на кнопке (совпадает с _build/icons/gamepad_icon_set.py::SETS + geometry)
+local LABEL_LEN = {
+    xbox = {
+        lshoulder = 2, rshoulder = 2, ltrigger = 2, rtrigger = 2, lstick = 2, rstick = 2,
+    },
+    ps = {
+        guide = 2, lshoulder = 2, rshoulder = 2, ltrigger = 2, rtrigger = 2, lstick = 2, rstick = 2,
+    },
+    nintendo = {
+        ltrigger = 2, rtrigger = 2, lstick = 2, rstick = 2,
+    },
+    generic = {
+        lshoulder = 2, rshoulder = 2, ltrigger = 2, rtrigger = 2, lstick = 2, rstick = 2,
+        back = 3, start = 5,
+    },
+}
+
+local ROUND_W_BY_LEN = { [2] = 31, [3] = 38, [4] = 44 }
+local KEY_W_BY_LEN   = { [1] = 30, [2] = 32, [3] = 40, [4] = 46 }
+
+local state_loaded = false
+local test_profile_path = nil
+local cur_style = "white"
+local cur_scale = 100
+local cur_hint_mode = "always"
+local cached_set = nil
+local cached_override = nil
+local cur_revision = 1
+
+local function trim(s)
+    return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function resolve_profile_path()
+    if type(test_profile_path) == "string" and test_profile_path ~= "" then
+        return test_profile_path
+    end
+    if _G.getFS then
+        local ok, fs = pcall(_G.getFS)
+        if ok and fs and type(fs.update_path) == "function" then
+            local ok_p, p = pcall(fs.update_path, fs, "$app_data_root$", "gamepad\\profile.ltx")
+            if ok_p and type(p) == "string" and p ~= "" then
+                return p
+            end
+        end
+    end
+    return "appdata\\gamepad\\profile.ltx"
+end
+
+local function is_forbidden_write_path(path)
+    local low = tostring(path or ""):lower():gsub("/", "\\")
+    return low == "" or low:find("d:\\stalker", 1, true) ~= nil
+end
+
+local function clamp_scale(v)
+    local n = tonumber(v)
+    if not n then return nil end
+    local r = math.floor(n + 0.5)
+    if r < 50 then r = 50 end
+    if r > 150 then r = 150 end
+    return r
+end
+
+local function parse_profile_glyph_keys(text)
+    local glyphs_kv = {}
+    local mirror_kv = {}
+    local sec = ""
+    for raw_line in tostring(text or ""):gmatch("[^\r\n]+") do
+        local stripped = raw_line:gsub(";.*$", "")
+        stripped = trim(stripped)
+        if stripped ~= "" then
+            local hdr = stripped:match("^%[(.+)%]$")
+            if hdr then
+                sec = trim(hdr):lower()
+            elseif sec == "glyphs" or sec == "gp_icons" then
+                local k, v = stripped:match("^([^=]+)=(.*)$")
+                if k then
+                    local key = trim(k):lower()
+                    local val = trim(v)
+                    if sec == "glyphs" then
+                        glyphs_kv[key] = val
+                    else
+                        mirror_kv[key] = val
+                    end
+                end
+            end
+        end
+    end
+    return glyphs_kv, mirror_kv
+end
+
+local function load_from_profile()
+    local path = resolve_profile_path()
+    local content = nil
+    if type(io) == "table" and type(io.open) == "function" then
+        local f = io.open(path, "rb")
+        if f then
+            content = f:read("*a")
+            f:close()
+        end
+    end
+    local g_kv, m_kv = parse_profile_glyph_keys(content)
+    local raw_style = (g_kv.icon_style or m_kv.icon_style or ""):lower()
+    local raw_scale = g_kv.icon_scale or m_kv.icon_scale
+    local raw_hints = (g_kv.hint_mode or m_kv.hint_mode or ""):lower()
+
+    cur_style = VALID_STYLES[raw_style] or "white"
+    cur_scale = clamp_scale(raw_scale) or 100
+    cur_hint_mode = VALID_HINT_MODES[raw_hints] or "always"
+    state_loaded = true
+end
+
+local function ensure_loaded()
+    if not state_loaded then
+        load_from_profile()
+    end
+end
+
+function sync_profile()
+    ensure_loaded()
+    local path = resolve_profile_path()
+    if is_forbidden_write_path(path) then
+        return false
+    end
+    if type(io) ~= "table" or type(io.open) ~= "function" then
+        return false
+    end
+
+    local preserved = {}
+    local glyph_extra = {}
+    local f_in = io.open(path, "rb")
+    if f_in then
+        local content = f_in:read("*a") or ""
+        f_in:close()
+        content = content:gsub("\r\n", "\n")
+        local sec = ""
+        for raw_line in (content .. "\n"):gmatch("([^\n]*)\n") do
+            local stripped = trim(raw_line:gsub(";.*$", ""))
+            local hdr = stripped:match("^%[(.+)%]$")
+            if hdr then
+                sec = trim(hdr):lower()
+            end
+            if sec == "glyphs" then
+                if not hdr and stripped ~= "" then
+                    local k = stripped:match("^([^=]+)=")
+                    local kl = k and trim(k):lower() or ""
+                    if kl ~= "icon_style" and kl ~= "icon_scale" and kl ~= "hint_mode" then
+                        table.insert(glyph_extra, raw_line)
+                    end
+                end
+            elseif sec ~= "gp_icons" then
+                table.insert(preserved, raw_line)
+            end
+        end
+    end
+
+    while #preserved > 0 and trim(preserved[#preserved]) == "" do
+        table.remove(preserved)
+    end
+
+    local out = {}
+    for i = 1, #preserved do
+        table.insert(out, preserved[i])
+    end
+    if #out > 0 then
+        table.insert(out, "")
+    end
+
+    table.insert(out, "[glyphs]")
+    if #glyph_extra == 0 and gp_bridge and gp_bridge.get_glyph_override then
+        table.insert(out, "style_override = " .. tostring(gp_bridge.get_glyph_override() or "auto"))
+    else
+        for i = 1, #glyph_extra do
+            table.insert(out, glyph_extra[i])
+        end
+    end
+    table.insert(out, "icon_style = " .. cur_style)
+    table.insert(out, "icon_scale = " .. tostring(cur_scale))
+    table.insert(out, "hint_mode = " .. cur_hint_mode)
+    table.insert(out, "")
+    table.insert(out, "[gp_icons]")
+    table.insert(out, "icon_style = " .. cur_style)
+    table.insert(out, "icon_scale = " .. tostring(cur_scale))
+    table.insert(out, "hint_mode = " .. cur_hint_mode)
+    table.insert(out, "")
+
+    local f_out = io.open(path, "wb")
+    if not f_out then
+        return false
+    end
+    f_out:write(table.concat(out, "\n"))
+    f_out:close()
+    return true
+end
+
+function normalize_set(raw)
+    local key = trim(raw):lower()
+    return SET_ALIASES[key] or "xbox"
+end
+
+function button_suffix(button)
+    local key = trim(button):lower()
+    return GLYPH_SUFFIX[key] or "south"
+end
+
+local function query_engine_set()
+    local raw = nil
+    if gp_bridge and type(gp_bridge.get_glyph_set) == "function" then
+        raw = gp_bridge.get_glyph_set()
+    elseif game and type(game.get_gamepad_glyph_set) == "function" then
+        local ok, res = pcall(game.get_gamepad_glyph_set)
+        if ok then raw = res end
+    end
+    local ov = nil
+    if gp_bridge and type(gp_bridge.get_glyph_override) == "function" then
+        ov = gp_bridge.get_glyph_override()
+    end
+    return normalize_set(raw), tostring(ov or "auto")
+end
+
+function set()
+    ensure_loaded()
+    local resolved, ov = query_engine_set()
+    if cached_set == nil then
+        cached_set = resolved
+        cached_override = ov
+    elseif resolved ~= cached_set or ov ~= cached_override then
+        local ov_changed = (ov ~= cached_override)
+        cached_set = resolved
+        cached_override = ov
+        cur_revision = cur_revision + 1
+        if ov_changed then
+            sync_profile()
+        end
+    end
+    return cached_set
+end
+
+function get_effective_set()
+    return set()
+end
+
+function get_icon_style()
+    ensure_loaded()
+    return cur_style
+end
+
+function style()
+    return get_icon_style()
+end
+
+function set_icon_style(v)
+    ensure_loaded()
+    local norm = VALID_STYLES[trim(v):lower()]
+    if not norm then
+        return false
+    end
+    if cur_style ~= norm then
+        cur_style = norm
+        cur_revision = cur_revision + 1
+    end
+    sync_profile()
+    return true
+end
+
+function get_scale()
+    ensure_loaded()
+    return cur_scale
+end
+
+function scale_k()
+    return get_scale() * 0.01
+end
+
+function set_scale(pct)
+    ensure_loaded()
+    local clamped = clamp_scale(pct)
+    if not clamped then
+        return false
+    end
+    if cur_scale ~= clamped then
+        cur_scale = clamped
+        cur_revision = cur_revision + 1
+    end
+    sync_profile()
+    return true
+end
+
+function get_hint_mode()
+    ensure_loaded()
+    return cur_hint_mode
+end
+
+function set_hint_mode(v)
+    ensure_loaded()
+    local norm = VALID_HINT_MODES[trim(v):lower()]
+    if not norm then
+        return false
+    end
+    if cur_hint_mode ~= norm then
+        cur_hint_mode = norm
+        cur_revision = cur_revision + 1
+    end
+    sync_profile()
+    return true
+end
+
+function hints_visible(where)
+    local m = get_hint_mode()
+    if where == "world" then
+        return m == "always"
+    end
+    return m ~= "off"
+end
+
+function tex(button, shape)
+    local st = set()
+    local st_style = get_icon_style()
+    local suf = button_suffix(button)
+    if suf == "share" and st ~= "xbox" then
+        st = "xbox"
+    end
+    if shape == "key" then
+        return "ui_gp_" .. st_style .. "_key_" .. st .. "_" .. suf
+    end
+    return "ui_gp_" .. st_style .. "_" .. st .. "_" .. suf
+end
+
+function dims(button, shape, set_override)
+    local st = set_override and normalize_set(set_override) or set()
+    local suf = button_suffix(button)
+    if suf == "share" and st ~= "xbox" then
+        st = "xbox"
+    end
+    local len_tbl = LABEL_LEN[st] or LABEL_LEN.xbox
+    local n = len_tbl[suf] or 1
+    local vis_w, vis_h
+    if shape == "key" then
+        if st == "ps" and n == 1 then
+            vis_w, vis_h = 24, 24
+        else
+            vis_w, vis_h = KEY_W_BY_LEN[n] or 54, 23
+        end
+    else
+        if n == 1 then
+            vis_w, vis_h = 22, 22
+        else
+            vis_w, vis_h = ROUND_W_BY_LEN[n] or 50, 19
+        end
+    end
+    local tex_w = vis_w + 2 * PAD_GAME_PX
+    local tex_h = vis_h + 2 * PAD_GAME_PX
+    return vis_w, vis_h, tex_w, tex_h
+end
+
+function revision()
+    set()
+    return cur_revision
+end
+
+function refresh()
+    local prev_style, prev_scale, prev_hints, prev_set = cur_style, cur_scale, cur_hint_mode, cached_set
+    load_from_profile()
+    local new_set, new_ov = query_engine_set()
+    cached_set = new_set
+    cached_override = new_ov
+    if cur_style ~= prev_style or cur_scale ~= prev_scale or cur_hint_mode ~= prev_hints or cached_set ~= prev_set then
+        cur_revision = cur_revision + 1
+    end
+    return cur_revision
+end
+
+function set_profile_path_for_test(path)
+    test_profile_path = path
+    state_loaded = false
+    cached_set = nil
+    cached_override = nil
+    ensure_loaded()
+    cur_revision = cur_revision + 1
+    return resolve_profile_path()
+end

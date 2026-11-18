@@ -1,0 +1,435 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="ui_gp_failover_kbm_toast">
+        <text>Помилка геймпада: керування переведено на клавіатуру та мишу</text>
+    </string>
+    <string id="ui_gp_queue_badge_fmt">
+        <text>Черга: %d (%s)  %s Скасувати</text>
+    </string>
+    <string id="ui_gp_inv_hint_section">
+        <text>Розділ</text>
+    </string>
+    <string id="ui_gp_inv_act_use">
+        <text>Використати</text>
+    </string>
+    <string id="ui_gp_inv_act_equip">
+        <text>Надіти</text>
+    </string>
+    <string id="ui_gp_inv_act_unequip">
+        <text>Зняти</text>
+    </string>
+    <string id="ui_gp_inv_act_move">
+        <text>Перекласти</text>
+    </string>
+    <string id="ui_gp_inv_act_select">
+        <text>Вибрати</text>
+    </string>
+    <string id="ui_gp_inv_act_action">
+        <text>Дія</text>
+    </string>
+    <string id="ui_gp_inv_act_description">
+        <text>Опис</text>
+    </string>
+    <string id="ui_gp_inv_act_section">
+        <text>Розділ</text>
+    </string>
+    <string id="ui_gp_inv_act_menu">
+        <text>Меню</text>
+    </string>
+    <string id="ui_gp_inv_act_replace">
+        <text>Замінити</text>
+    </string>
+    <string id="ui_gp_inv_act_install">
+        <text>Встановити</text>
+    </string>
+    <string id="ui_gp_inv_act_charge">
+        <text>Зарядити</text>
+    </string>
+    <string id="ui_gp_inv_act_load">
+        <text>Зарядити</text>
+    </string>
+    <string id="ui_gp_inv_act_place">
+        <text>Покласти</text>
+    </string>
+    <string id="ui_gp_inv_act_apply">
+        <text>Застосувати</text>
+    </string>
+    <string id="ui_gp_inv_side_transfer">
+        <text>Перенесення</text>
+    </string>
+    <string id="ui_gp_inv_side_panel">
+        <text>Панель</text>
+    </string>
+    <string id="ui_gp_inv_side_to_cart">
+        <text>У кошик</text>
+    </string>
+    <string id="ui_gp_inv_side_desc">
+        <text>Опис</text>
+    </string>
+    <string id="ui_gp_inv_side_desc_short">
+        <text>Опис</text>
+    </string>
+    <string id="ui_gp_inv_side_menu">
+        <text>Меню</text>
+    </string>
+    <string id="ui_gp_pda_lbl_tabs">
+        <text>Вкладки</text>
+    </string>
+    <string id="ui_gp_pda_lbl_tasks_legend">
+        <text>Завдання / Легенда</text>
+    </string>
+    <string id="ui_gp_pda_lbl_select">
+        <text>Вибрати</text>
+    </string>
+    <string id="ui_gp_pda_lbl_toggle">
+        <text>Перемкнути</text>
+    </string>
+    <string id="ui_gp_pda_lbl_open">
+        <text>Відкрити</text>
+    </string>
+    <string id="ui_gp_pda_lbl_refresh">
+        <text>Оновити</text>
+    </string>
+    <string id="ui_gp_pda_lbl_take">
+        <text>Узяти</text>
+    </string>
+    <string id="ui_gp_pda_lbl_orders">
+        <text>Накази</text>
+    </string>
+    <string id="ui_gp_pda_lbl_text_refresh">
+        <text>Текст / Оновл.</text>
+    </string>
+    <string id="ui_gp_pda_lbl_known_refresh">
+        <text>Відомі / Оновл.</text>
+    </string>
+    <string id="ui_gp_pda_lbl_img_msg">
+        <text>Зображ. / Повід.</text>
+    </string>
+    <string id="ui_gp_pda_lbl_press">
+        <text>Натиснути</text>
+    </string>
+    <string id="ui_gp_ws_lbl_select">
+        <text>Вибрати</text>
+    </string>
+    <string id="ui_gp_ws_lbl_parts">
+        <text>Запчастини</text>
+    </string>
+    <string id="ui_gp_ws_lbl_place">
+        <text>Поставити</text>
+    </string>
+    <string id="ui_gp_ws_lbl_mark">
+        <text>Позначити</text>
+    </string>
+    <string id="ui_gp_ws_lbl_layer">
+        <text>Шар</text>
+    </string>
+    <string id="ui_gp_ws_lbl_instructions">
+        <text>Інструкції</text>
+    </string>
+    <string id="ui_gp_ws_lbl_back">
+        <text>Назад</text>
+    </string>
+    <string id="ui_gp_ws_lbl_exit">
+        <text>Вихід</text>
+    </string>
+    <string id="ui_gp_err_ctx_world">
+        <text>Під час звичайної гри (ходьба, бій або дослідження світу)</text>
+    </string>
+    <string id="ui_gp_err_ctx_menu">
+        <text>У відкритому вікні інвентарю, обшуку, торгівлі, КПК або меню</text>
+    </string>
+    <string id="ui_gp_err_ctx_wheel">
+        <text>При відкритому швидкому колесі вибору предметів або набоїв</text>
+    </string>
+    <string id="ui_gp_err_ctx_sleep">
+        <text>У вікні сну</text>
+    </string>
+    <string id="ui_gp_err_ctx_cutscene">
+        <text>Під час сюжетної сцени або анімації використання предмета</text>
+    </string>
+    <string id="ui_gp_err_ctx_text">
+        <text>Під час введення тексту або налаштування клавіш</text>
+    </string>
+    <string id="ui_gp_err_ctx_place">
+        <text>Під час розставляння меблів у сховищі</text>
+    </string>
+    <string id="ui_gp_err_ctx_default">
+        <text>Під час роботи гри</text>
+    </string>
+    <string id="ui_gp_err_when_fmt">
+        <text>%s (режим: %s).</text>
+    </string>
+    <string id="ui_gp_err_mod_wheel">
+        <text>Збій у швидкому колесі вибору предметів або набоїв</text>
+    </string>
+    <string id="ui_gp_err_mod_wheel_arm">
+        <text>Збій у відмальовуванні кругового меню</text>
+    </string>
+    <string id="ui_gp_err_mod_bridge">
+        <text>Збій при керуванні курсором або дією з предметом в інвентарі</text>
+    </string>
+    <string id="ui_gp_err_mod_weapon">
+        <text>Збій при перезаряджанні, перевірці магазина або взаємодії зі зброєю</text>
+    </string>
+    <string id="ui_gp_err_mod_field">
+        <text>Збій при швидкій дії (ліхтарик, ПНБ, детектор, граната або підбирання предмета)</text>
+    </string>
+    <string id="ui_gp_err_mod_compat">
+        <text>Збій при взаємодії із зовнішнім модом зброї або магазинів</text>
+    </string>
+    <string id="ui_gp_err_mod_pda">
+        <text>Збій при керуванні КПК з геймпада</text>
+    </string>
+    <string id="ui_gp_err_mod_screens">
+        <text>Збій при керуванні вікном діалогу, ремонту, сну або головного меню</text>
+    </string>
+    <string id="ui_gp_err_mod_inv_pause">
+        <text>Збій у керуванні паузою при відкритому інвентарі</text>
+    </string>
+    <string id="ui_gp_err_mod_lifecycle">
+        <text>Збій при перевірці стану паузи або анімації рук</text>
+    </string>
+    <string id="ui_gp_err_mod_toasts">
+        <text>Збій при показі спливаючого сповіщення на екрані</text>
+    </string>
+    <string id="ui_gp_err_mod_testkit">
+        <text>Збій у сценарії вбудованої перевірки</text>
+    </string>
+    <string id="ui_gp_err_mod_failover">
+        <text>Спрацював аварійний захист керування геймпада</text>
+    </string>
+    <string id="ui_gp_err_mod_default">
+        <text>Внутрішня помилка в обробнику керування геймпада</text>
+    </string>
+    <string id="ui_gp_err_what_fmt">
+        <text>%s (вузол: %s; деталь: %s).</text>
+    </string>
+    <string id="ui_gp_err_rec_failover">
+        <text>Проблемну дію пропущено без вильоту гри; усі затиснуті кнопки, стіки, вібрацію та паузу скинуто, керування переведено на клавіатуру та мишу</text>
+    </string>
+    <string id="ui_gp_err_rec_normal">
+        <text>Проблемний крок безпечно пропущено без вильоту гри; гра продовжує роботу у штатному режимі</text>
+    </string>
+    <string id="ui_gp_err_rep_title">
+        <text>ЗВІТ ЗАХИСТУ ГЕЙМПАДА (gamepad_last_error.log)</text>
+    </string>
+    <string id="ui_gp_err_rep_s1">
+        <text>1. ЩО СТАЛОСЯ:</text>
+    </string>
+    <string id="ui_gp_err_rep_s2">
+        <text>2. У ЯКИЙ МОМЕНТ ГРИ:</text>
+    </string>
+    <string id="ui_gp_err_rep_s3">
+        <text>3. ЩО ЗРОБИВ ЗАХИСТ:</text>
+    </string>
+    <string id="ui_gp_err_rep_tech">
+        <text>ТЕХНІЧНІ ДЕТАЛІ:</text>
+    </string>
+    <string id="ui_gp_tk_abort_btn">
+        <text>[End / 0] Стоп тесту</text>
+    </string>
+    <string id="ui_gp_tk_hint">
+        <text>Вибір: миша | клавіші 1-4 | Вгору/Вниз + Enter/Пробіл | End - Стоп тесту</text>
+    </string>
+    <string id="ui_gp_tk_yes">
+        <text>Так</text>
+    </string>
+    <string id="ui_gp_tk_no">
+        <text>Ні</text>
+    </string>
+    <string id="ui_gp_tk_hdr_fmt">
+        <text>Автотест — Крок %d/%d: %s</text>
+    </string>
+    <string id="ui_gp_tk_question_pfx">
+        <text>Питання: </text>
+    </string>
+    <string id="ui_gp_tk_why_pfx">
+        <text>Навіщо: </text>
+    </string>
+    <string id="ui_gp_tk_why_default">
+        <text>перевірка очима людини</text>
+    </string>
+    <string id="ui_gp_tk_wait_ask">
+        <text>[T] Очікування завершення анімації рук перед відкриттям вікна питання...</text>
+    </string>
+    <string id="ui_gp_tk_aborted_fmt">
+        <text>[T] СТОП ТЕСТУ: сценарій перервано (%s)</text>
+    </string>
+    <string id="ui_gp_tk_wait_start">
+        <text>[T] Очікування завершення анімації рук перед стартом сценарію...</text>
+    </string>
+    <string id="ui_gp_tk_step_fmt">
+        <text>Крок %d/%d: %s</text>
+    </string>
+    <string id="ui_gp_tk_done_fmt">
+        <text>Тест завершено (%s): Кроків %d, PASS %d, FAIL %d. Можна виходити з гри.</text>
+    </string>
+    <string id="ui_gp_tk_already_running">
+        <text>[T] Сценарій уже виконується (End — Стоп тесту).</text>
+    </string>
+    <string id="ui_gp_toast_sample_1">
+        <text>Модифікований бронекостюм «Носоріг» «Долгу» М2 [Стан: 84%] 14.5 кг</text>
+    </string>
+    <string id="ui_gp_toast_sample_2">
+        <text>Штурмова гвинтівка АН-94 «Абакан» тактична [5.45x39: 30+1] 3.9 кг</text>
+    </string>
+    <string id="ui_gp_toast_sample_3">
+        <text>Стійкість до бронебійних куль (BR Class 4) .... 78% (+12%)</text>
+    </string>
+    <string id="ui_gp_toast_sample_4">
+        <text>Вартість ремонту комплектом у техніка ........ 48 650 RU</text>
+    </string>
+    <string id="ui_gp_toast_test_no_ammo">
+        <text>Немає підхожих набоїв</text>
+    </string>
+    <string id="ui_gp_uidbg_title">
+        <text>Редактор інтерфейсу</text>
+    </string>
+    <string id="ui_gp_uidbg_select_el">
+        <text>Виберіть елемент у списку або клацанням по екрану.</text>
+    </string>
+    <string id="ui_gp_uidbg_grp_layout">
+        <text>Розташування</text>
+    </string>
+    <string id="ui_gp_uidbg_dx">
+        <text>Зсув X</text>
+    </string>
+    <string id="ui_gp_uidbg_dy">
+        <text>Зсув Y</text>
+    </string>
+    <string id="ui_gp_uidbg_dw">
+        <text>Ширина +</text>
+    </string>
+    <string id="ui_gp_uidbg_dh">
+        <text>Висота +</text>
+    </string>
+    <string id="ui_gp_uidbg_offscreen">
+        <text>Елемент зараз не на екрані.</text>
+    </string>
+    <string id="ui_gp_uidbg_grp_style">
+        <text>Оформлення</text>
+    </string>
+    <string id="ui_gp_uidbg_bg_color">
+        <text>Колір фону</text>
+    </string>
+    <string id="ui_gp_uidbg_txt_color">
+        <text>Колір тексту</text>
+    </string>
+    <string id="ui_gp_uidbg_reset_el">
+        <text>Скинути елемент</text>
+    </string>
+    <string id="ui_gp_uidbg_no_screen">
+        <text>— екран не визначено —</text>
+    </string>
+    <string id="ui_gp_uidbg_auto_sfx">
+        <text> (авто)</text>
+    </string>
+    <string id="ui_gp_uidbg_screen">
+        <text>Екран</text>
+    </string>
+    <string id="ui_gp_uidbg_auto_opt">
+        <text>Автовизначення</text>
+    </string>
+    <string id="ui_gp_uidbg_undo">
+        <text>Скасувати</text>
+    </string>
+    <string id="ui_gp_uidbg_reset_scr">
+        <text>Скинути екран</text>
+    </string>
+    <string id="ui_gp_uidbg_save_prof">
+        <text>Зберегти профіль</text>
+    </string>
+    <string id="ui_gp_uidbg_save_err">
+        <text>Не вдалося зберегти профіль</text>
+    </string>
+    <string id="ui_gp_uidbg_dirty">
+        <text>Є незбережені правки</text>
+    </string>
+    <string id="ui_gp_uidbg_frames">
+        <text>Рамки</text>
+    </string>
+    <string id="ui_gp_uidbg_click_pick">
+        <text>Вибір клацанням</text>
+    </string>
+    <string id="ui_gp_uidbg_dbl_hint">
+        <text>Подвійне клацання повз вікна віддає керування грі.</text>
+    </string>
+    <string id="ui_gp_uidbg_open_hint">
+        <text>Відкрийте екран гри (наприклад, «Налаштування» з меню паузи).</text>
+    </string>
+    <string id="ui_gp_uidbg_tip_enable">
+        <text>Увімкніть прапорець «Редактор інтерфейсу» в налаштуваннях геймпада.</text>
+    </string>
+    <string id="ui_gp_uidbg_scr_options">
+        <text>Налаштування</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_bg">
+        <text>Фон за вікном</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_dialog">
+        <text>Вікно налаштувань цілком</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_accept">
+        <text>Кнопка «Застосувати»</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_reset">
+        <text>Кнопка «Скинути»</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_cancel">
+        <text>Кнопка «Скасувати»</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_pending">
+        <text>Напис про незбережені зміни</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_scroll">
+        <text>Список параметрів</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_preset_cap">
+        <text>Підпис «Пресет»</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_preset">
+        <text>Вибір пресета</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_panel">
+        <text>Геймпад: панель сторінки кнопок</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_pad">
+        <text>Геймпад: зображення геймпада</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_card">
+        <text>Геймпад: картка підказки</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_title">
+        <text>Геймпад: заголовок підказки</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_long">
+        <text>Геймпад: довга підказка</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_panel">
+        <text>Геймпад: панель прицілювання</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_title">
+        <text>Прицілювання: заголовок довідки</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_line">
+        <text>Прицілювання: рядок меж</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_long">
+        <text>Прицілювання: довга підказка</text>
+    </string>
+    <string id="ui_gp_uidbg_page_buttons">
+        <text>кнопки</text>
+    </string>
+    <string id="ui_gp_uidbg_page_aiming">
+        <text>прицілювання</text>
+    </string>
+    <string id="ui_gp_uidbg_foot_icon_fmt">
+        <text>Нижня смуга (%s): значки %d</text>
+    </string>
+    <string id="ui_gp_uidbg_foot_label_fmt">
+        <text>Нижня смуга (%s): підпис %d</text>
+    </string>
+	<string id="st_gp_open_site_confirm">
+		<text>Відкрити сайт авторів мода в браузері (гра може згорнутися)?</text>
+	</string>
+</string_table>

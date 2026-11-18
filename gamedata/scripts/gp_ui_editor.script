@@ -1,0 +1,328 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- gp_ui_editor.script — окно «Редактор интерфейса» в оверлее ImGui (шаг UIDBG, этап Э1).
+-- Документ: docs/ui/debug-menu/ПРОМПТ — дебаг-меню интерфейса.md (§5.3 рамки/выбор, §5.5 ввод).
+-- Только вид: все данные и правки — в gp_ui_tune.script. Файл в Windows-1251, подписи идут через u8().
+-- Пункт меню: оверлей (F10) -> Debug -> «Редактор интерфейса». Доступ: галочка в настройках геймпада или -dbg (Р3).
+-- Рамки (Р8): выбранный — бирюзовый 2 px, наведённый — тот же цвет 50%, 1 px (пунктир — после пакета движка).
+-- Рамки рисуются окнами ImGui без ввода (вариант А, §5.3); переход на ImGui.FgRect — правкой одной draw_frame.
+
+local is_open = false
+local cur_screen = nil        -- выбранный вручную экран (nil = автоопределение)
+local selected = nil          -- id выбранного элемента
+local show_frames = true
+local click_pick = true
+local last_click = nil        -- { x, y } точка прошлого щелчка (повторный щелчок -> следующий элемент)
+local drag = nil              -- { id, x, y } перетаскивание мышью
+local frame_n = 0
+local status = ""
+local SEL = { 0, 210, 200, 255 }    -- r, g, b, a (Р8: 255,0,210,200 в ARGB)
+local HOV = { 0, 210, 200, 128 }
+
+local T = gp_ui_tune
+
+local function L(s) return T.u8(s) end
+local function has_imgui() return ImGui ~= nil end
+local function tr_raw(id, fb)
+    if game and type(game.translate_string) == "function" then
+        local ok, s = pcall(game.translate_string, id)
+        if ok and type(s) == "string" and s ~= "" and s ~= id then return s end
+    end
+    return fb
+end
+local function L_id(id, fb) return T.u8(tr_raw(id, fb)) end
+local function L_title(obj)
+    if not obj then return "" end
+    if obj.title_id then
+        if obj.title_page_id then
+            return T.u8(string.format(tr_raw(obj.title_id, obj.title_fb or ""), tr_raw(obj.title_page_id, obj.title_page_fb or ""), obj.title_idx or 1))
+        end
+        return L_id(obj.title_id, obj.title_fb or obj.title or obj.id)
+    end
+    return L(obj.title or obj.id)
+end
+
+function is_editor_open() return is_open end
+function set_open(flag)
+    if not has_imgui() then is_open = false; drag = nil; return false end
+    is_open = (flag and T.is_editor_allowed()) and true or false
+    if not is_open then drag = nil end
+    return is_open
+end
+function get_selected() return selected end
+function select_element(id) selected = id end
+function get_status() return status end
+
+-- Активный экран: ручной выбор, если он открыт, иначе автоопределение.
+function active_screen()
+    if cur_screen then
+        local s = T.get_screen(cur_screen)
+        if s and s.detect then
+            local ok, gui = pcall(s.detect)
+            if ok and gui then return cur_screen, gui end
+        end
+        return cur_screen, nil
+    end
+    return T.detect_active_screen()
+end
+
+-- Единственная функция рисования рамки (после пакета движка: ImGui.FgRect одной правкой, §7 шаг 4).
+function draw_frame(x1, y1, x2, y2, col, thick)
+    if not has_imgui() then return end
+    frame_n = frame_n + 1
+    local px1, py1 = T.ui_to_px(x1, y1)
+    local px2, py2 = T.ui_to_px(x2, y2)
+    local flags = ImGuiWindowFlags.NoInputs + ImGuiWindowFlags.NoDecoration + ImGuiWindowFlags.NoBackground
+        + ImGuiWindowFlags.NoSavedSettings + ImGuiWindowFlags.NoFocusOnAppearing + ImGuiWindowFlags.NoNav
+        + ImGuiWindowFlags.NoDocking + ImGuiWindowFlags.NoBringToFrontOnFocus
+    ImGui.SetNextWindowPos(vector2():set(px1 - thick, py1 - thick), ImGuiCond.Always, vector2():set(0, 0))
+    ImGui.SetNextWindowSize(vector2():set(math.max(2, px2 - px1 + 2 * thick), math.max(2, py2 - py1 + 2 * thick)), ImGuiCond.Always)
+    ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, thick)
+    ImGui.PushStyleVar(ImGuiStyleVar.WindowMinSize, vector2():set(1, 1))
+    ImGui.PushStyleColor(ImGuiCol.Border, fcolor():set(col[1] / 255, col[2] / 255, col[3] / 255, col[4] / 255))
+    ImGui.Begin("##uidbg_frame_" .. frame_n, true, flags)
+    ImGui.End()
+    ImGui.PopStyleColor(1)
+    ImGui.PopStyleVar(2)
+end
+
+-- Мышь над окнами ImGui или занят виджет — экран не трогаем (§5.3; двойной щелчок не используем, §3.1).
+function mouse_free()
+    if not has_imgui() then return false end
+    if ImGui.IsWindowHovered(ImGuiHoveredFlags.AnyWindow) then return false end
+    if ImGui.IsAnyItemActive() then return false end
+    if ImGui.IsPopupOpen("", ImGuiPopupFlags.AnyPopupId + ImGuiPopupFlags.AnyPopupLevel) then return false end
+    return true
+end
+
+-- Рамки, выбор щелчком, перетаскивание.
+function update_screen(sid, gui)
+    if not has_imgui() then return end
+    frame_n = 0
+    if not sid or not gui then return end
+    local m = ImGui.GetMousePos()
+    local ux, uy = T.px_to_ui(m.x, m.y)
+    local free = mouse_free()
+    local hover = free and T.pick_at(sid, gui, ux, uy)[1] or nil
+    if show_frames then
+        if hover and hover.id ~= selected then
+            local x1, y1, x2, y2 = T.element_rect(hover, gui)
+            if x1 then draw_frame(x1, y1, x2, y2, HOV, 1) end
+        end
+        local sel = selected and T.find_element(selected)
+        if sel and T.element_visible(sel, gui) then
+            local x1, y1, x2, y2 = T.element_rect(sel, gui)
+            if x1 then draw_frame(x1, y1, x2, y2, SEL, 2) end
+        end
+    end
+    if drag then
+        if not ImGui.IsMouseDown(ImGuiMouseButton.Left) then
+            drag = nil
+        else
+            local el = T.find_element(drag.id)
+            local dpx, dpy = m.x - drag.x, m.y - drag.y
+            if el and (dpx ~= 0 or dpy ~= 0) then
+                local ddx, ddy = T.px_delta_to_units(el.unit, dpx, dpy)
+                T.move_element(el, gui, ddx, ddy, 0, 0)
+                T.apply_screen(sid, gui)
+                drag.x, drag.y = m.x, m.y
+            end
+        end
+        return
+    end
+    if click_pick and free and ImGui.IsMouseClicked(ImGuiMouseButton.Left, false) then
+        local same = last_click and math.abs(last_click[1] - m.x) < 3 and math.abs(last_click[2] - m.y) < 3
+        local el = same and T.pick_next(sid, gui, ux, uy, selected) or T.pick_at(sid, gui, ux, uy)[1]
+        last_click = { m.x, m.y }
+        if el then
+            selected = el.id
+            drag = { id = el.id, x = m.x, y = m.y }
+        end
+    end
+end
+
+-- Стрелки: 1 экранный пиксель, Shift — 10 (§1 п.4). Только когда не идёт ввод в поле.
+function handle_arrows(sid, gui)
+    if not has_imgui() or not selected or ImGui.IsAnyItemActive() then return false end
+    local el = T.find_element(selected)
+    if not el then return false end
+    local step = (ImGui.IsKeyDown(ImGuiKey.LeftShift) or ImGui.IsKeyDown(ImGuiKey.RightShift)) and 10 or 1
+    local dpx, dpy = 0, 0
+    if ImGui.IsKeyPressed(ImGuiKey.LeftArrow, true) then dpx = -step end
+    if ImGui.IsKeyPressed(ImGuiKey.RightArrow, true) then dpx = step end
+    if ImGui.IsKeyPressed(ImGuiKey.UpArrow, true) then dpy = -step end
+    if ImGui.IsKeyPressed(ImGuiKey.DownArrow, true) then dpy = step end
+    if dpx == 0 and dpy == 0 then return false end
+    local ddx, ddy = T.px_delta_to_units(el.unit, dpx, dpy)
+    T.move_element(el, gui, ddx, ddy, 0, 0)
+    T.apply_screen(sid, gui)
+    return true
+end
+
+-- Поле одного числа сдвига (шаг перетаскивания = один экранный пиксель в единицах элемента).
+local function drag_field(label, el, gui, key, step)
+    if not has_imgui() then return false end
+    local o = T.get_override(el.id)
+    local v = tonumber(o[key]) or 0
+    local changed, nv = ImGui.DragFloat(L(label) .. "##" .. key, v, step, -2000, 2000, "%.3f", ImGuiSliderFlags.NoSpeedTweaks)
+    if changed and nv ~= v then
+        local d = { dx = 0, dy = 0, dw = 0, dh = 0 }
+        d[key] = nv - v
+        T.move_element(el, gui, d.dx, d.dy, d.dw, d.dh)
+        return true
+    end
+    return false
+end
+
+local function color_field(label, el, gui, key)
+    if not has_imgui() then return false end
+    local o = T.get_override(el.id)
+    local a, r, g, b = T.parse_color(o[key])
+    if not a then a, r, g, b = T.native_color(el, gui, key) end
+    local c = fcolor():set(r / 255, g / 255, b / 255, a / 255)
+    local changed, nc = ImGui.ColorEdit4(L(label) .. "##" .. key, c, ImGuiColorEditFlags.AlphaBar)
+    if changed and nc then
+        T.set_override(el.id, key, T.color_to_string(nc.a * 255, nc.r * 255, nc.g * 255, nc.b * 255))
+        return true
+    end
+    return false
+end
+
+-- Раздел «Расположение» и «Оформление» выбранного элемента.
+function draw_element_panel(sid, gui)
+    if not has_imgui() then return false end
+    local el = selected and T.find_element(selected)
+    if not el then
+        ImGui.TextWrapped(L_id("ui_gp_uidbg_select_el", "Select an element from the list or click on screen."))
+        return false
+    end
+    ImGui.Text(L_title(el))
+    ImGui.TextDisabled(el.id)
+    local changed = false
+    if ImGui.CollapsingHeader(L_id("ui_gp_uidbg_grp_layout", "Layout"), ImGuiTreeNodeFlags.DefaultOpen) then
+        local sx, sy = T.px_delta_to_units(el.unit, 1, 1)
+        if el.caps.pos then
+            changed = drag_field(tr_raw("ui_gp_uidbg_dx", "Offset X"), el, gui, "dx", sx) or changed
+            changed = drag_field(tr_raw("ui_gp_uidbg_dy", "Offset Y"), el, gui, "dy", sy) or changed
+        end
+        if el.caps.size then
+            changed = drag_field(tr_raw("ui_gp_uidbg_dw", "Width +"), el, gui, "dw", sx) or changed
+            changed = drag_field(tr_raw("ui_gp_uidbg_dh", "Height +"), el, gui, "dh", sy) or changed
+        end
+        local x1, y1, x2, y2 = T.element_rect(el, gui)
+        if x1 then
+            local px1, py1 = T.ui_to_px(x1, y1)
+            local px2, py2 = T.ui_to_px(x2, y2)
+            ImGui.Text(string.format("UI: %.1f, %.1f  %.1f x %.1f", x1, y1, x2 - x1, y2 - y1))
+            ImGui.Text(string.format("px: %d, %d  %d x %d", px1, py1, px2 - px1, py2 - py1))
+        else
+            ImGui.TextDisabled(L_id("ui_gp_uidbg_offscreen", "Элемент сейчас не на экране."))
+        end
+    end
+    if (el.caps.color or el.caps.text_color) and ImGui.CollapsingHeader(L_id("ui_gp_uidbg_grp_style", "Style"), ImGuiTreeNodeFlags.DefaultOpen) then
+        if el.caps.color then changed = color_field(tr_raw("ui_gp_uidbg_bg_color", "Back Color"), el, gui, "color") or changed end
+        if el.caps.text_color then changed = color_field(tr_raw("ui_gp_uidbg_txt_color", "Text Color"), el, gui, "text_color") or changed end
+    end
+    if ImGui.Button(L_id("ui_gp_uidbg_reset_el", "Reset element"), vector2():set(0, 0)) then
+        changed = T.reset_element(el.id) or changed
+    end
+    if changed then T.apply_screen(sid, gui) end
+    return changed
+end
+
+-- Список элементов экрана; невидимые сейчас — серым.
+function draw_tree(sid, gui)
+    if not has_imgui() then return end
+    if not ImGui.BeginListBox("##uidbg_tree", vector2():set(-1, 220)) then return end
+    for _, el in ipairs(T.list_elements(sid)) do
+        local vis = gui and T.element_visible(el, gui)
+        local label = L_title(el) .. "##" .. el.id
+        if not vis then ImGui.PushStyleColor(ImGuiCol.Text, fcolor():set(0.5, 0.5, 0.5, 1)) end
+        if ImGui.Selectable(label, selected == el.id, 0, vector2():set(0, 0)) then selected = el.id end
+        if not vis then ImGui.PopStyleColor(1) end
+    end
+    ImGui.EndListBox()
+end
+
+function draw_screen_combo(sid)
+    if not has_imgui() then return end
+    local cur = sid and T.get_screen(sid)
+    local preview = cur and L_title(cur) or L_id("ui_gp_uidbg_no_screen", "- no screen detected -")
+    if cur_screen == nil then preview = preview .. L_id("ui_gp_uidbg_auto_sfx", " (auto)") end
+    if ImGui.BeginCombo(L_id("ui_gp_uidbg_screen", "Screen") .. "##uidbg_screen", preview, 0) then
+        if ImGui.Selectable(L_id("ui_gp_uidbg_auto_opt", "Автоопределение"), cur_screen == nil, 0, vector2():set(0, 0)) then cur_screen = nil end
+        for _, id in ipairs(T.list_screens()) do
+            local s = T.get_screen(id)
+            if ImGui.Selectable(L_title(s or { id = id }) .. "##" .. id, cur_screen == id, 0, vector2():set(0, 0)) then cur_screen = id end
+        end
+        ImGui.EndCombo()
+    end
+end
+
+function draw_actions(sid, gui)
+    if not has_imgui() then return end
+    if ImGui.Button(L_id("ui_gp_uidbg_undo", "Отменить"), vector2():set(0, 0)) and T.undo() then T.apply_screen(sid, gui) end
+    ImGui.SameLine(0, 6)
+    if ImGui.Button(L_id("ui_gp_uidbg_reset_scr", "Сбросить экран"), vector2():set(0, 0)) and sid and T.reset_screen(sid) then T.apply_screen(sid, gui) end
+    ImGui.SameLine(0, 6)
+    if ImGui.Button(L_id("ui_gp_uidbg_save_prof", "Сохранить профиль"), vector2():set(0, 0)) then
+        local ok, _, path = T.save_profile()
+        status = ok and ("OK: " .. tostring(path)) or L_id("ui_gp_uidbg_save_err", "Failed to save profile")
+    end
+    if T.is_dirty() then ImGui.TextColored(fcolor():set(1, 0.8, 0.3, 1), L_id("ui_gp_uidbg_dirty", "Unsaved changes pending")) end
+    if status ~= "" then ImGui.TextDisabled(status) end
+end
+
+-- Окно редактора (группа Main оверлея).
+function draw_window()
+    if not is_open then return end
+    if not T.is_editor_allowed() then
+        is_open = false
+        return
+    end
+    local sid, gui = active_screen()
+    update_screen(sid, gui)
+    ImGui.SetNextWindowSize(vector2():set(480, 700), ImGuiCond.FirstUseEver)
+    local expanded, keep = ImGui.Begin(L_id("ui_gp_uidbg_title", "Редактор интерфейса") .. "##uidbg", true, ImGuiWindowFlags.NoNavInputs)
+    if expanded then
+        draw_screen_combo(sid)
+        local c1, nf = ImGui.Checkbox(L_id("ui_gp_uidbg_frames", "Frames"), show_frames)
+        if c1 then show_frames = nf end
+        ImGui.SameLine(0, 12)
+        local c2, nc = ImGui.Checkbox(L_id("ui_gp_uidbg_click_pick", "Click to pick"), click_pick)
+        if c2 then click_pick = nc end
+        ImGui.TextDisabled(L_id("ui_gp_uidbg_dbl_hint", "Double-click outside returns control."))
+        ImGui.Separator()
+        if sid then
+            draw_tree(sid, gui)
+            draw_element_panel(sid, gui)
+            ImGui.Separator()
+            draw_actions(sid, gui)
+            handle_arrows(sid, gui)
+        else
+            ImGui.TextWrapped(L_id("ui_gp_uidbg_open_hint", "Open a game screen (e.g. \"Settings\" from pause menu)."))
+        end
+    end
+    ImGui.End()
+    if keep == false then is_open = false end
+end
+
+-- Пункт меню Debug.
+function draw_menu_item()
+    local allowed = T.is_editor_allowed()
+    local clicked = ImGui.MenuItem(L_id("ui_gp_uidbg_title", "Редактор интерфейса"), "", is_open, allowed)
+    if clicked then set_open(not is_open) end
+    if not allowed and ImGui.IsItemHovered(0) then
+        ImGui.SetTooltip(L_id("ui_gp_uidbg_tip_enable", "Enable \"UI Editor\" in gamepad settings."))
+    end
+    return clicked
+end
+
+function on_game_start()
+    if not (ImGui and ImGui.Groups and ImGui.Groups.Debug and ImGui.Groups.Main) then
+        if not _imgui_groups then return false end
+        if not (ImGui and ImGui.Groups and ImGui.Groups.Debug and ImGui.Groups.Main) then return false end
+    end
+    ImGui.Groups.Debug.Widget(draw_menu_item)
+    ImGui.Groups.Main.Widget(draw_window)
+    return true
+end

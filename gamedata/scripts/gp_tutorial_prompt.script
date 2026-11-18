@@ -1,0 +1,254 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- gp_tutorial_prompt.script -- GAYS v0.2 / W5-SYSDLG (2026-11-14): gamepad prompts for ui_timed_prompt.
+-- Prompts of ui_timed_prompt.script (NPE / catsy) watch the PDA key (M): tap = open tutorial,
+-- hold = hide banner. With a gamepad the engine resolves LB + View (TutorialPrompt) and calls
+-- on_gamepad_tap / on_gamepad_hold. On live UIKeyPrompt banners (В8), "M" is replaced with
+-- gp_icons round glyphs (LB + View) aligned on the capital-letter centerline (gp_hint_align, cap),
+-- switching live between keyboard "M" and gamepad glyphs.
+
+BIND_CAPTION = "LB + View"
+
+local live = {}
+local installed = false
+local update_cb_registered = false
+
+function is_gamepad()
+    if gp_bridge and type(gp_bridge.is_gamepad_active) == "function" then
+        local ok, res = pcall(gp_bridge.is_gamepad_active)
+        return ok and res == true
+    end
+    return false
+end
+
+function pda_dik()
+    if type(bind_to_dik) == "function" and key_bindings and key_bindings.kACTIVE_JOBS then
+        local ok, d = pcall(bind_to_dik, key_bindings.kACTIVE_JOBS)
+        if ok then return d end
+    end
+    return nil
+end
+
+local function watches_pda(p)
+    local a = p and p.args
+    return a ~= nil and a.key ~= nil and a.key == pda_dik()
+end
+
+local function find_prompt(want_hold)
+    for p in pairs(live) do
+        if watches_pda(p) and ((p.args.mode == 2) == want_hold) then
+            return p
+        end
+    end
+    return nil
+end
+
+local function fire(want_hold)
+    local p = find_prompt(want_hold)
+    if not p then
+        return want_hold and "none:no_hold_prompt" or "none:no_tap_prompt"
+    end
+    local ok = pcall(p.ExecuteAction, p)
+    return (ok and "executed:" or "error:") .. tostring(p.uid)
+end
+
+function on_gamepad_tap()
+    return fire(false)
+end
+
+function on_gamepad_hold()
+    return fire(true)
+end
+
+function get_live_count()
+    local n = 0
+    for _ in pairs(live) do n = n + 1 end
+    return n
+end
+
+function sync_prompt_glyphs(p)
+    if not (p and p.frame and p.xml and watches_pda(p)) then
+        return "none"
+    end
+    if p.args and p.args.hide_bind then
+        return "hidden_bind"
+    end
+    if p._gp_base_lx == nil then
+        local lp = p.textlabel and p.textlabel:GetWndPos() or nil
+        p._gp_base_lx = lp and lp.x or ((p.args and p.args.label_x) or 0)
+    end
+    if p._gp_base_bx == nil then
+        local bp = p.shownbind and p.shownbind:GetWndPos() or nil
+        p._gp_base_bx = bp and bp.x or ((p.args and p.args.bind_x) or 0)
+        p._gp_base_by = bp and bp.y or ((p.args and p.args.bind_y) or 0)
+    end
+
+    local gp = is_gamepad()
+    if not gp then
+        if p.shownbind then p.shownbind:Show(true) end
+        if p._gp_bar then p._gp_bar:Show(false) end
+        if p.textlabel and vector2 then
+            local lp = p.textlabel:GetWndPos()
+            p.textlabel:SetWndPos(vector2():set(p._gp_base_lx, lp.y))
+        end
+        return "kbm"
+    end
+
+    if p.shownbind then p.shownbind:Show(false) end
+    local ic = rawget(_G, "gp_icons")
+    if type(ic) == "table" and type(ic.hints_visible) == "function" and ic.hints_visible("world") ~= true then
+        if p._gp_bar then p._gp_bar:Show(false) end
+        if p.textlabel and vector2 then
+            local lp = p.textlabel:GetWndPos()
+            p.textlabel:SetWndPos(vector2():set(p._gp_base_bx, lp.y))
+        end
+        return "off"
+    end
+
+    local al = rawget(_G, "gp_hint_align")
+    if not (type(ic) == "table" and type(al) == "table" and vector2) then
+        if p.shownbind then p.shownbind:Show(true) end
+        return "fallback"
+    end
+
+    local box_tag = (p.args and p.args.xml_box) or "box"
+    if not p._gp_bar then
+        local bar = p.xml:InitStatic(box_tag, p.frame)
+        local ilb = p.xml:InitStatic(box_tag, bar)
+        local plus = p.xml:InitStatic("textbox", bar)
+        local ivw = p.xml:InitStatic(box_tag, bar)
+        p._gp_bar = bar
+        p._gp_ilb = ilb
+        p._gp_plus = plus
+        p._gp_ivw = ivw
+    end
+
+    local sw, sh = al.screen()
+    local rev = ic.revision and ic.revision() or 0
+    if p._gp_rev ~= rev or p._gp_sw ~= sw or p._gp_sh ~= sh then
+        p._gp_rev, p._gp_sw, p._gp_sh = rev, sw, sh
+        local font = "letterica16"
+        local cy = p._gp_base_by + 10
+        if p.textlabel then
+            local lp = p.textlabel:GetWndPos()
+            local lh = p.textlabel:GetHeight()
+            if not lh or lh <= 1 then lh = 20 end
+            cy = lp.y + lh * 0.5 + al.xmid_below(font)
+        end
+
+        local sk = ic.scale_k and ic.scale_k() or 1
+        local k_px = (20 / 22) * (sh / 1080) * sk
+        local pad_px = 3 * k_px
+        local pad_ui = al.px_w(pad_px)
+
+        local tex_lb = ic.tex("lb", "round")
+        local vw1, _, tw1, th1 = ic.dims("lb", "round")
+        local w1_px = math.max(10, math.floor(tw1 * k_px + 0.5))
+        local h1_px = math.max(10, math.floor(th1 * k_px + 0.5))
+        local w1, h1 = al.px_w(w1_px), al.px_h(h1_px)
+        p._gp_ilb:InitTexture(tex_lb)
+        p._gp_ilb:SetWndPos(vector2():set(al.snap_x(p._gp_base_bx - pad_ui), al.snap_y(cy - h1 * 0.5)))
+        p._gp_ilb:SetWndSize(vector2():set(w1, h1))
+        p._gp_ilb:Show(true)
+
+        local vis1_r = p._gp_base_bx + al.px_w(vw1 * k_px)
+        local gap = al.px_w(math.max(2, math.floor(3 * sh / 1080 + 0.5)))
+        local pw = al.px_w(math.max(8, math.floor(10 * sh / 1080 + 0.5)))
+        local tc = p._gp_plus:TextControl()
+        if tc then
+            tc:SetText("+")
+            if GetARGB and tc.SetTextColor then
+                tc:SetTextColor(GetARGB(255, 225, 225, 225))
+            end
+        end
+        p._gp_plus:SetWndPos(vector2():set(al.snap_x(vis1_r + gap), al.label_y(cy, 20, font)))
+        p._gp_plus:SetWndSize(vector2():set(pw, 20))
+        p._gp_plus:Show(true)
+
+        local tex_vw = ic.tex("view", "round")
+        local vw2, _, tw2, th2 = ic.dims("view", "round")
+        local w2_px = math.max(10, math.floor(tw2 * k_px + 0.5))
+        local h2_px = math.max(10, math.floor(th2 * k_px + 0.5))
+        local w2, h2 = al.px_w(w2_px), al.px_h(h2_px)
+        local vis2_l = vis1_r + gap + pw + gap
+        p._gp_ivw:InitTexture(tex_vw)
+        p._gp_ivw:SetWndPos(vector2():set(al.snap_x(vis2_l - pad_ui), al.snap_y(cy - h2 * 0.5)))
+        p._gp_ivw:SetWndSize(vector2():set(w2, h2))
+        p._gp_ivw:Show(true)
+
+        local total_r = vis2_l + al.px_w(vw2 * k_px) + al.px_w(math.max(4, math.floor(6 * sh / 1080 + 0.5)))
+        p._gp_bar:SetWndPos(vector2():set(0, 0))
+        p._gp_bar:SetWndSize(vector2():set(total_r, 28))
+        p._gp_text_lx = math.max(p._gp_base_lx, total_r)
+    end
+
+    p._gp_bar:Show(true)
+    if p.textlabel then
+        local lp = p.textlabel:GetWndPos()
+        p.textlabel:SetWndPos(vector2():set(p._gp_text_lx or p._gp_base_lx, lp.y))
+    end
+    return "gamepad"
+end
+
+function sync_all_live()
+    local n = 0
+    for p in pairs(live) do
+        sync_prompt_glyphs(p)
+        n = n + 1
+    end
+    return n
+end
+
+function install()
+    if installed then return "already" end
+    local m = ui_timed_prompt
+    if not (m and m.UIKeyPrompt and type(m.UIKeyPrompt.RegisterCallbacks) == "function"
+            and type(m.get_keybind_display) == "function") then
+        return "skipped:no_ui_timed_prompt"
+    end
+    installed = true
+    local orig_reg = m.UIKeyPrompt.RegisterCallbacks
+    m.UIKeyPrompt.RegisterCallbacks = function(self, state)
+        if state then
+            live[self] = true
+            sync_prompt_glyphs(self)
+        else
+            live[self] = nil
+        end
+        return orig_reg(self, state)
+    end
+    local orig_disp = m.get_keybind_display
+    m.get_keybind_display = function(self, bind_text)
+        if watches_pda(self) then
+            self._gp_orig_bind = self._gp_orig_bind or bind_text or (self.args and self.args.bind) or "M"
+            if self.frame and self.xml then
+                local res = orig_disp(self, self._gp_orig_bind)
+                self.shownbind = res or self.shownbind
+                sync_prompt_glyphs(self)
+                return res
+            end
+            if is_gamepad() then
+                bind_text = BIND_CAPTION
+            end
+        end
+        return orig_disp(self, bind_text)
+    end
+    if not update_cb_registered and type(RegisterScriptCallback) == "function" then
+        update_cb_registered = true
+        RegisterScriptCallback("actor_on_update", sync_all_live)
+    end
+    sync_all_live()
+    return "installed"
+end
+
+function reset_for_test()
+    if update_cb_registered and type(UnregisterScriptCallback) == "function" then
+        pcall(UnregisterScriptCallback, "actor_on_update", sync_all_live)
+    end
+    update_cb_registered = false
+    live = {}
+    installed = false
+end
+
+function on_game_start()
+    install()
+end

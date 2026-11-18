@@ -1,0 +1,1720 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- =============================================================================
+-- gp_progression.script — W5-HIDEOUT-PROG (2026-11-14)
+-- Адаптер геймпада для окон навыков, перков, настройки ЛЦУ и полосы цветокоррекции
+-- по единому концепту (docs/ui/concept/00-windows-concept.md, ТЗ 22-skills-and-minigames.md,
+-- docs/ui/live-layout/gamepad-remaining-dialogs-spec.md):
+--   1. Навыки Haruka (ui_haru_skills.UIHarukaSkills): фокус по строкам навыков,
+--      автопрокрутка P13, плавная прокрутка RS P12, переключение описания Y P14,
+--      В36 — быстрый переход к перкам (UIExperienceMenu) и нижняя полоса P16.
+--   2. Перки Experience Framework (experience_ui.UIExperienceMenu + вкладки
+--      skills, traits, tasks, options, xpmult, debug): листание вкладок LT/RT,
+--      категории LB/RB, слои UIComboBoxCustom и UIMessageBoxCustom (P4),
+--      В37 — показ только открытых и видимых вкладок/перков без секретного обхода,
+--      В4 (P7) — покупка перка, улучшение/разбор черты и престиж удержанием X 0,3+0,7 с,
+--      В36 — быстрый переход обратно к навыкам Haruka (View).
+--   3. Настройка ЛЦУ (laser_settings_ui.LaserSettingsDialog): перехват local GUI = nil,
+--      5 ползунков (шаг крестовиной + крупный шаг LB/RB, отказ на упорах P8),
+--      2 флажка, фильтрация скрытого btn_export (E6), В4 — сброс удержанием X 0,3+0,7 с.
+--   4. Цветокоррекция (ui_ctrl_lighting.UILightControl): собственный неконфликтующий хук
+--      без правок gp_hooks_vanilla.script — В36: сброс текущего ползунка к 1.0 на X
+--      + нижняя полоса подсказок P16 с автоскрытием при касании мыши/клавиатуры (P10).
+--
+-- Игра «21 очко» принадлежит W4-ICONS2-FIELD и здесь НЕ трогается.
+-- Владение UIHarukaSkills и UIExperienceMenu перенято у старых веток gp_screens /
+-- gp_screens_ext (согласовано с W4-MCM-GWIRE в coord/events.md).
+-- Совместимость с чистой Anomaly (PORT-A, P23): при отсутствии модов навыки/перки/ЛЦУ
+-- тихо спят; цветокоррекция ui_ctrl_lighting работает и в PORT-G, и в PORT-A.
+-- =============================================================================
+
+ENABLED = true
+
+OWNED_WINDOWS = {
+    UIHarukaSkills      = true,
+    UIExperienceMenu    = true,
+    LaserSettingsDialog = true,
+}
+
+HOLD_PAUSE_MS = 300
+HOLD_FILL_MS  = 700
+SCROLL_SPEED  = 520
+
+local DIR_UP    = 1
+local DIR_DOWN  = 2
+local DIR_LEFT  = 3
+local DIR_RIGHT = 4
+
+local CIRCLE_K   = 1.5
+local STRIP_STEP = 41
+local DIM_ALPHA  = 110
+
+local EXP_TAB_ORDER = { "skills", "traits", "tasks", "options", "xpmult", "debug" }
+
+local LIGHTING_DEFS = {
+    [1] = { def = 1.0, min = 0.5, max = 2.2, step = 0.1 },
+    [2] = { def = 1.0, min = 0.0, max = 2.0, step = 0.1 },
+    [3] = { def = 1.0, min = 0.5, max = 4.0, step = 0.1 },
+}
+
+local TEXT_RU = {
+    select        = "Выбрать",
+    close         = "Закрыть",
+    back          = "Назад",
+    desc_toggle   = "Описание",
+    to_perks      = "Перки",
+    to_skills     = "Навыки",
+    tabs          = "Вкладки",
+    learn_hold    = "Выучить (удерж.)",
+    trait_hold    = "Улучш./Разбор (удерж.)",
+    confirm_hold  = "Подтвердить (удерж.)",
+    reset_hold    = "Сброс (удерж.)",
+    reset_slider  = "Сбросить (1.0)",
+    slider_step   = "Ползунок",
+    coarse_step   = "Крупнее",
+}
+
+local TEXT_EN = {
+    select        = "Select",
+    close         = "Close",
+    back          = "Back",
+    desc_toggle   = "Description",
+    to_perks      = "Perks",
+    to_skills     = "Skills",
+    tabs          = "Tabs",
+    learn_hold    = "Learn (hold)",
+    trait_hold    = "Upgr./Destroy (hold)",
+    confirm_hold  = "Confirm (hold)",
+    reset_hold    = "Reset (hold)",
+    reset_slider  = "Reset (1.0)",
+    slider_step   = "Slider",
+    coarse_step   = "Coarse",
+}
+
+state = {
+    hooks_installed  = false,
+    active_laser_dlg = nil,
+    active_light_dlg = nil,
+    desc_hidden_fb   = false,
+    denies           = 0,
+}
+
+local XML = nil
+
+-- -----------------------------------------------------------------------------
+-- 1. Базовые помощники UI, геометрии и локализации
+-- -----------------------------------------------------------------------------
+
+function owns_window(name)
+    return OWNED_WINDOWS[tostring(name or "")] == true
+end
+
+function shown(w)
+    if rawequal(w, nil) or type(w.IsShown) ~= "function" then return false end
+    local ok, res = pcall(w.IsShown, w)
+    return ok and res == true
+end
+
+function enabled(w)
+    if rawequal(w, nil) then return false end
+    if type(w.IsEnabled) ~= "function" then return true end
+    local ok, res = pcall(w.IsEnabled, w)
+    return ok and res == true
+end
+
+function is_gamepad()
+    local b = rawget(_G, "gp_bridge")
+    if b and type(b.is_gamepad_active) == "function" then
+        local ok, res = pcall(b.is_gamepad_active)
+        if ok then return res == true end
+    end
+    local g = rawget(_G, "game")
+    if g and type(g.is_gamepad_active_source) == "function" then
+        local ok, res = pcall(g.is_gamepad_active_source)
+        if ok then return res == true end
+    end
+    return false
+end
+
+function hints_visible(where)
+    local ic = rawget(_G, "gp_icons")
+    if ic and type(ic.hints_visible) == "function" then
+        local ok, res = pcall(ic.hints_visible, where or "menu")
+        if ok then return res == true end
+    end
+    return true
+end
+
+function is_top_dialog(w)
+    if not shown(w) then return false end
+    local g = rawget(_G, "game")
+    if g and type(g.gamepad_is_top_dialog) == "function" then
+        local ok, res = pcall(g.gamepad_is_top_dialog, w)
+        return ok and res == true
+    end
+    return true
+end
+
+function abs_rect(w)
+    if rawequal(w, nil) or type(w.GetAbsoluteRect) ~= "function" or not rawget(_G, "Frect") then
+        return nil
+    end
+    local r = Frect()
+    local ok = pcall(w.GetAbsoluteRect, w, r)
+    if ok and r and r.x1 and r.x2 and (r.x2 - r.x1) > 1 and (r.y2 - r.y1) > 1 then
+        return { x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2 }
+    end
+    return nil
+end
+
+function center(r)
+    return (r.x1 + r.x2) * 0.5, (r.y1 + r.y2) * 0.5
+end
+
+function contains(r, x, y)
+    return r ~= nil and x >= r.x1 and x <= r.x2 and y >= r.y1 and y <= r.y2
+end
+
+function inside(r, v)
+    if not v then return true end
+    return r.y1 >= v.y1 - 1 and r.y2 <= v.y2 + 1 and r.x1 >= v.x1 - 1 and r.x2 <= v.x2 + 1
+end
+
+function move_cursor(x, y)
+    local fn = rawget(_G, "SetCursorPosition")
+    local v2 = rawget(_G, "vector2")
+    if type(fn) == "function" and type(v2) == "function" then
+        pcall(function() fn(v2():set(x, y)) end)
+    end
+end
+
+function deny()
+    state.denies = state.denies + 1
+    local rw = rawget(_G, "gp_inv_rework")
+    if type(rw) == "table" and type(rw.deny) == "function" then
+        pcall(rw.deny)
+    else
+        local g = rawget(_G, "game")
+        if g and type(g.gamepad_inv_focus_deny) == "function" then
+            pcall(g.gamepad_inv_focus_deny)
+        end
+    end
+    return "used"
+end
+
+function is_russian()
+    local g = rawget(_G, "game")
+    local s = g and type(g.translate_string) == "function" and g.translate_string("ui_total_weight") or ""
+    return type(s) == "string" and s:find("[\192-\255]") ~= nil
+end
+
+function txt(key)
+    local tbl = is_russian() and TEXT_RU or TEXT_EN
+    return tbl[key] or key
+end
+
+function is_desc_hidden()
+    local rw = rawget(_G, "gp_inv_rework")
+    if type(rw) == "table" and type(rw.state) == "table" then
+        return rw.state.desc_hidden == true
+    end
+    return state.desc_hidden_fb == true
+end
+
+function set_desc_hidden(val)
+    local b = val and true or false
+    state.desc_hidden_fb = b
+    local rw = rawget(_G, "gp_inv_rework")
+    if type(rw) == "table" and type(rw.state) == "table" then
+        rw.state.desc_hidden = b
+    end
+end
+
+function xmlh()
+    if not XML and rawget(_G, "CScriptXmlInit") then
+        local x = CScriptXmlInit()
+        local ok = pcall(x.ParseFile, x, "ui_gp_workshop.xml")
+        if ok then XML = x end
+    end
+    return XML
+end
+
+-- -----------------------------------------------------------------------------
+-- 2. Значки Dot Marks (gp_icons) и полосы подсказок P16 (gp_hint_align S1–S5)
+-- -----------------------------------------------------------------------------
+
+function icon_metrics(button, font)
+    local ic = rawget(_G, "gp_icons")
+    local al = rawget(_G, "gp_hint_align")
+    local tex = ic and type(ic.tex) == "function" and ic.tex(button, "round") or ("ui_gp_white_xbox_" .. tostring(button):lower())
+    local vis_w, vis_h, tex_w, tex_h = 22, 22, 28, 28
+    if ic and type(ic.dims) == "function" then
+        vis_w, vis_h, tex_w, tex_h = ic.dims(button, "round")
+    end
+    local scale_k = ic and type(ic.scale_k) == "function" and ic.scale_k() or 1.0
+    local cap = al and type(al.cap_px) == "function" and al.cap_px(font or "letterica16") or 14
+    local extra = al and type(al.icon_scale) == "function" and al.icon_scale(tex) or 1.0
+    local px_h_total = math.max(8, math.floor(CIRCLE_K * cap * scale_k * (tex_h / math.max(1, vis_h)) * extra + 0.5))
+    local px_w_total = math.max(8, math.floor(px_h_total * (tex_w / math.max(1, tex_h)) + 0.5))
+    local iw = al and al.px_w(px_w_total) or (px_w_total * 1024 / 1920)
+    local ih = al and al.px_h(px_h_total) or (px_h_total * 768 / 1080)
+    return tex, iw, ih, px_w_total, px_h_total
+end
+
+function place_badge(st, button, x, cy, font, alpha)
+    if not st then return 0 end
+    local al = rawget(_G, "gp_hint_align")
+    local tex, iw, ih = icon_metrics(button, font)
+    local ix = al and al.snap_x(x) or x
+    local iy = al and al.snap_y(cy - ih * 0.5) or (cy - ih * 0.5)
+    if st._gp_tex ~= tex then
+        pcall(st.InitTexture, st, tex)
+        st._gp_tex = tex
+    end
+    local v2 = rawget(_G, "vector2")
+    if v2 then
+        pcall(st.SetWndPos, st, v2():set(ix, iy))
+        pcall(st.SetWndSize, st, v2():set(iw, ih))
+    end
+    if rawget(_G, "GetARGB") and st.SetTextureColor then
+        pcall(st.SetTextureColor, st, GetARGB(alpha or 255, 255, 255, 255))
+    end
+    pcall(st.Show, st, true)
+    return iw
+end
+
+function ring_suffix(st)
+    local r = st and shown(st) and abs_rect(st)
+    if not r then return "" end
+    return string.format(":%.1f,%.1f,%.1f,%.1f", r.x1, r.y1, r.x2, r.y2)
+end
+
+function paint_btn_with_badge(holder, slot_key, parent, btn, glyph, font)
+    if not btn or not parent then return nil end
+    local entry = holder[slot_key]
+    local show = is_gamepad() and hints_visible("menu") and shown(btn)
+    if not show then
+        if entry then
+            if entry.icon then pcall(entry.icon.Show, entry.icon, false) end
+            if entry.label then pcall(entry.label.Show, entry.label, false) end
+            if entry.orig_text and btn.TextControl then
+                local tc = btn:TextControl()
+                if tc then pcall(tc.SetText, tc, entry.orig_text) end
+            end
+        end
+        return nil
+    end
+    local x = xmlh()
+    if not x then return nil end
+    if not entry then
+        local tc = btn.TextControl and btn:TextControl() or nil
+        local orig = tc and tc:GetText() or ""
+        local ic = x:InitStatic("icon", parent)
+        local lb = x:InitTextWnd("measure16", parent)
+        if ic and ic.Enable then pcall(ic.Enable, ic, false) end
+        if lb and lb.Enable then pcall(lb.Enable, lb, false) end
+        entry = { icon = ic, label = lb, orig_text = orig }
+        holder[slot_key] = entry
+    end
+    local tc = btn.TextControl and btn:TextControl() or nil
+    local cur_t = tc and tc:GetText() or ""
+    if cur_t ~= "" then entry.orig_text = cur_t end
+    if tc then pcall(tc.SetText, tc, "") end
+
+    local p = btn:GetWndPos()
+    local bw, bh = btn:GetWidth(), btn:GetHeight()
+    local cy = p.y + bh * 0.5
+    local al = rawget(_G, "gp_hint_align")
+    local gap = al and al.px_w(6) or (6 * 1024 / 1920)
+    local alpha = enabled(btn) and 255 or DIM_ALPHA
+    local iw = place_badge(entry.icon, glyph, p.x + gap, cy, font or "letterica16", alpha)
+    local v2 = rawget(_G, "vector2")
+    if entry.label and v2 then
+        pcall(entry.label.SetText, entry.label, entry.orig_text or "")
+        local ly = al and al.label_y(cy, 24, font or "letterica16") or (cy - 12)
+        pcall(entry.label.SetWndPos, entry.label, v2():set(p.x + iw + gap * 2, ly))
+        pcall(entry.label.SetWndSize, entry.label, v2():set(math.max(16, bw - iw - gap * 2), 24))
+        pcall(entry.label.Show, entry.label, true)
+    end
+    return entry.icon
+end
+
+function paint_strip(holder, key, parent, x, y, w, items, show)
+    local strip = holder[key]
+    if not (show and is_gamepad() and hints_visible("menu")) then
+        if strip and strip.bg then pcall(strip.bg.Show, strip.bg, false) end
+        return nil
+    end
+    local xinit = xmlh()
+    if not xinit or not parent then return nil end
+    if not strip then
+        local bg = xinit:InitStatic("strip", parent)
+        if not bg then return nil end
+        if bg.Enable then pcall(bg.Enable, bg, false) end
+        strip = { bg = bg, slots = {} }
+        holder[key] = strip
+    end
+    local v2 = rawget(_G, "vector2")
+    local al = rawget(_G, "gp_hint_align")
+    local sh = 1080
+    if al and type(al.screen) == "function" then
+        local _, hh = al.screen()
+        sh = hh
+    end
+    local h = 28
+    if v2 then
+        pcall(strip.bg.SetWndPos, strip.bg, v2():set(x, y))
+        pcall(strip.bg.SetWndSize, strip.bg, v2():set(w, h))
+    end
+    pcall(strip.bg.Show, strip.bg, true)
+
+    local gap = al and al.px_w(math.floor(6 * sh / 1080 + 0.5)) or 4
+    local step = al and al.px_w(math.floor(STRIP_STEP * sh / 1080 + 0.5)) or 22
+    local cy = h * 0.5
+
+    while #strip.slots < #items do
+        local ic = xinit:InitStatic("icon", strip.bg)
+        local lb = xinit:InitTextWnd("label18", strip.bg)
+        if ic and ic.Enable then pcall(ic.Enable, ic, false) end
+        if lb and lb.Enable then pcall(lb.Enable, lb, false) end
+        strip.slots[#strip.slots + 1] = { icon = ic, label = lb }
+    end
+
+    local total_w = 0
+    local measured = {}
+    for i, it in ipairs(items) do
+        local sl = strip.slots[i]
+        local _, iw = icon_metrics(it.glyph, "letterica18")
+        local tw = 48
+        if sl.label then
+            pcall(sl.label.SetText, sl.label, it.text or "")
+            if sl.label.AdjustWidthToText then pcall(sl.label.AdjustWidthToText, sl.label) end
+            local ok_w, gw = pcall(sl.label.GetWidth, sl.label)
+            if ok_w and tonumber(gw) and gw > 4 then tw = gw end
+        end
+        measured[i] = { iw = iw, tw = tw }
+        total_w = total_w + iw + gap + tw + (i < #items and step or 0)
+    end
+
+    local cx = math.max(8, (w - total_w) * 0.5)
+    for i = 1, #strip.slots do
+        local sl = strip.slots[i]
+        local it = items[i]
+        if it then
+            local m = measured[i]
+            local iw = place_badge(sl.icon, it.glyph, cx, cy, "letterica18", it.dim and DIM_ALPHA or 255)
+            local ly = al and al.label_y(cy, 24, "letterica18") or (cy - 12)
+            if sl.label and v2 then
+                pcall(sl.label.SetWndPos, sl.label, v2():set(cx + iw + gap, ly))
+                pcall(sl.label.SetWndSize, sl.label, v2():set(m.tw + 4, 24))
+                pcall(sl.label.Show, sl.label, true)
+            end
+            cx = cx + iw + gap + m.tw + step
+        else
+            if sl.icon then pcall(sl.icon.Show, sl.icon, false) end
+            if sl.label then pcall(sl.label.Show, sl.label, false) end
+        end
+    end
+    return strip
+end
+
+-- -----------------------------------------------------------------------------
+-- 3. Плавная прокрутка и навигация по целям рамки (P12, P13)
+-- -----------------------------------------------------------------------------
+
+function sv_scroll(sv, holder, key, y, dt, speed)
+    if not sv or not shown(sv) or type(sv.GetCurrentScrollPos) ~= "function" then return false end
+    local okc, cur = pcall(sv.GetCurrentScrollPos, sv)
+    cur = okc and tonumber(cur) or 0
+    local acc = holder[key]
+    if not acc or math.abs(acc - cur) > 2 then acc = cur end
+    local okn, mn = pcall(sv.GetMinScrollPos, sv)
+    local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+    mn = okn and tonumber(mn) or 0
+    mx = okx and tonumber(mx) or cur
+    if mx < mn then mx = mn end
+    acc = math.max(mn, math.min(mx, acc + (tonumber(y) or 0) * (speed or SCROLL_SPEED) * (tonumber(dt) or 16) / 1000))
+    holder[key] = acc
+    local target = math.floor(acc + 0.5)
+    if target ~= cur and type(sv.SetScrollPos) == "function" then
+        pcall(sv.SetScrollPos, sv, target)
+    end
+    return true
+end
+
+function ensure_visible(t)
+    if not t or not t.sv or not t.view or type(t.sv.GetCurrentScrollPos) ~= "function" then return t end
+    local sv, v, r = t.sv, t.view, t.r
+    local dy = 0
+    if r.y1 < v.y1 + 2 then
+        dy = r.y1 - (v.y1 + 2)
+    elseif r.y2 > v.y2 - 2 then
+        dy = r.y2 - (v.y2 - 2)
+    end
+    if math.abs(dy) > 0.5 then
+        local ok0, old = pcall(sv.GetCurrentScrollPos, sv)
+        old = ok0 and tonumber(old) or 0
+        local p = old + dy
+        local okn, mn = pcall(sv.GetMinScrollPos, sv)
+        local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+        if okn and tonumber(mn) then p = math.max(tonumber(mn), p) end
+        if okx and tonumber(mx) then p = math.min(tonumber(mx), p) end
+        p = math.floor(p + 0.5)
+        pcall(sv.SetScrollPos, sv, p)
+        local ok1, nw = pcall(sv.GetCurrentScrollPos, sv)
+        local shift = (ok1 and tonumber(nw) or p) - old
+        t.r = { x1 = r.x1, x2 = r.x2, y1 = r.y1 - shift, y2 = r.y2 - shift }
+    end
+    t.vis = true
+    return t
+end
+
+function add_target(list, id, field, w, r, kind, extra)
+    if not r then return nil end
+    local t = extra or {}
+    t.id, t.field, t.w, t.r, t.kind = id, field, w, r, kind or "btn"
+    if t.vis == nil then t.vis = true end
+    list[#list + 1] = t
+    return t
+end
+
+function by_id(list, id)
+    if not id then return nil end
+    for i = 1, #list do
+        if list[i].id == id then return list[i] end
+    end
+    return nil
+end
+
+function target_at(list, x, y)
+    local best, best_area
+    for i = 1, #list do
+        local t = list[i]
+        if t.vis ~= false and contains(t.r, x, y) then
+            local a = (t.r.x2 - t.r.x1) * (t.r.y2 - t.r.y1)
+            if not best_area or a < best_area then best, best_area = t, a end
+        end
+    end
+    return best
+end
+
+function reading_first(list)
+    local best
+    for i = 1, #list do
+        local t = list[i]
+        if not best or t.r.y1 < best.r.y1 - 4 or (math.abs(t.r.y1 - best.r.y1) <= 4 and t.r.x1 < best.r.x1) then
+            best = t
+        end
+    end
+    return best
+end
+
+function step_target(list, cur, dir)
+    if #list == 0 then return nil end
+    if not cur then return reading_first(list) end
+    local cx, cy = center(cur.r)
+    local best, best_score
+    for i = 1, #list do
+        local c = list[i]
+        if c.id ~= cur.id then
+            local tx, ty = center(c.r)
+            local dx, dy = tx - cx, ty - cy
+            local ok_dir = false
+            local pri, sec = 0, 0
+            if dir == DIR_UP and dy < -2 then
+                ok_dir, pri, sec = true, -dy, math.abs(dx)
+            elseif dir == DIR_DOWN and dy > 2 then
+                ok_dir, pri, sec = true, dy, math.abs(dx)
+            elseif dir == DIR_LEFT and dx < -2 then
+                ok_dir, pri, sec = true, -dx, math.abs(dy)
+            elseif dir == DIR_RIGHT and dx > 2 then
+                ok_dir, pri, sec = true, dx, math.abs(dy)
+            end
+            if ok_dir then
+                local score = pri + sec * 2.2
+                if not best_score or score < best_score then
+                    best, best_score = c, score
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function wnd_state(g, key)
+    local k = "_gp_" .. key
+    if not g[k] then
+        g[k] = { cur_id = nil, mem = {}, queue = {}, hold = nil, ui = {} }
+    end
+    return g[k]
+end
+
+local function defer(s, fn)
+    s.queue[#s.queue + 1] = fn
+    return "used"
+end
+
+local function drain_queue(s)
+    if #s.queue == 0 then return end
+    local copy = {}
+    for i = 1, #s.queue do copy[i] = s.queue[i] end
+    for i = #s.queue, 1, -1 do s.queue[i] = nil end
+    for i = 1, #copy do
+        pcall(copy[i])
+    end
+end
+
+-- -----------------------------------------------------------------------------
+-- 4. Межэкранный переход Навыки <-> Перки (В36)
+-- -----------------------------------------------------------------------------
+
+function experience_ui_available()
+    local m = rawget(_G, "experience_ui")
+    return type(m) == "table" and (type(m.start_ui) == "function" or type(m.open_menu) == "function" or type(m.get_ui) == "function")
+end
+
+function haruka_skills_available()
+    local m = rawget(_G, "ui_haru_skills")
+    return type(m) == "table" and (type(m.start) == "function" or type(m.start_ui) == "function" or type(m.open_ui) == "function")
+end
+
+function jump_haruka_to_experience(g)
+    if not experience_ui_available() then return false end
+    if g and g.Close then pcall(g.Close, g) end
+    local m = rawget(_G, "experience_ui")
+    if type(m.start_ui) == "function" then pcall(m.start_ui)
+    elseif type(m.open_menu) == "function" then pcall(m.open_menu)
+    elseif type(m.get_ui) == "function" then
+        local ok_u, ui = pcall(m.get_ui)
+        if ok_u and ui and ui.ShowDialog then pcall(ui.ShowDialog, ui, true) end
+    end
+    return true
+end
+
+function jump_experience_to_haruka(g)
+    if not haruka_skills_available() then return false end
+    if g and g.Close then pcall(g.Close, g) end
+    local m = rawget(_G, "ui_haru_skills")
+    if type(m.start) == "function" then pcall(m.start)
+    elseif type(m.start_ui) == "function" then pcall(m.start_ui)
+    elseif type(m.open_ui) == "function" then pcall(m.open_ui) end
+    return true
+end
+
+-- -----------------------------------------------------------------------------
+-- 5. Навыки Haruka: ui_haru_skills.UIHarukaSkills (В36, В37, P12–P14, P16)
+-- -----------------------------------------------------------------------------
+
+function get_haruka()
+    local m = rawget(_G, "ui_haru_skills")
+    local g = type(m) == "table" and m.GUI or nil
+    if g and is_top_dialog(g) then return g end
+    return nil
+end
+
+function collect_haruka(g)
+    local list = {}
+    local view = abs_rect(g.scroll)
+    if type(g.skills) == "table" then
+        for k, entry in pairs(g.skills) do
+            local w = type(entry) == "table" and entry.window or nil
+            -- В37: показываем только те строки навыков, которые мод уже открыл и отобразил
+            if shown(w) then
+                local r = abs_rect(w)
+                if r then
+                    add_target(list, "skill:" .. tostring(k), "skills", w, r, "row", {
+                        skill_key = k, desc = entry.description, sv = g.scroll, view = view, vis = inside(r, view),
+                    })
+                end
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if math.abs(a.r.y1 - b.r.y1) > 2 then return a.r.y1 < b.r.y1 end
+        return tostring(a.id) < tostring(b.id)
+    end)
+    return list
+end
+
+function sync_haruka_hint(g, cur)
+    if not g or not g.hint_wnd or type(g.hint_wnd.Update) ~= "function" then return end
+    if is_desc_hidden() or not cur or not cur.desc or cur.desc == "" then
+        pcall(g.hint_wnd.Update, g.hint_wnd)
+    else
+        pcall(g.hint_wnd.Update, g.hint_wnd, cur.desc)
+    end
+end
+
+function step_haruka_button(g, s, name)
+    if name == "B" then
+        return defer(s, function() if g.Close then g:Close() end end)
+    end
+    if name == "Y" then
+        set_desc_hidden(not is_desc_hidden())
+        local list = collect_haruka(g)
+        sync_haruka_hint(g, by_id(list, s.cur_id) or reading_first(list))
+        return "used"
+    end
+    if name == "X" or name == "View" then
+        if not experience_ui_available() then return deny() end
+        return defer(s, function() jump_haruka_to_experience(g) end)
+    end
+    return "used"
+end
+
+function paint_haruka(g, s)
+    local parent = g.dialog or g
+    local items = {}
+    if experience_ui_available() then
+        items[#items + 1] = { glyph = "X", text = txt("to_perks") }
+    end
+    items[#items + 1] = { glyph = "Y", text = txt("desc_toggle") }
+    items[#items + 1] = { glyph = "B", text = txt("close") }
+
+    local dr = abs_rect(parent)
+    local sx = dr and dr.x1 or 252
+    local sy = dr and math.min(736, dr.y2 + 6) or 690
+    local sw = dr and math.max(260, dr.x2 - dr.x1) or 520
+    paint_strip(s.ui, "strip", g, sx, sy, sw, items, true)
+end
+
+-- -----------------------------------------------------------------------------
+-- 6. Перки Experience Framework: experience_ui.UIExperienceMenu (В4, В36, В37)
+-- -----------------------------------------------------------------------------
+
+function get_experience()
+    local m = rawget(_G, "experience_ui")
+    local g = type(m) == "table" and m.GUI or nil
+    if g and is_top_dialog(g) then return g end
+    return nil
+end
+
+local function get_active_msgbox(g)
+    if g.message_box and shown(g.message_box) then return g.message_box, "prestige" end
+    local tw_mod = rawget(_G, "experience_traits")
+    local tw = type(tw_mod) == "table" and tw_mod.GUI or nil
+    if g.current_wnd == "traits" and tw and tw.msg_box and shown(tw.msg_box) then
+        return tw.msg_box, "traits"
+    end
+    return nil, nil
+end
+
+function available_exp_tabs(g)
+    local out = {}
+    if type(g.main_windows) ~= "table" then return out end
+    for _, name in ipairs(EXP_TAB_ORDER) do
+        local entry = g.main_windows[name]
+        -- В37: скрытые/заблокированные вкладки (например debug без прав) не включаем
+        if type(entry) == "table" and shown(entry.btn) and enabled(entry.btn) then
+            out[#out + 1] = name
+        end
+    end
+    return out
+end
+
+function exp_layer(g, s)
+    local mb = get_active_msgbox(g)
+    if mb then return "msgbox" end
+    if s.combo and s.combo.list_frame and shown(s.combo.list_frame) then
+        return "combo"
+    end
+    s.combo = nil
+    if g.current_wnd and type(g.main_windows) == "table" and g.main_windows[g.current_wnd] then
+        return "tab:" .. tostring(g.current_wnd)
+    end
+    return "left_bar"
+end
+
+local function collect_generic_children(list, root, sv, field)
+    if not root or type(root.controls) == "table" then
+        -- handled by specific collectors when needed
+    end
+    local view = sv and abs_rect(sv) or nil
+    if type(root) == "table" then
+        for k, v in pairs(root) do
+            if type(v) == "userdata" or (type(v) == "table" and type(v.IsShown) == "function") then
+                if k ~= "dialog" and k ~= "background" and k ~= "scroll" and k ~= "scrollbar" and shown(v) and enabled(v) then
+                    local r = abs_rect(v)
+                    if r and (r.x2 - r.x1) < 600 and (r.y2 - r.y1) < 120 then
+                        add_target(list, field .. ":" .. tostring(k), field, v, r, "btn", {
+                            ctrl_key = k, sv = sv, view = view, vis = inside(r, view),
+                        })
+                    end
+                end
+            end
+        end
+    end
+end
+
+function collect_experience(g, s, layer)
+    layer = layer or exp_layer(g, s)
+    local list = {}
+
+    if layer == "msgbox" then
+        local mb, mb_kind = get_active_msgbox(g)
+        if mb and type(mb.buttons) == "table" then
+            for _, bname in ipairs({ "ok", "yes", "no", "cancel" }) do
+                local btn = mb.buttons[bname]
+                if shown(btn) then
+                    add_target(list, "mb:" .. bname, "msgbox", btn, abs_rect(btn), "btn", {
+                        mb = mb, mb_btn = bname, mb_kind = mb_kind,
+                    })
+                end
+            end
+        end
+        return list
+    end
+
+    if layer == "combo" and s.combo and s.combo.list then
+        local lb = s.combo.list
+        local view = abs_rect(lb)
+        local n = type(s.combo.GetListSize) == "function" and s.combo:GetListSize() or 0
+        for idx = 1, n do
+            local ok_it, row = pcall(lb.GetItemByIndex, lb, idx - 1)
+            local r = ok_it and abs_rect(row) or nil
+            if r then
+                add_target(list, "combo:" .. idx, "combo", row, r, "row", {
+                    combo_idx = idx - 1, sv = lb, view = view, vis = inside(r, view),
+                })
+            end
+        end
+        return list
+    end
+
+    if shown(g.prestige_up_btn) and enabled(g.prestige_up_btn) then
+        add_target(list, "main:prestige", "header", g.prestige_up_btn, abs_rect(g.prestige_up_btn), "btn", { action = "prestige" })
+    end
+
+    if layer == "left_bar" then
+        for _, name in ipairs(available_exp_tabs(g)) do
+            local btn = g.main_windows[name].btn
+            add_target(list, "tab:" .. name, "tabs", btn, abs_rect(btn), "btn", { action = "open_tab", tab = name })
+        end
+        return list
+    end
+
+    local tab = g.current_wnd
+    local tab_wnd = g.main_windows[tab] and g.main_windows[tab].wnd or nil
+    if not tab_wnd then return list end
+
+    if tab == "skills" then
+        if shown(tab_wnd.search_skill_input) and enabled(tab_wnd.search_skill_input) then
+            add_target(list, "sk:search", "filter", tab_wnd.search_skill_input, abs_rect(tab_wnd.search_skill_input), "btn", { action = "osk" })
+        end
+        if shown(tab_wnd.hide_lrn_skill_btn) and enabled(tab_wnd.hide_lrn_skill_btn) then
+            add_target(list, "sk:hide_lrn", "filter", tab_wnd.hide_lrn_skill_btn, abs_rect(tab_wnd.hide_lrn_skill_btn), "btn", { action = "hide_lrn" })
+        end
+        if tab_wnd.sort_list and shown(tab_wnd.sort_list.frame_line or tab_wnd.sort_list) and tab_wnd.sort_list:IsEnabled() then
+            local cw = tab_wnd.sort_list.frame_line or tab_wnd.sort_list
+            add_target(list, "sk:sort", "filter", cw, abs_rect(cw), "btn", { action = "combo", combo = tab_wnd.sort_list })
+        end
+        if shown(tab_wnd.category_left_btn) and enabled(tab_wnd.category_left_btn) then
+            add_target(list, "sk:cat_prev", "filter", tab_wnd.category_left_btn, abs_rect(tab_wnd.category_left_btn), "btn", { action = "cat_prev" })
+        end
+        if shown(tab_wnd.category_right_btn) and enabled(tab_wnd.category_right_btn) then
+            add_target(list, "sk:cat_next", "filter", tab_wnd.category_right_btn, abs_rect(tab_wnd.category_right_btn), "btn", { action = "cat_next" })
+        end
+
+        local sv = tab_wnd.skills_scrollbar
+        local view = abs_rect(sv)
+        if type(tab_wnd.skills) == "table" then
+            for id, entry in pairs(tab_wnd.skills) do
+                -- В37: только уже показанные в списке навыки
+                if type(entry) == "table" and shown(entry.wnd) then
+                    local w = entry.btn or entry.wnd
+                    local r = abs_rect(w)
+                    if r then
+                        add_target(list, "skill:" .. tostring(id), "skills", w, r, "row", {
+                            action = "select_skill", skill_id = id, sv = sv, view = view, vis = inside(r, view),
+                        })
+                    end
+                end
+            end
+        end
+        if tab_wnd.skill_controls and shown(tab_wnd.skill_controls.wnd) then
+            local req_btn = tab_wnd.skill_controls.button_lvl_requirements
+            if shown(req_btn) and enabled(req_btn) then
+                add_target(list, "sk:reqs", "detail", req_btn, abs_rect(req_btn), "btn", { action = "reqs" })
+            end
+        end
+    elseif tab == "traits" then
+        local sc = (tab_wnd.traits_list_upgrade and tab_wnd.traits_list_upgrade:IsShown()) and tab_wnd.traits_list_upgrade or tab_wnd.traits_list
+        if sc and sc:IsShown() and type(sc.elements) == "table" then
+            local view = abs_rect(sc.scroll or sc.st)
+            for indx, v in pairs(sc.elements) do
+                local ele = type(v) == "table" and v.ele or nil
+                if shown(ele) then
+                    local r = abs_rect(ele)
+                    if r then
+                        add_target(list, "tr_ele:" .. tostring(indx), "traits", ele, r, "cell", {
+                            action = "trait_ele", sc = sc, indx = indx, sv = sc, view = view, vis = inside(r, view),
+                        })
+                    end
+                end
+            end
+        end
+        if type(tab_wnd.slots) == "table" then
+            for i = 1, #tab_wnd.slots do
+                local sw = tab_wnd.slots[i] and tab_wnd.slots[i].wnd
+                if shown(sw) then
+                    add_target(list, "tr_slot:" .. i, "slots", sw, abs_rect(sw), "cell", {
+                        action = "trait_slot", slot_idx = i,
+                    })
+                end
+            end
+        end
+        if tab_wnd.controls and shown(tab_wnd.controls.wnd) then
+            if shown(tab_wnd.controls.btn_upgrade_b) and shown(tab_wnd.controls.btn_upgrade) then
+                add_target(list, "tr:upgrade", "controls", tab_wnd.controls.btn_upgrade, abs_rect(tab_wnd.controls.btn_upgrade), "btn", { action = "trait_upgrade_hold" })
+            end
+            if shown(tab_wnd.controls.btn_destroy_b) and shown(tab_wnd.controls.btn_destroy) then
+                add_target(list, "tr:destroy", "controls", tab_wnd.controls.btn_destroy, abs_rect(tab_wnd.controls.btn_destroy), "btn", { action = "trait_destroy_hold" })
+            end
+        end
+    elseif tab == "tasks" then
+        local sv = tab_wnd.tasks_scrollbar
+        local view = abs_rect(sv)
+        if type(tab_wnd.cc) == "table" then
+            for i, card in pairs(tab_wnd.cc) do
+                if type(card) == "table" and shown(card.wnd) then
+                    local target_w = shown(card.btn_b) and card.btn_b or card.wnd
+                    local r = abs_rect(target_w)
+                    if r then
+                        add_target(list, "task:" .. tostring(i), "tasks", target_w, r, "row", {
+                            action = "task_claim", task_idx = i, can_claim = shown(card.btn_b), sv = sv, view = view, vis = inside(r, view),
+                        })
+                    end
+                end
+            end
+        end
+    else
+        local sv = tab_wnd.scrollbar or tab_wnd.scroll or tab_wnd.options_scrollbar
+        collect_generic_children(list, tab_wnd, sv, "generic")
+    end
+
+    if #list == 0 then
+        for _, name in ipairs(available_exp_tabs(g)) do
+            local btn = g.main_windows[name].btn
+            add_target(list, "tab:" .. name, "tabs", btn, abs_rect(btn), "btn", { action = "open_tab", tab = name })
+        end
+    end
+    return list
+end
+
+local function switch_exp_tab(g, delta)
+    local tabs = available_exp_tabs(g)
+    if #tabs == 0 then return deny() end
+    local cur_i = 0
+    for i, name in ipairs(tabs) do
+        if name == g.current_wnd then cur_i = i; break end
+    end
+    local next_i
+    if cur_i == 0 then
+        next_i = delta >= 0 and 1 or #tabs
+    else
+        next_i = (cur_i - 1 + delta) % #tabs + 1
+    end
+    local target_tab = tabs[next_i]
+    if target_tab == g.current_wnd and #tabs == 1 then return deny() end
+    if g.LeftBarButtonClicked then
+        if g.current_wnd == target_tab then return "used" end
+        g:LeftBarButtonClicked(target_tab)
+    end
+    return "used"
+end
+
+function step_experience_button(g, s, name, phase)
+    local layer = exp_layer(g, s)
+    if phase ~= "press" then
+        local h = s.hold
+        s.hold = nil
+        if phase == "hold" and name == "X" and h then
+            if h.kind == "learn_skill" then
+                return defer(s, function()
+                    local sw = g.main_windows.skills and g.main_windows.skills.wnd
+                    if sw and sw.can_learn_skill and sw.OnLearn then sw:OnLearn() end
+                end)
+            elseif h.kind == "msgbox_yes" and h.mb then
+                return defer(s, function()
+                    if h.mb.callback_btn_yes then h.mb:callback_btn_yes() end
+                end)
+            elseif h.kind == "trait_upgrade" then
+                return defer(s, function()
+                    local tw = g.main_windows.traits and g.main_windows.traits.wnd
+                    if tw and tw.Callback_OnButtonUpgrade then tw:Callback_OnButtonUpgrade() end
+                end)
+            elseif h.kind == "trait_destroy" then
+                return defer(s, function()
+                    local tw = g.main_windows.traits and g.main_windows.traits.wnd
+                    if tw and tw.Callback_OnButtonDestroy then tw:Callback_OnButtonDestroy() end
+                end)
+            end
+        end
+        return "used"
+    end
+
+    if layer == "msgbox" then
+        local mb = get_active_msgbox(g)
+        if name == "B" then
+            return defer(s, function()
+                if not mb then return end
+                if mb.buttons and shown(mb.buttons.no) and mb.callback_btn_no then mb:callback_btn_no()
+                elseif mb.buttons and shown(mb.buttons.cancel) and mb.callback_btn_cancel then mb:callback_btn_cancel()
+                elseif mb.buttons and shown(mb.buttons.ok) and mb.callback_btn_ok then mb:callback_btn_ok()
+                elseif mb.HideMessage then mb:HideMessage() end
+            end)
+        end
+        if name == "X" then
+            if mb and mb.buttons and shown(mb.buttons.yes) then
+                s.hold = { kind = "msgbox_yes", mb = mb }
+                return string.format("hold:%d:%d", HOLD_PAUSE_MS, HOLD_FILL_MS)
+            end
+            return deny()
+        end
+        if name == "A" then
+            local list = collect_experience(g, s, layer)
+            local cur = by_id(list, s.cur_id) or reading_first(list)
+            if not cur or not mb then return deny() end
+            if cur.mb_btn == "yes" then
+                -- В4: подтверждение разрушительного действия/престижа требует удержания X
+                return deny()
+            elseif cur.mb_btn == "no" and mb.callback_btn_no then
+                return defer(s, function() mb:callback_btn_no() end)
+            elseif cur.mb_btn == "cancel" and mb.callback_btn_cancel then
+                return defer(s, function() mb:callback_btn_cancel() end)
+            elseif cur.mb_btn == "ok" and mb.callback_btn_ok then
+                return defer(s, function() mb:callback_btn_ok() end)
+            end
+        end
+        return "used"
+    end
+
+    if layer == "combo" and s.combo then
+        if name == "B" then
+            return defer(s, function()
+                if s.combo and s.combo.ShowList then s.combo:ShowList(false) end
+                s.combo = nil
+            end)
+        end
+        if name == "A" then
+            local list = collect_experience(g, s, layer)
+            local cur = by_id(list, s.cur_id) or reading_first(list)
+            if not cur then return deny() end
+            return defer(s, function()
+                local cb = s.combo
+                s.combo = nil
+                if cb and cb.list and cb.OnListItemSelect then
+                    cb.list:SetSelectedIndex(cur.combo_idx)
+                    cb:OnListItemSelect()
+                end
+            end)
+        end
+        return "used"
+    end
+
+    if name == "LT" or name == "RT" then
+        return defer(s, function() switch_exp_tab(g, name == "LT" and -1 or 1) end)
+    end
+
+    if name == "View" then
+        if not haruka_skills_available() then return deny() end
+        return defer(s, function() jump_experience_to_haruka(g) end)
+    end
+
+    if name == "B" then
+        return defer(s, function()
+            if g.Close then g:Close() end
+        end)
+    end
+
+    local list = collect_experience(g, s, layer)
+    local cur = by_id(list, s.cur_id) or reading_first(list)
+    local tab = g.current_wnd
+    local tab_wnd = tab and g.main_windows[tab] and g.main_windows[tab].wnd or nil
+
+    if tab == "skills" and tab_wnd and (name == "LB" or name == "RB") then
+        return defer(s, function()
+            if name == "LB" and tab_wnd.Callback_OnCategoryPrev then tab_wnd:Callback_OnCategoryPrev()
+            elseif name == "RB" and tab_wnd.Callback_OnCategoryNext then tab_wnd:Callback_OnCategoryNext() end
+        end)
+    end
+
+    if name == "X" then
+        if tab == "skills" and tab_wnd then
+            if tab_wnd.selected_skill_id and tab_wnd.can_learn_skill and type(tab_wnd.OnLearn) == "function" then
+                s.hold = { kind = "learn_skill" }
+                return string.format("hold:%d:%d", HOLD_PAUSE_MS, HOLD_FILL_MS)
+            end
+            return deny()
+        elseif tab == "traits" and tab_wnd then
+            if cur and cur.action == "trait_destroy_hold" and shown(tab_wnd.controls and tab_wnd.controls.btn_destroy_b) then
+                s.hold = { kind = "trait_destroy" }
+                return string.format("hold:%d:%d", HOLD_PAUSE_MS, HOLD_FILL_MS)
+            elseif shown(tab_wnd.controls and tab_wnd.controls.btn_upgrade_b) then
+                s.hold = { kind = "trait_upgrade" }
+                return string.format("hold:%d:%d", HOLD_PAUSE_MS, HOLD_FILL_MS)
+            end
+            return deny()
+        end
+        return deny()
+    end
+
+    if name == "A" then
+        if not cur then return deny() end
+        if cur.action == "open_tab" then
+            return defer(s, function() if g.LeftBarButtonClicked then g:LeftBarButtonClicked(cur.tab) end end)
+        elseif cur.action == "prestige" then
+            return defer(s, function() if g.OnButtonPrestige then g:OnButtonPrestige() end end)
+        elseif cur.action == "osk" and tab_wnd then
+            return defer(s, function()
+                local gm = rawget(_G, "game")
+                if gm and type(gm.gamepad_new_game_keyboard) == "function" then
+                    pcall(gm.gamepad_new_game_keyboard, tab_wnd.search_skill_input)
+                end
+            end)
+        elseif cur.action == "hide_lrn" and tab_wnd then
+            return defer(s, function()
+                local b = tab_wnd.hide_lrn_skill_btn
+                if b and b.GetCheck and b.SetCheck then b:SetCheck(not b:GetCheck()) end
+                if tab_wnd.Callback_OnHideLearnedSkills then tab_wnd:Callback_OnHideLearnedSkills() end
+            end)
+        elseif cur.action == "combo" and cur.combo then
+            return defer(s, function()
+                s.combo = cur.combo
+                if cur.combo.ShowList then cur.combo:ShowList(true) end
+            end)
+        elseif cur.action == "cat_prev" and tab_wnd then
+            return defer(s, function() if tab_wnd.Callback_OnCategoryPrev then tab_wnd:Callback_OnCategoryPrev() end end)
+        elseif cur.action == "cat_next" and tab_wnd then
+            return defer(s, function() if tab_wnd.Callback_OnCategoryNext then tab_wnd:Callback_OnCategoryNext() end end)
+        elseif cur.action == "select_skill" and tab_wnd then
+            return defer(s, function()
+                if tab_wnd.Callback_Skill then tab_wnd:Callback_Skill(cur.skill_id)
+                elseif tab_wnd.SelectSkill then tab_wnd:SelectSkill(cur.skill_id, true) end
+            end)
+        elseif cur.action == "reqs" and tab_wnd then
+            return defer(s, function() if tab_wnd.Callback_ShowLevelRequiremts then tab_wnd:Callback_ShowLevelRequiremts() end end)
+        elseif cur.action == "trait_ele" and cur.sc then
+            return defer(s, function() if cur.sc.On_Mouse1 then cur.sc:On_Mouse1(cur.indx) end end)
+        elseif cur.action == "trait_slot" and tab_wnd then
+            local sl = tab_wnd.slots and tab_wnd.slots[cur.slot_idx]
+            if not sl or (type(tab_wnd.CanMoveToSlot) == "function" and not tab_wnd:CanMoveToSlot(cur.slot_idx)) then
+                return deny()
+            end
+            if sl.id then
+                return defer(s, function() if tab_wnd.MoveFromSlot then tab_wnd:MoveFromSlot(cur.slot_idx) end end)
+            elseif tab_wnd.selected and tab_wnd.selected.id then
+                local sel_id = tab_wnd.selected.id
+                return defer(s, function() if tab_wnd.MoveToSlot then tab_wnd:MoveToSlot(sel_id, cur.slot_idx) end end)
+            end
+            return deny()
+        elseif cur.action == "trait_upgrade_hold" or cur.action == "trait_destroy_hold" then
+            -- В4: улучшение/разбор черты только через удержание X
+            return deny()
+        elseif cur.action == "task_claim" and tab_wnd then
+            if not cur.can_claim then return deny() end
+            return defer(s, function()
+                if tab_wnd.OnButtonTaskComplete then tab_wnd:OnButtonTaskComplete(cur.task_idx) end
+            end)
+        elseif cur.w and type(cur.w.GetCheck) == "function" and type(cur.w.SetCheck) == "function" then
+            return defer(s, function() cur.w:SetCheck(not cur.w:GetCheck()) end)
+        end
+    end
+    return "used"
+end
+
+function paint_experience(g, s)
+    local layer = exp_layer(g, s)
+    local items = {}
+    if layer == "msgbox" then
+        items[#items + 1] = { glyph = "X", text = txt("confirm_hold") }
+        items[#items + 1] = { glyph = "B", text = txt("back") }
+    elseif layer == "combo" then
+        items[#items + 1] = { glyph = "A", text = txt("select") }
+        items[#items + 1] = { glyph = "B", text = txt("back") }
+    else
+        items[#items + 1] = { glyph = "LT", text = txt("tabs") }
+        items[#items + 1] = { glyph = "A",  text = txt("select") }
+        if g.current_wnd == "skills" then
+            items[#items + 1] = { glyph = "X", text = txt("learn_hold") }
+        elseif g.current_wnd == "traits" then
+            items[#items + 1] = { glyph = "X", text = txt("trait_hold") }
+        end
+        if haruka_skills_available() then
+            items[#items + 1] = { glyph = "View", text = txt("to_skills") }
+        end
+        items[#items + 1] = { glyph = "B", text = txt("close") }
+    end
+    paint_strip(s.ui, "strip", g, 140, 734, 744, items, true)
+end
+
+-- -----------------------------------------------------------------------------
+-- 7. Настройка ЛЦУ: laser_settings_ui.LaserSettingsDialog (В4, E6, P8)
+-- -----------------------------------------------------------------------------
+
+function get_laser()
+    local g = state.active_laser_dlg
+    if g and is_top_dialog(g) then return g end
+    return nil
+end
+
+function collect_laser(g)
+    local list = {}
+    if type(g.track_defs) == "table" and type(g.tracks) == "table" then
+        for _, def in ipairs(g.track_defs) do
+            local t = g.tracks[def.name]
+            local ctrl = type(t) == "table" and t.ctrl or nil
+            if shown(ctrl) then
+                add_target(list, "track:" .. def.name, "sliders", ctrl, abs_rect(ctrl), "slider", {
+                    track_def = def, track_entry = t,
+                })
+            end
+        end
+    end
+    if shown(g.chk_hide_primary) then
+        add_target(list, "chk:primary", "checks", g.chk_hide_primary, abs_rect(g.chk_hide_primary), "btn", { action = "chk_primary" })
+    end
+    if shown(g.chk_hide_alt) then
+        add_target(list, "chk:alt", "checks", g.chk_hide_alt, abs_rect(g.chk_hide_alt), "btn", { action = "chk_alt" })
+    end
+    if shown(g.btn_reset) then
+        add_target(list, "btn:reset", "footer", g.btn_reset, abs_rect(g.btn_reset), "btn", { action = "reset_hold" })
+    end
+    -- E6 / ТЗ 22 §5.3: btn_export скрыт вне режима отладки — добавляем строго при shown(btn_export)
+    if shown(g.btn_export) then
+        add_target(list, "btn:export", "footer", g.btn_export, abs_rect(g.btn_export), "btn", { action = "export" })
+    end
+    if shown(g.btn_close) then
+        add_target(list, "btn:close", "footer", g.btn_close, abs_rect(g.btn_close), "btn", { action = "close" })
+    end
+    return list
+end
+
+function step_laser_slider(g, target, delta)
+    local def = target and target.track_def
+    local entry = target and target.track_entry
+    local ctrl = entry and entry.ctrl
+    if not def or not ctrl or type(ctrl.GetFValue) ~= "function" or type(ctrl.SetFValue) ~= "function" then
+        return false
+    end
+    local ok_v, cur = pcall(ctrl.GetFValue, ctrl)
+    cur = ok_v and tonumber(cur) or def.min
+    local next_v = math.max(def.min, math.min(def.max, cur + delta * def.step))
+    if math.abs(next_v - cur) < 1e-6 then
+        deny()
+        return true
+    end
+    pcall(ctrl.SetFValue, ctrl, next_v)
+    if entry.txt and entry.txt.SetText then
+        pcall(entry.txt.SetText, entry.txt, string.format("%.1f", next_v))
+    end
+    return true
+end
+
+function step_laser_button(g, s, name, phase)
+    if phase ~= "press" then
+        local h = s.hold
+        s.hold = nil
+        if phase == "hold" and h == "reset" and name == "X" then
+            return defer(s, function() if g.Reset then g:Reset() end end)
+        end
+        return "used"
+    end
+
+    if name == "B" then
+        s.hold = nil
+        return defer(s, function() if g.Close then g:Close() end end)
+    end
+
+    if name == "X" then
+        if not shown(g.btn_reset) or not enabled(g.btn_reset) or type(g.Reset) ~= "function" then
+            return deny()
+        end
+        s.hold = "reset"
+        return string.format("hold:%d:%d", HOLD_PAUSE_MS, HOLD_FILL_MS) .. ring_suffix(s.ui.reset_icon)
+    end
+
+    local list = collect_laser(g)
+    local cur = by_id(list, s.cur_id) or reading_first(list)
+
+    if cur and cur.track_def and (name == "LB" or name == "RB") then
+        step_laser_slider(g, cur, name == "LB" and -4 or 4)
+        return "used"
+    end
+
+    if name == "A" then
+        if not cur then return deny() end
+        if cur.action == "chk_primary" and g.chk_hide_primary then
+            return defer(s, function() g.chk_hide_primary:SetCheck(not g.chk_hide_primary:GetCheck()) end)
+        elseif cur.action == "chk_alt" and g.chk_hide_alt then
+            return defer(s, function() g.chk_hide_alt:SetCheck(not g.chk_hide_alt:GetCheck()) end)
+        elseif cur.action == "reset_hold" then
+            -- В4: сброс ЛЦУ защищён удержанием X 0,3+0,7 с
+            return deny()
+        elseif cur.action == "export" then
+            if not shown(g.btn_export) or type(g.ExportToDefaults) ~= "function" then return deny() end
+            return defer(s, function() g:ExportToDefaults() end)
+        elseif cur.action == "close" then
+            return defer(s, function() if g.Close then g:Close() end end)
+        end
+    end
+    return "used"
+end
+
+function paint_laser(g, s)
+    local parent = g.back or g
+    s.ui.reset_icon = paint_btn_with_badge(s.ui, "btn_reset", parent, g.btn_reset, "X", "letterica16")
+    paint_btn_with_badge(s.ui, "btn_close", parent, g.btn_close, "B", "letterica16")
+
+    local items = {
+        { glyph = "LB", text = txt("coarse_step") },
+        { glyph = "X",  text = txt("reset_hold") },
+        { glyph = "B",  text = txt("close") },
+    }
+    local dr = abs_rect(parent)
+    local sx = dr and dr.x1 or 312
+    local sy = dr and math.min(736, dr.y2 + 6) or 660
+    local sw = dr and math.max(260, dr.x2 - dr.x1) or 400
+    paint_strip(s.ui, "strip", g, sx, sy, sw, items, true)
+end
+
+-- -----------------------------------------------------------------------------
+-- 8. Цветокоррекция: ui_ctrl_lighting.UILightControl (В36, P10, P16)
+--    Без касания gp_hooks_vanilla.script (владение W4-HOOKS)!
+-- -----------------------------------------------------------------------------
+
+function lighting_focused_index(dlg)
+    if not dlg or type(dlg.Track) ~= "table" then return 1 end
+    for i = 1, 3 do
+        local ctrl = dlg.Track[i]
+        if ctrl and type(ctrl.IsCursorOverWindow) == "function" then
+            local ok, over = pcall(ctrl.IsCursorOverWindow, ctrl)
+            if ok and over then
+                dlg._gp_light_idx = i
+                return i
+            end
+        end
+    end
+    return tonumber(dlg._gp_light_idx) or 1
+end
+
+function lighting_reset_current(dlg)
+    dlg = dlg or state.active_light_dlg
+    if not dlg or not shown(dlg) or type(dlg.Track) ~= "table" then return deny() end
+    local idx = lighting_focused_index(dlg)
+    local ctrl = dlg.Track[idx]
+    local spec = LIGHTING_DEFS[idx] or { def = 1.0 }
+    if not ctrl or type(ctrl.GetFValue) ~= "function" or type(ctrl.SetFValue) ~= "function" then
+        return deny()
+    end
+    local ok_v, cur = pcall(ctrl.GetFValue, ctrl)
+    cur = ok_v and tonumber(cur) or spec.def
+    if math.abs(cur - spec.def) < 1e-4 then
+        return deny()
+    end
+    pcall(ctrl.SetFValue, ctrl, spec.def)
+    if type(dlg.Value) == "table" then dlg.Value[idx] = spec.def end
+    if type(dlg.Callback_Track) == "function" then
+        pcall(dlg.Callback_Track, dlg, idx, spec.def)
+    end
+    return "used"
+end
+
+function paint_lighting(dlg)
+    if not dlg then return end
+    local s = wnd_state(dlg, "lighting")
+    local active = is_top_dialog(dlg) and is_gamepad() and hints_visible("menu")
+    local items = {
+        { glyph = "dpad", text = txt("slider_step") },
+        { glyph = "X",    text = txt("reset_slider") },
+        { glyph = "B",    text = txt("close") },
+    }
+    local parent = dlg.dialog or dlg
+    local dr = abs_rect(parent)
+    local sx = dr and dr.x1 or 312
+    local sy = dr and math.min(736, dr.y2 + 6) or 520
+    local sw = dr and math.max(280, dr.x2 - dr.x1) or 400
+    paint_strip(s.ui, "strip", dlg, sx, sy, sw, items, active)
+end
+
+-- -----------------------------------------------------------------------------
+-- 9. Общий диспетчер рамки фокуса и интеграция с gp_bridge
+-- -----------------------------------------------------------------------------
+
+function current()
+    if not ENABLED then return nil, nil end
+    install_hooks()
+    local hk = get_haruka()
+    if hk then return "haruka", hk end
+    local ex = get_experience()
+    if ex then return "experience", ex end
+    local ls = get_laser()
+    if ls then return "laser", ls end
+    return nil, nil
+end
+
+local function collect_for(kind, g, s)
+    if kind == "haruka" then return collect_haruka(g), "main" end
+    if kind == "experience" then
+        local layer = exp_layer(g, s)
+        return collect_experience(g, s, layer), layer
+    end
+    if kind == "laser" then return collect_laser(g), "main" end
+    return {}, "main"
+end
+
+local function on_target_focused(kind, g, cur)
+    if not cur then return end
+    if kind == "haruka" then
+        sync_haruka_hint(g, cur)
+    elseif kind == "experience" and cur.action == "select_skill" then
+        local sw = g.main_windows and g.main_windows.skills and g.main_windows.skills.wnd
+        if sw and sw.selected_skill_id ~= cur.skill_id and sw.SelectSkill then
+            pcall(sw.SelectSkill, sw, cur.skill_id, true)
+        end
+    end
+end
+
+local function resolve_focus(kind, g, s, x, y)
+    local list, layer = collect_for(kind, g, s)
+    if s.last_layer ~= layer then
+        s.last_layer = layer
+        s.cur_id = s.mem[layer]
+    end
+    local hit = (x and y) and target_at(list, x, y) or nil
+    local cur = hit or by_id(list, s.cur_id) or by_id(list, s.mem[layer]) or reading_first(list)
+    if cur then
+        local changed = (s.cur_id ~= cur.id)
+        s.cur_id = cur.id
+        s.mem[layer] = cur.id
+        if changed then on_target_focused(kind, g, cur) end
+    end
+    return cur, list, layer
+end
+
+function focus_frame_active()
+    local kind = current()
+    return kind ~= nil
+end
+
+function query(x, y)
+    local kind, g = current()
+    if not kind then return nil end
+    x, y = tonumber(x) or 0, tonumber(y) or 0
+    local s = wnd_state(g, kind)
+    local cur = resolve_focus(kind, g, s, x, y)
+    if not cur or cur.vis == false then
+        return string.format("hit:1;cx=%.1f;cy=%.1f;w=0;h=0;kind=none", x, y)
+    end
+    local cx, cy = center(cur.r)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s",
+        cx, cy, cur.r.x2 - cur.r.x1, cur.r.y2 - cur.r.y1, cur.kind)
+end
+
+function snap(x, y, dir)
+    local kind, g = current()
+    if not kind then return nil end
+    x, y, dir = tonumber(x) or 0, tonumber(y) or 0, tonumber(dir) or 0
+    local s = wnd_state(g, kind)
+    local cur, list, layer = resolve_focus(kind, g, s, x, y)
+
+    if kind == "laser" and cur and cur.track_def and (dir == DIR_LEFT or dir == DIR_RIGHT) then
+        step_laser_slider(g, cur, dir == DIR_LEFT and -1 or 1)
+        local cx, cy = center(cur.r)
+        return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, cur.kind)
+    end
+
+    if kind == "experience" and g.current_wnd == "skills" and cur and cur.action == "select_skill" and (dir == DIR_LEFT or dir == DIR_RIGHT) then
+        local sw = g.main_windows and g.main_windows.skills and g.main_windows.skills.wnd
+        if sw then
+            if dir == DIR_LEFT and type(sw.ViewPrevLevelDescription) == "function" then
+                pcall(sw.ViewPrevLevelDescription, sw)
+                local cx, cy = center(cur.r)
+                return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, cur.kind)
+            elseif dir == DIR_RIGHT and type(sw.ViewNextLevelDescription) == "function" then
+                pcall(sw.ViewNextLevelDescription, sw)
+                local cx, cy = center(cur.r)
+                return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, cur.kind)
+            end
+        end
+    end
+
+    local nxt = step_target(list, cur, dir)
+    if not nxt then
+        if cur then x, y = center(cur.r) end
+        return string.format("snap:1;cx=%.1f;cy=%.1f;kind=none", x, y)
+    end
+    ensure_visible(nxt)
+    s.cur_id = nxt.id
+    s.mem[layer] = nxt.id
+    on_target_focused(kind, g, nxt)
+    local cx, cy = center(nxt.r)
+    move_cursor(cx, cy)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, nxt.kind)
+end
+
+function rs_analog(y, dt)
+    local kind, g = current()
+    if not kind then return false end
+    local s = wnd_state(g, kind)
+    if kind == "haruka" then
+        return sv_scroll(g.scroll, s, "scroll_acc", y, dt, SCROLL_SPEED)
+    elseif kind == "experience" then
+        local tab = g.current_wnd
+        local tw = tab and g.main_windows and g.main_windows[tab] and g.main_windows[tab].wnd or nil
+        if tab == "skills" and tw then
+            if tw.description_scrollbar and shown(tw.description_scrollbar) then
+                local okn, mn = pcall(tw.description_scrollbar.GetMinScrollPos, tw.description_scrollbar)
+                local okx, mx = pcall(tw.description_scrollbar.GetMaxScrollPos, tw.description_scrollbar)
+                if okn and okx and tonumber(mx) and tonumber(mn) and tonumber(mx) > tonumber(mn) then
+                    return sv_scroll(tw.description_scrollbar, s, "desc_acc", y, dt, SCROLL_SPEED)
+                end
+            end
+            return sv_scroll(tw.skills_scrollbar, s, "skills_acc", y, dt, SCROLL_SPEED)
+        elseif tab == "traits" and tw then
+            local sc = (tw.traits_list_upgrade and tw.traits_list_upgrade:IsShown()) and tw.traits_list_upgrade or tw.traits_list
+            return sv_scroll(sc, s, "traits_acc", y, dt, SCROLL_SPEED)
+        elseif tab == "tasks" and tw then
+            return sv_scroll(tw.tasks_scrollbar, s, "tasks_acc", y, dt, SCROLL_SPEED)
+        elseif tw then
+            local sv = tw.scrollbar or tw.scroll or tw.options_scrollbar
+            if sv then return sv_scroll(sv, s, "gen_acc", y, dt, SCROLL_SPEED) end
+        end
+    end
+    return true
+end
+
+function ws_button(name, phase)
+    local kind, g = current()
+    if not kind then
+        if state.active_light_dlg and is_top_dialog(state.active_light_dlg) then
+            if phase == "press" and name == "X" then
+                return lighting_reset_current(state.active_light_dlg)
+            end
+        end
+        return nil
+    end
+    local s = wnd_state(g, kind)
+    if kind == "experience" then
+        return step_experience_button(g, s, name, phase)
+    elseif kind == "laser" then
+        return step_laser_button(g, s, name, phase)
+    elseif kind == "haruka" then
+        if phase ~= "press" then return "used" end
+        return step_haruka_button(g, s, name)
+    end
+    return ""
+end
+
+function tick_window(kind, g)
+    local s = wnd_state(g, kind)
+    drain_queue(s)
+    local active_kind, active_g = current()
+    local active = (active_kind == kind) and rawequal(active_g, g) and is_gamepad()
+    if active then
+        local cur = resolve_focus(kind, g, s)
+        if cur and not s.placed_initial then
+            s.placed_initial = true
+            ensure_visible(cur)
+            move_cursor(center(cur.r))
+            on_target_focused(kind, g, cur)
+        end
+    else
+        s.placed_initial = false
+        s.hold = nil
+    end
+    if kind == "haruka" then
+        paint_haruka(g, s)
+    elseif kind == "experience" then
+        paint_experience(g, s)
+    elseif kind == "laser" then
+        paint_laser(g, s)
+    end
+end
+
+-- -----------------------------------------------------------------------------
+-- 10. Установка хуков на классы (с защитой P23 для чистой Anomaly)
+-- -----------------------------------------------------------------------------
+
+local function hook_haruka()
+    local m = rawget(_G, "ui_haru_skills")
+    local cls = type(m) == "table" and m.UIHarukaSkills or nil
+    if not cls or cls._gp_prog_hooked then return false end
+    cls._gp_prog_hooked = true
+
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UIHarukaSkills") end
+        end
+    end
+    local orig_upd = cls.Update
+    if type(orig_upd) == "function" then
+        cls.Update = function(self, ...)
+            local r = orig_upd(self, ...)
+            tick_window("haruka", self)
+            return r
+        end
+    end
+    return true
+end
+
+local function hook_experience()
+    local m = rawget(_G, "experience_ui")
+    local cls = type(m) == "table" and m.UIExperienceMenu or nil
+    if not cls or cls._gp_prog_hooked then return false end
+    cls._gp_prog_hooked = true
+
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UIExperienceMenu") end
+        end
+    end
+    local orig_upd = cls.Update
+    if type(orig_upd) == "function" then
+        cls.Update = function(self, ...)
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UIExperienceMenu") end
+            local r = orig_upd(self, ...)
+            tick_window("experience", self)
+            return r
+        end
+    end
+    return true
+end
+
+local function hook_laser()
+    local m = rawget(_G, "laser_settings_ui")
+    local cls = type(m) == "table" and m.LaserSettingsDialog or nil
+    if not cls or cls._gp_prog_hooked then return false end
+    cls._gp_prog_hooked = true
+
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            if self.SetWindowName then pcall(self.SetWindowName, self, "LaserSettingsDialog") end
+            state.active_laser_dlg = self
+        end
+    end
+    local orig_show = cls.ShowForWeapon
+    if type(orig_show) == "function" then
+        cls.ShowForWeapon = function(self, ...)
+            if self.SetWindowName then pcall(self.SetWindowName, self, "LaserSettingsDialog") end
+            state.active_laser_dlg = self
+            return orig_show(self, ...)
+        end
+    end
+    local orig_upd = cls.Update
+    if type(orig_upd) == "function" then
+        cls.Update = function(self, ...)
+            local r = orig_upd(self, ...)
+            tick_window("laser", self)
+            return r
+        end
+    end
+    local orig_close = cls.Close
+    if type(orig_close) == "function" then
+        cls.Close = function(self, ...)
+            if rawequal(state.active_laser_dlg, self) then state.active_laser_dlg = nil end
+            return orig_close(self, ...)
+        end
+    end
+    return true
+end
+
+local function hook_lighting()
+    local m = rawget(_G, "ui_ctrl_lighting")
+    local cls = type(m) == "table" and m.UILightControl or nil
+    if not cls or cls._gp_prog_hooked then return false end
+    cls._gp_prog_hooked = true
+
+    local orig_ic = cls.InitControls
+    if type(orig_ic) == "function" then
+        cls.InitControls = function(self, ...)
+            local r = orig_ic(self, ...)
+            state.active_light_dlg = self
+            self._gp_light_idx = 1
+            return r
+        end
+    end
+    local orig_upd = cls.Update
+    if type(orig_upd) == "function" then
+        cls.Update = function(self, ...)
+            state.active_light_dlg = self
+            lighting_focused_index(self)
+            local r = orig_upd(self, ...)
+            paint_lighting(self)
+            return r
+        end
+    end
+    if type(m.gamepad_reset_current) ~= "function" then
+        m.gamepad_reset_current = function()
+            return lighting_reset_current(state.active_light_dlg)
+        end
+    end
+    return true
+end
+
+function install_hooks()
+    hook_haruka()
+    hook_experience()
+    hook_laser()
+    hook_lighting()
+    state.hooks_installed = true
+    return true
+end
+
+function install_bridge_wrap()
+    local b = rawget(_G, "gp_bridge")
+    if type(b) ~= "table" or b._gp_progression_wrapped then return false end
+    b._gp_progression_wrapped = true
+
+    local prev_active = b.inv_focus_frame_active
+    b.inv_focus_frame_active = function(...)
+        if focus_frame_active() then return true end
+        return type(prev_active) == "function" and prev_active(...) or false
+    end
+
+    local prev_query = b.cursor_query_target
+    b.cursor_query_target = function(x, y, ...)
+        local r = query(x, y)
+        if r ~= nil then return r end
+        return type(prev_query) == "function" and prev_query(x, y, ...) or nil
+    end
+
+    local prev_snap = b.cursor_dpad_snap
+    b.cursor_dpad_snap = function(x, y, dir, ...)
+        local r = snap(x, y, dir)
+        if r ~= nil then return r end
+        return type(prev_snap) == "function" and prev_snap(x, y, dir, ...) or nil
+    end
+
+    local prev_rs = b.cursor_rs_analog
+    b.cursor_rs_analog = function(y, dt, ...)
+        if focus_frame_active() then return rs_analog(y, dt) end
+        return type(prev_rs) == "function" and prev_rs(y, dt, ...) or false
+    end
+
+    local prev_ws = b.ws_button
+    b.ws_button = function(name, phase, ...)
+        local r = ws_button(name, phase)
+        if r ~= nil then return r end
+        return type(prev_ws) == "function" and prev_ws(name, phase, ...) or ""
+    end
+    return true
+end
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    install_hooks()
+    install_bridge_wrap()
+    local reg = rawget(_G, "RegisterScriptCallback")
+    if type(reg) == "function" then
+        reg("actor_on_first_update", function()
+            install_hooks()
+            install_bridge_wrap()
+        end)
+    end
+end

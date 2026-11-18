@@ -1,0 +1,2011 @@
+-- =============================================================================
+-- gp_lifecycle.script
+-- Stage F (F4.2): FDDA & Timed Actions Policy on Pause (D11 / D33) +
+-- Forced Pause Token Release & Modal Stack Cleanup Before Context Changes
+-- (Sleep, Level Change, Game Load / Quickload / Net Destroy, Actor Death).
+-- =============================================================================
+
+local ACTION_FDDA_CONSUME  = "fdda_consume"
+local ACTION_FDDA_EQUIP    = "fdda_equip"
+local ACTION_MAG_LOAD      = "mag_load"
+local ACTION_MAG_UNLOAD    = "mag_unload"
+local ACTION_ACTIVATE_SLOT = "activate_slot"
+local ACTION_LAM2_CUSTOM   = "lam2_action"
+
+local POLICY_QUEUE           = "queue"
+local POLICY_EXECUTE_IN_MENU = "execute_in_menu"
+
+local ANIM_PER_CATEGORY = "per_category"
+local ANIM_PER_ITEM     = "per_item"
+
+local MAX_QUEUE_SIZE        = 32
+local MAX_TELEMETRY_LOG     = 64
+local STEP_TIMEOUT_MS       = 12000
+local MAX_PAUSE_POP_ITER    = 16
+local MAX_LAM2_PAUSE_STREAK = 16
+
+local state = {
+    pause_fdda_policy    = POLICY_QUEUE,
+    consumable_anim_mode = ANIM_PER_CATEGORY,
+    smart_queue          = {},
+    next_seq_id          = 1,
+    active_step          = nil,
+    suppress_hooks       = false,
+    in_hook_lam2         = false,
+    in_hook_ae           = false,
+    in_hook_mag_load     = false,
+    in_hook_mag_unload   = false,
+    in_hook_sleep        = false,
+    hooks_installed      = false,
+    lam2_pause_streak    = 0,
+    lam2_last_streak_ms  = -1,
+    tracked_tokens       = {},
+    telemetry_history    = {},
+    last_cleanup_record  = nil,
+    queue_badge_wnd      = nil,
+    queue_badge_parent   = nil,
+    queue_badge_visible  = false,
+    queue_badge_text     = "",
+    stats = {
+        enqueued_total           = 0,
+        executed_from_queue      = 0,
+        collapsed_in_category    = 0,
+        executed_in_menu         = 0,
+        executed_live            = 0,
+        skipped_invalid          = 0,
+        cancelled_lifo           = 0,
+        queue_cleared            = 0,
+        hands_recovered          = 0,
+        cleanups_total           = 0,
+        tokens_released_total    = 0,
+        modals_closed_total      = 0,
+        lam2_service_passthrough = 0,
+        lam2_recursion_guarded   = 0,
+    },
+}
+
+local orig_hooks = {
+    lam2_add_action     = nil,
+    ae_play_item_fx     = nil,
+    ae_use_item         = nil,
+    mag_load_magazine   = nil,
+    mag_unload_magazine = nil,
+    sleep_on_btn        = nil,
+    inv_on_keyboard     = nil,
+    inv_update          = nil,
+}
+local orig_hooks_target = {
+    lam2_tbl            = nil,
+    ae_tbl              = nil,
+    mag_tbl             = nil,
+    sleep_cls           = nil,
+    inv_cls             = nil,
+}
+
+-- =============================================================================
+-- Logging & Time Helpers
+-- =============================================================================
+
+local function log_msg(fmt, ...)
+    if not printf then
+        return
+    end
+    local ok, msg = pcall(string.format, fmt, ...)
+    if ok then
+        printf("* [Gamepad] [gp_lifecycle] %s", msg)
+    end
+end
+
+local function now_ms()
+    if game and type(game.get_time_continual) == "function" then
+        local ok, t = pcall(game.get_time_continual)
+        if ok and type(t) == "number" then
+            return t
+        end
+    end
+    if type(time_global) == "function" then
+        local ok, t = pcall(time_global)
+        if ok and type(t) == "number" then
+            return t
+        end
+    end
+    return 0
+end
+
+-- =============================================================================
+-- Pause & Modal Stack Inspection
+-- =============================================================================
+
+function count_active_pause_tokens()
+    local count = 0
+    if level and type(level.gp_pause_token_count) == "function" then
+        local ok, n = pcall(level.gp_pause_token_count)
+        if ok and type(n) == "number" and n >= 0 then
+            count = count + n
+        end
+    end
+    if gp_inv_pause and type(gp_inv_pause.get_active_token) == "function" then
+        local ok, tok = pcall(gp_inv_pause.get_active_token)
+        if ok and tok ~= nil and count == 0 then
+            count = count + 1
+        end
+    end
+    for _, tok_id in pairs(state.tracked_tokens) do
+        if tok_id then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function is_device_paused()
+    if type(device) == "function" then
+        local ok, dev = pcall(device)
+        if ok and dev and type(dev.is_paused) == "function" then
+            local ok_p, paused = pcall(dev.is_paused, dev)
+            if ok_p and paused == true then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function is_game_paused()
+    if is_device_paused() then
+        return true
+    end
+    if gp_inv_pause and type(gp_inv_pause.is_paused_by_inventory) == "function" then
+        local ok, inv_p = pcall(gp_inv_pause.is_paused_by_inventory)
+        if ok and inv_p == true then
+            return true
+        end
+    end
+    if ui_inventory and ui_inventory.GUI and type(ui_inventory.GUI.IsShown) == "function" and ui_inventory.GUI:IsShown() and gp_inv_pause and type(gp_inv_pause.is_pause_enabled) == "function" and gp_inv_pause.is_pause_enabled() then
+        return true
+    end
+    if count_active_pause_tokens() > 0 then
+        return true
+    end
+    return false
+end
+
+local function resolve_ui_stack_window(entry)
+    if type(entry) == "string" then
+        if type(_G._GUIs) == "table" and _G._GUIs[entry] ~= nil then
+            return _G._GUIs[entry]
+        end
+        local mod = _G[entry]
+        if type(mod) == "table" and mod.GUI ~= nil then
+            return mod.GUI
+        end
+        return nil
+    end
+    return entry
+end
+
+function count_open_modals()
+    local count = 0
+    local seen = {}
+
+    if type(_G._UI_stack) == "table" then
+        for i = 1, #_G._UI_stack do
+            local w = resolve_ui_stack_window(_G._UI_stack[i])
+            if w and not seen[w] then
+                seen[w] = true
+                count = count + 1
+            end
+        end
+    end
+
+    if type(_G._GUIs) == "table" then
+        for _, w in pairs(_G._GUIs) do
+            if w and not seen[w] then
+                local shown = true
+                if type(w.IsShown) == "function" then
+                    local ok, s = pcall(w.IsShown, w)
+                    if ok then
+                        shown = (s == true)
+                    end
+                end
+                if shown then
+                    seen[w] = true
+                    count = count + 1
+                end
+            end
+        end
+    end
+
+    if ui_inventory and ui_inventory.GUI and not seen[ui_inventory.GUI] then
+        local gui = ui_inventory.GUI
+        if type(gui.IsShown) == "function" then
+            local ok, s = pcall(gui.IsShown, gui)
+            if ok and s == true then
+                seen[gui] = true
+                count = count + 1
+            end
+        end
+    end
+
+    if ActorMenu and type(ActorMenu.get_pda_menu) == "function" then
+        local ok, pda = pcall(ActorMenu.get_pda_menu)
+        if ok and pda and not seen[pda] and type(pda.IsShown) == "function" then
+            local ok_s, s = pcall(pda.IsShown, pda)
+            if ok_s and s == true then
+                seen[pda] = true
+                count = count + 1
+            end
+        end
+    end
+
+    if gp_wheel and type(gp_wheel.is_open) == "function" then
+        local ok, w_open = pcall(gp_wheel.is_open)
+        if ok and w_open == true then
+            count = count + 1
+        end
+    end
+
+    return count
+end
+
+-- =============================================================================
+-- Hands / FDDA / Magazines Busy State & Recovery
+-- =============================================================================
+
+function are_hands_free()
+    if lam2 and type(lam2.is_running) == "function" then
+        local ok, running = pcall(lam2.is_running)
+        if ok and running == true then
+            return false
+        end
+    end
+    if actor_effects and actor_effects.item_not_in_use == false then
+        return false
+    end
+    if magazines and type(magazines.action_in_progress) == "function" then
+        local ok, in_prog = pcall(magazines.action_in_progress)
+        if ok and in_prog == true then
+            return false
+        end
+    end
+    return true
+end
+
+function recover_stuck_hands(reason)
+    local why = tostring(reason or "unspecified")
+    local recovered_any = false
+
+    -- 1. Abort active LAM2 action queue & animations (stop_all_actions only skips can_skip; abort forces full stop)
+    if lam2 then
+        if type(lam2.stop_all_actions) == "function" then
+            pcall(lam2.stop_all_actions)
+            recovered_any = true
+        end
+        if type(lam2.abort) == "function" then
+            pcall(lam2.abort)
+            recovered_any = true
+        end
+        if lam2.b_is_running then
+            lam2.b_is_running = false
+            recovered_any = true
+        end
+        if lam2.action_Controls_Blocked then
+            lam2.action_Controls_Blocked = false
+            recovered_any = true
+        end
+    end
+    if lam_fov_manager and type(lam_fov_manager.restore_fov) == "function" then
+        pcall(lam_fov_manager.restore_fov)
+    end
+
+    -- 2. Interrupt magazines timed loading / unloading
+    if magazines then
+        if type(magazines.do_interrupt) == "function" then
+            pcall(magazines.do_interrupt)
+            recovered_any = true
+        end
+        if type(magazines.do_interrupt_magload) == "function" then
+            pcall(magazines.do_interrupt_magload)
+            recovered_any = true
+        end
+    end
+
+    -- 3. Reset actor_effects & FDDA backpack state flags
+    if actor_effects then
+        if actor_effects.item_not_in_use == false then
+            actor_effects.item_not_in_use = true
+            recovered_any = true
+        end
+        if actor_effects.mc_anm_state and actor_effects.mc_anm_state ~= 0 then
+            actor_effects.mc_anm_state = 0
+            recovered_any = true
+        end
+        if actor_effects.torch_anm_state and actor_effects.torch_anm_state ~= 0 then
+            actor_effects.torch_anm_state = 0
+            recovered_any = true
+        end
+    end
+    if liz_fdda_redone_backpack and liz_fdda_redone_backpack.is_ui_inventory_open then
+        liz_fdda_redone_backpack.is_ui_inventory_open = false
+        recovered_any = true
+    end
+
+    -- 4. Unlock FDDA input manager & engine movekeys/ladder locks
+    if liz_fdda_input_manager and liz_fdda_input_manager.is_input_disabled then
+        liz_fdda_input_manager.is_input_disabled = false
+        recovered_any = true
+    end
+    if game then
+        if type(game.stop_hud_motion) == "function" then
+            pcall(game.stop_hud_motion)
+        end
+        if type(game.only_allow_movekeys) == "function" then
+            pcall(game.only_allow_movekeys, false)
+        end
+        if type(game.set_actor_allow_ladder) == "function" then
+            pcall(game.set_actor_allow_ladder, true)
+        end
+    end
+    if level then
+        if type(level.remove_cam_effector) == "function" then
+            pcall(level.remove_cam_effector, 2190)
+        end
+        if type(level.enable_input) == "function" then
+            pcall(level.enable_input)
+        end
+    end
+
+    -- 5. Clean up leftover items_anm_dummy in actor inventory
+    if db and db.actor and type(db.actor.object) == "function" and alife_release then
+        local ok_d, dummy = pcall(db.actor.object, db.actor, "items_anm_dummy")
+        if ok_d and dummy then
+            pcall(alife_release, dummy)
+            recovered_any = true
+        end
+    end
+
+    state.active_step = nil
+    if recovered_any then
+        state.stats.hands_recovered = state.stats.hands_recovered + 1
+    end
+    log_msg("recover_stuck_hands reason=%s recovered=%s", why, tostring(recovered_any))
+    return recovered_any
+end
+
+-- =============================================================================
+-- Policy Configuration (D11 & D33)
+-- =============================================================================
+
+function get_pause_fdda_policy()
+    return state.pause_fdda_policy
+end
+
+function set_pause_fdda_policy(mode)
+    if mode == POLICY_QUEUE or mode == POLICY_EXECUTE_IN_MENU then
+        state.pause_fdda_policy = mode
+        return true
+    end
+    return false
+end
+
+function get_consumable_anim_mode()
+    return state.consumable_anim_mode
+end
+
+function set_consumable_anim_mode(mode)
+    if mode == ANIM_PER_CATEGORY or mode == ANIM_PER_ITEM then
+        state.consumable_anim_mode = mode
+        return true
+    end
+    return false
+end
+
+function resolve_consumable_category(section)
+    local sec = tostring(section or ""):lower()
+    if sec == "" then
+        return "other"
+    end
+    if sec:find("medkit", 1, true)
+        or sec:find("bandage", 1, true)
+        or sec:find("stimpack", 1, true)
+        or sec:find("drug_", 1, true)
+        or sec:find("antirad", 1, true)
+        or sec:find("jgut", 1, true)
+        or sec:find("salicidic", 1, true)
+        or sec:find("morphine", 1, true)
+        or sec:find("adrenalin", 1, true)
+        or sec:find("pills", 1, true)
+        or sec:find("survival_kit", 1, true)
+    then
+        return "medical"
+    end
+    if sec:find("cigar", 1, true)
+        or sec:find("tobacco", 1, true)
+        or sec:find("joint", 1, true)
+        or sec:find("hand_rolling", 1, true)
+    then
+        return "smoke"
+    end
+    if sec:find("bread", 1, true)
+        or sec:find("kolbasa", 1, true)
+        or sec:find("conserva", 1, true)
+        or sec:find("water", 1, true)
+        or sec:find("vodka", 1, true)
+        or sec:find("beer", 1, true)
+        or sec:find("energy_drink", 1, true)
+        or sec:find("tea", 1, true)
+        or sec:find("flask", 1, true)
+        or sec:find("mre", 1, true)
+        or sec:find("meat_", 1, true)
+        or sec:find("sausage", 1, true)
+        or sec:find("chocolate", 1, true)
+        or sec:find("nuts", 1, true)
+        or sec:find("beans", 1, true)
+    then
+        return "food_drink"
+    end
+    return "other"
+end
+
+-- =============================================================================
+-- StableItemID Capture & Verification
+-- =============================================================================
+
+local function resolve_object_and_id(obj_or_id)
+    if type(obj_or_id) == "number" then
+        local obj = nil
+        if level and type(level.object_by_id) == "function" then
+            local ok, resolved = pcall(level.object_by_id, obj_or_id)
+            if ok then
+                obj = resolved
+            end
+        end
+        return obj, obj_or_id
+    elseif obj_or_id ~= nil then
+        local id = nil
+        if type(obj_or_id.id) == "function" then
+            local ok, resolved_id = pcall(obj_or_id.id, obj_or_id)
+            if ok and type(resolved_id) == "number" then
+                id = resolved_id
+            end
+        elseif type(obj_or_id.id) == "number" then
+            id = obj_or_id.id
+        end
+        return obj_or_id, id
+    end
+    return nil, nil
+end
+
+function make_stable_item_id(obj_or_id, section_override)
+    local obj, id = resolve_object_and_id(obj_or_id)
+    if not id or id < 0 or id >= 65535 then
+        return nil
+    end
+
+    if gp_bridge and type(gp_bridge.make_stable_item_id) == "function" and obj then
+        local ok, sid = pcall(gp_bridge.make_stable_item_id, obj)
+        if ok and type(sid) == "table" and sid.object_id == id then
+            if section_override and (not sid.section or sid.section == "") then
+                sid.section = section_override
+            end
+            return sid
+        end
+    end
+
+    local sec = section_override
+    if not sec and obj and type(obj.section) == "function" then
+        local ok_s, s = pcall(obj.section, obj)
+        if ok_s and type(s) == "string" then
+            sec = s
+        end
+    end
+    if not sec or sec == "" then
+        return nil
+    end
+
+    local sess_gen = 0
+    local inst_gen = 0
+    if game and type(game.get_gamepad_session_gen) == "function" then
+        local ok_g, g = pcall(game.get_gamepad_session_gen)
+        if ok_g and type(g) == "number" then
+            sess_gen = g
+        end
+    end
+    if game and type(game.get_gamepad_object_instance_gen) == "function" then
+        local ok_i, ig = pcall(game.get_gamepad_object_instance_gen, id)
+        if ok_i and type(ig) == "number" then
+            inst_gen = ig
+        end
+    end
+    if inst_gen == 0 then
+        return nil
+    end
+
+    return {
+        session_gen  = sess_gen,
+        object_id    = id,
+        instance_gen = inst_gen,
+        section      = sec,
+    }
+end
+
+function validate_queued_item(entry)
+    if type(entry) ~= "table" then
+        return false, "invalid_entry"
+    end
+    if entry.action_type == ACTION_ACTIVATE_SLOT or entry.action_type == ACTION_LAM2_CUSTOM then
+        if not entry.stable_id then
+            return true, "ok_no_item"
+        end
+    end
+
+    local sid = entry.stable_id
+    if type(sid) ~= "table" or type(sid.object_id) ~= "number" then
+        return false, "missing_stable_id"
+    end
+
+    if game and type(game.get_gamepad_session_gen) == "function" then
+        local ok_g, cur_sess = pcall(game.get_gamepad_session_gen)
+        if ok_g and cur_sess ~= sid.session_gen then
+            return false, "session_gen_mismatch"
+        end
+    end
+
+    if game and type(game.validate_gamepad_stable_item) == "function" then
+        local ok_v, valid = pcall(
+            game.validate_gamepad_stable_item,
+            sid.session_gen,
+            sid.object_id,
+            sid.instance_gen
+        )
+        if ok_v and not valid then
+            return false, "engine_stable_id_invalid"
+        end
+    end
+
+    if game and type(game.is_gamepad_item_txn_locked) == "function" then
+        local ok_l, locked = pcall(game.is_gamepad_item_txn_locked, sid.object_id)
+        if ok_l and locked == true then
+            return false, "item_txn_locked"
+        end
+    end
+
+    local obj = nil
+    if level and type(level.object_by_id) == "function" then
+        local ok_o, found = pcall(level.object_by_id, sid.object_id)
+        if ok_o then
+            obj = found
+        end
+    end
+    if not obj then
+        return false, "object_not_found"
+    end
+
+    if type(obj.section) == "function" then
+        local ok_s, cur_sec = pcall(obj.section, obj)
+        if not ok_s or cur_sec ~= sid.section then
+            return false, "section_mismatch"
+        end
+    end
+
+    if entry.require_actor_parent ~= false and type(obj.parent) == "function" then
+        local ok_p, parent = pcall(obj.parent, obj)
+        local actor_id = (AC_ID ~= nil) and AC_ID or 0
+        if not ok_p or not parent or type(parent.id) ~= "function" or parent:id() ~= actor_id then
+            return false, "not_owned_by_actor"
+        end
+    end
+
+    return true, "ok", obj
+end
+
+-- =============================================================================
+-- Immediate & In-Menu Execution Helpers
+-- =============================================================================
+
+local function noop_play_item_fx()
+    return false
+end
+
+local function cleanup_aborted_entry(entry)
+    if type(entry) ~= "table" then
+        return
+    end
+    local payload = entry.payload
+    local lam_act = (type(payload) == "table" and type(payload.lam_action) == "table") and payload.lam_action or nil
+    if lam_act and type(lam_act.on_skip) == "function" then
+        pcall(lam_act.on_skip, lam_act)
+    end
+    if lam_act and type(lam_act.exit) == "function" and type(lam_act.on_skip) ~= "function" then
+        pcall(lam_act.exit, lam_act)
+    end
+    local obj_id = (entry.stable_id and entry.stable_id.object_id)
+        or (lam_act and type(lam_act.obj_id) == "number" and lam_act.obj_id)
+        or nil
+    if type(obj_id) == "number"
+        and zzzz_liz_fdda_redone_ui_inventory
+        and type(zzzz_liz_fdda_redone_ui_inventory.Set_Item_in_Use) == "function"
+    then
+        pcall(zzzz_liz_fdda_redone_ui_inventory.Set_Item_in_Use, obj_id, false)
+    end
+end
+
+local function apply_consumable_silent(obj)
+    if not obj or not db or not db.actor or type(db.actor.eat) ~= "function" then
+        return false
+    end
+    local prev_suppress = state.suppress_hooks
+    state.suppress_hooks = true
+
+    local saved_play_fx = nil
+    if actor_effects then
+        saved_play_fx = actor_effects.play_item_fx
+        actor_effects.play_item_fx = noop_play_item_fx
+    end
+
+    local ok = pcall(db.actor.eat, db.actor, obj)
+    if actor_effects and actor_effects.play_item_fx == noop_play_item_fx then
+        noop_play_item_fx()
+    end
+
+    if actor_effects and saved_play_fx then
+        actor_effects.play_item_fx = saved_play_fx
+    end
+    state.suppress_hooks = prev_suppress
+    return ok
+end
+
+local function execute_in_menu_now(action_type, obj, payload)
+    local prev_suppress = state.suppress_hooks
+    state.suppress_hooks = true
+    local executed = false
+
+    if action_type == ACTION_FDDA_CONSUME then
+        executed = apply_consumable_silent(obj)
+    elseif action_type == ACTION_FDDA_EQUIP then
+        if zzzz_liz_fdda_redone_ui_inventory and type(zzzz_liz_fdda_redone_ui_inventory.Equip) == "function" and obj then
+            local bag = (type(payload) == "table" and payload.bag) or "actor_bag"
+            local ok = pcall(zzzz_liz_fdda_redone_ui_inventory.Equip, obj, bag)
+            executed = ok
+        elseif payload and type(payload.fn) == "function" then
+            local ok = pcall(payload.fn, obj, payload)
+            executed = ok
+        end
+    elseif action_type == ACTION_MAG_LOAD then
+        if magazines and type(magazines.fast_load_magazine) == "function" and obj then
+            local box = type(payload) == "table" and (payload.ammo_box or payload.box) or nil
+            local load_one = type(payload) == "table" and payload.load_one or nil
+            local ok = pcall(magazines.fast_load_magazine, obj, box, load_one)
+            executed = ok
+        elseif payload and type(payload.fn) == "function" then
+            local ok = pcall(payload.fn, obj, payload)
+            executed = ok
+        end
+    elseif action_type == ACTION_MAG_UNLOAD then
+        if magazines and type(magazines.fast_unload_magazine) == "function" and obj then
+            local ok = pcall(magazines.fast_unload_magazine, obj)
+            executed = ok
+        elseif payload and type(payload.fn) == "function" then
+            local ok = pcall(payload.fn, obj, payload)
+            executed = ok
+        end
+    elseif payload and type(payload.fn) == "function" then
+        local ok = pcall(payload.fn, obj, payload)
+        executed = ok
+    end
+
+    state.suppress_hooks = prev_suppress
+    if executed then
+        state.stats.executed_in_menu = state.stats.executed_in_menu + 1
+    end
+    return executed
+end
+
+local function execute_action_now(entry, obj)
+    local prev_suppress = state.suppress_hooks
+    state.suppress_hooks = true
+    local ok = false
+
+    local act = entry.action_type
+    local payload = entry.payload or {}
+
+    if type(payload.fn) == "function" then
+        ok = pcall(payload.fn, obj, entry)
+    elseif act == ACTION_FDDA_CONSUME then
+        if payload.lam_action and orig_hooks.lam2_add_action then
+            ok = pcall(orig_hooks.lam2_add_action, payload.lam_action)
+        elseif liz_fdda_redone_consumables and type(liz_fdda_redone_consumables.perform_item_use) == "function" and obj then
+            ok = pcall(liz_fdda_redone_consumables.perform_item_use, obj)
+        elseif liz_fdda_redone_consumables and type(liz_fdda_redone_consumables.use_consumable) == "function" and obj then
+            ok = pcall(liz_fdda_redone_consumables.use_consumable, obj)
+        elseif actor_effects and type(actor_effects.use_item) == "function" and entry.stable_id then
+            ok = pcall(actor_effects.use_item, entry.stable_id.section)
+            if ok and obj and db and db.actor and type(db.actor.eat) == "function" then
+                pcall(db.actor.eat, db.actor, obj)
+            end
+        elseif obj and db and db.actor and type(db.actor.eat) == "function" then
+            ok = pcall(db.actor.eat, db.actor, obj)
+        end
+    elseif act == ACTION_FDDA_EQUIP then
+        if payload.lam_action and orig_hooks.lam2_add_action then
+            ok = pcall(orig_hooks.lam2_add_action, payload.lam_action)
+        elseif zzzz_liz_fdda_redone_ui_inventory and type(zzzz_liz_fdda_redone_ui_inventory.Equip) == "function" and obj then
+            ok = pcall(zzzz_liz_fdda_redone_ui_inventory.Equip, obj, payload.bag or "actor_bag")
+        end
+    elseif act == ACTION_MAG_LOAD then
+        if magazines and type(magazines.action_start_magload) == "function" then
+            pcall(magazines.action_start_magload)
+        end
+        if orig_hooks.mag_load_magazine and obj then
+            ok = pcall(orig_hooks.mag_load_magazine, obj, payload.capacity, payload.delay)
+        elseif magazines and type(magazines.load_magazine) == "function" and obj then
+            ok = pcall(magazines.load_magazine, obj, payload.capacity, payload.delay)
+        end
+    elseif act == ACTION_MAG_UNLOAD then
+        if magazines and type(magazines.action_start_magload) == "function" then
+            pcall(magazines.action_start_magload)
+        end
+        if orig_hooks.mag_unload_magazine and obj then
+            ok = pcall(orig_hooks.mag_unload_magazine, obj, payload.delay)
+        elseif magazines and type(magazines.unload_magazine) == "function" and obj then
+            ok = pcall(magazines.unload_magazine, obj, payload.delay)
+        end
+    elseif act == ACTION_ACTIVATE_SLOT then
+        local slot = payload.slot
+        if db and db.actor and type(db.actor.activate_slot) == "function" and type(slot) == "number" then
+            ok = pcall(db.actor.activate_slot, db.actor, slot)
+        end
+    elseif act == ACTION_LAM2_CUSTOM and payload.lam_action then
+        if orig_hooks.lam2_add_action then
+            ok = pcall(orig_hooks.lam2_add_action, payload.lam_action)
+        elseif lam2 and type(lam2.add_action) == "function" then
+            ok = pcall(lam2.add_action, payload.lam_action)
+        end
+    end
+
+    state.suppress_hooks = prev_suppress
+    return ok
+end
+
+-- =============================================================================
+-- Smart Queue API (D11 / D33)
+-- =============================================================================
+
+function enqueue_fdda_or_mag_action(action_type, obj_or_id, payload)
+    local act = tostring(action_type or ACTION_FDDA_CONSUME)
+    local opts = type(payload) == "table" and payload or {}
+    local obj, _ = resolve_object_and_id(obj_or_id)
+
+    local sid = nil
+    if obj_or_id ~= nil then
+        sid = make_stable_item_id(obj_or_id, opts.section)
+        if not sid then
+            cleanup_aborted_entry({ payload = opts })
+            state.stats.skipped_invalid = state.stats.skipped_invalid + 1
+            return false, "invalid_item_id"
+        end
+    end
+
+    local category = opts.category
+    if not category then
+        local sec = (sid and sid.section) or opts.section or ""
+        if act == ACTION_FDDA_CONSUME then
+            category = resolve_consumable_category(sec)
+        else
+            category = act
+        end
+    end
+
+    local entry = {
+        seq_id               = state.next_seq_id,
+        action_type          = act,
+        stable_id            = sid,
+        category             = category,
+        payload              = opts,
+        require_actor_parent = (opts.require_actor_parent ~= false),
+        enqueued_ms          = now_ms(),
+    }
+
+    if sid then
+        local valid, reason, resolved_obj = validate_queued_item(entry)
+        if not valid then
+            cleanup_aborted_entry(entry)
+            state.stats.skipped_invalid = state.stats.skipped_invalid + 1
+            return false, reason
+        end
+        obj = resolved_obj or obj
+    end
+
+    -- If game is NOT paused, run live immediately
+    if not is_game_paused() then
+        local ok = execute_action_now(entry, obj)
+        if ok then
+            state.stats.executed_live = state.stats.executed_live + 1
+            return true, "executed_live"
+        end
+        return false, "live_execution_failed"
+    end
+
+    -- Game is paused: check D11 policy
+    if state.pause_fdda_policy == POLICY_EXECUTE_IN_MENU then
+        cleanup_aborted_entry(entry)
+        local ok = execute_in_menu_now(act, obj, opts)
+        if ok then
+            return true, "executed_in_menu"
+        end
+    end
+
+    -- Default D11 policy: enqueue in smart queue for execution after modal closes
+    if #state.smart_queue >= MAX_QUEUE_SIZE then
+        cleanup_aborted_entry(entry)
+        return false, "queue_full"
+    end
+
+    state.next_seq_id = state.next_seq_id + 1
+    state.smart_queue[#state.smart_queue + 1] = entry
+    state.stats.enqueued_total = state.stats.enqueued_total + 1
+    sync_queue_badge()
+
+    log_msg(
+        "enqueued seq=%d type=%s cat=%s id=%s queue_len=%d",
+        entry.seq_id,
+        entry.action_type,
+        tostring(entry.category),
+        tostring(sid and sid.object_id or "none"),
+        #state.smart_queue
+    )
+    return true, "queued", entry
+end
+
+function pop_last_queued_action()
+    local n = #state.smart_queue
+    if n == 0 then
+        sync_queue_badge()
+        return nil
+    end
+    local popped = state.smart_queue[n]
+    state.smart_queue[n] = nil
+    cleanup_aborted_entry(popped)
+    state.stats.cancelled_lifo = state.stats.cancelled_lifo + 1
+    sync_queue_badge()
+    log_msg("pop_last_queued_action seq=%d remaining=%d", popped.seq_id or -1, #state.smart_queue)
+    return popped
+end
+
+function clear_smart_queue(reason)
+    local count = #state.smart_queue
+    if count > 0 then
+        for i = 1, count do
+            cleanup_aborted_entry(state.smart_queue[i])
+        end
+        state.smart_queue = {}
+        state.stats.queue_cleared = state.stats.queue_cleared + count
+    end
+    state.active_step = nil
+    state.lam2_pause_streak = 0
+    state.lam2_last_streak_ms = -1
+    sync_queue_badge()
+    log_msg("clear_smart_queue reason=%s cleared=%d", tostring(reason or "manual"), count)
+    return count
+end
+
+function get_queue_size()
+    return #state.smart_queue
+end
+
+function query_queue_status()
+    return string.format(
+        "queued=%d;paused=%s;policy=%s",
+        #state.smart_queue,
+        tostring(is_game_paused()),
+        tostring(state.pause_fdda_policy)
+    )
+end
+
+function get_queue_snapshot()
+    local copy = {}
+    for i = 1, #state.smart_queue do
+        local e = state.smart_queue[i]
+        copy[i] = {
+            seq_id      = e.seq_id,
+            action_type = e.action_type,
+            category    = e.category,
+            object_id   = e.stable_id and e.stable_id.object_id or nil,
+            section     = e.stable_id and e.stable_id.section or nil,
+        }
+    end
+    return copy
+end
+
+-- =============================================================================
+-- Queue Badge Overlay & L3 Cancel Handler (FG.6d, D11 / D24)
+-- =============================================================================
+
+local function find_active_modal_for_badge()
+    if ui_inventory and ui_inventory.GUI and type(ui_inventory.GUI.AttachChild) == "function" then
+        local ok_s, shown = pcall(ui_inventory.GUI.IsShown, ui_inventory.GUI)
+        if not ok_s or shown ~= false then
+            return ui_inventory.GUI
+        end
+    end
+    if type(_G._UI_stack) == "table" and type(_G._GUIs) == "table" then
+        for i = #_G._UI_stack, 1, -1 do
+            local name = _G._UI_stack[i]
+            local wnd = name and _G._GUIs[name]
+            if wnd and type(wnd.AttachChild) == "function" then
+                local ok_s, shown = pcall(wnd.IsShown, wnd)
+                if not ok_s or shown ~= false then
+                    return wnd
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function format_queue_badge_text()
+    local n = #state.smart_queue
+    if n == 0 then
+        return ""
+    end
+    local last = state.smart_queue[n]
+    local sec = (last and last.stable_id and last.stable_id.section)
+        or (last and last.payload and last.payload.section)
+        or (last and last.action_type)
+        or ""
+    local item_label = tostring(sec)
+    if sec ~= "" and ini_sys and type(ini_sys.r_string_ex) == "function" and game and type(game.translate_string) == "function" then
+        local ok_inv, inv_name = pcall(ini_sys.r_string_ex, ini_sys, sec, "inv_name_short")
+        if not ok_inv or not inv_name or inv_name == "" then
+            ok_inv, inv_name = pcall(ini_sys.r_string_ex, ini_sys, sec, "inv_name")
+        end
+        if ok_inv and type(inv_name) == "string" and inv_name ~= "" then
+            local ok_tr, tr_str = pcall(game.translate_string, inv_name)
+            if ok_tr and type(tr_str) == "string" and tr_str ~= "" then
+                item_label = tr_str
+            end
+        end
+    end
+    local l3_glyph = "[L3]"
+    if gp_bridge and type(gp_bridge.get_action_glyph) == "function" then
+        local ok_g, g = pcall(gp_bridge.get_action_glyph, "L3")
+        if ok_g and type(g) == "string" and g ~= "" then
+            l3_glyph = g
+        end
+    end
+    local fmt = "Queue: %d (%s)  %s Cancel"
+    if game and type(game.translate_string) == "function" then
+        local ok_q, q_tr = pcall(game.translate_string, "ui_gp_queue_badge_fmt")
+        if ok_q and type(q_tr) == "string" and q_tr ~= "" and q_tr ~= "ui_gp_queue_badge_fmt" then
+            fmt = q_tr
+        end
+    end
+    return string.format(fmt, n, item_label, l3_glyph)
+end
+
+function ensure_queue_badge_wnd(target_parent)
+    if not CUITextWnd or not vector2 then
+        return nil
+    end
+    local parent = target_parent or find_active_modal_for_badge()
+    if state.queue_badge_wnd and rawequal(state.queue_badge_parent, parent) then
+        return state.queue_badge_wnd
+    end
+    local ok, wnd = pcall(function()
+        if state.queue_badge_wnd and state.queue_badge_parent and type(state.queue_badge_parent.DetachChild) == "function" then
+            pcall(state.queue_badge_parent.DetachChild, state.queue_badge_parent, state.queue_badge_wnd)
+        end
+        local w = CUITextWnd()
+        w:SetAutoDelete(true)
+        w:SetWndPos(vector2():set(660, 8))
+        w:SetWndSize(vector2():set(352, 24))
+        if GetFontLetterica18Russian then
+            w:SetFont(GetFontLetterica18Russian())
+        elseif GetFontLetterica16Russian then
+            w:SetFont(GetFontLetterica16Russian())
+        end
+        if GetARGB and type(w.SetTextColor) == "function" then
+            w:SetTextColor(GetARGB(255, 255, 215, 110))
+        end
+        if type(w.SetTextAlignment) == "function" then
+            w:SetTextAlignment(2)
+        end
+        w:Show(false)
+        if parent and type(parent.AttachChild) == "function" then
+            parent:AttachChild(w)
+        end
+        state.queue_badge_wnd = w
+        state.queue_badge_parent = parent
+        return w
+    end)
+    if ok then
+        return wnd
+    end
+    return nil
+end
+
+function sync_queue_badge()
+    local n = #state.smart_queue
+    local parent = find_active_modal_for_badge()
+    local visible = (n > 0) and (is_game_paused() or parent ~= nil or count_open_modals() > 0)
+    local text = visible and format_queue_badge_text() or ""
+    state.queue_badge_visible = visible
+    state.queue_badge_text = text
+
+    local wnd = ensure_queue_badge_wnd(parent)
+    if wnd then
+        pcall(function()
+            wnd:SetText(text)
+            wnd:Show(visible)
+        end)
+    end
+    return visible, text
+end
+
+function get_queue_badge_status()
+    return {
+        visible   = state.queue_badge_visible == true,
+        text      = state.queue_badge_text or "",
+        queue_len = #state.smart_queue,
+        has_wnd   = state.queue_badge_wnd ~= nil,
+    }
+end
+
+function on_l3_cancel_queue()
+    if #state.smart_queue == 0 then
+        sync_queue_badge()
+        return nil
+    end
+    local popped = pop_last_queued_action()
+    return popped
+end
+
+function on_key_press(dik)
+    if #state.smart_queue == 0 then
+        return false
+    end
+    if not (is_game_paused() or count_open_modals() > 0) then
+        return false
+    end
+    local is_l3 = false
+    if type(dik_to_bind) == "function" and key_bindings and key_bindings.kSPRINT_TOGGLE then
+        local ok_b, b = pcall(dik_to_bind, dik)
+        if ok_b and b == key_bindings.kSPRINT_TOGGLE then
+            is_l3 = true
+        end
+    end
+    if not is_l3 and type(bind_to_dik) == "function" and key_bindings and key_bindings.kSPRINT_TOGGLE then
+        local ok_d, d = pcall(bind_to_dik, key_bindings.kSPRINT_TOGGLE)
+        if ok_d and d ~= 0 and dik == d then
+            is_l3 = true
+        end
+    end
+    if not is_l3 and DIK_keys and (dik == DIK_keys.DIK_X or dik == DIK_keys.DIK_LSHIFT) then
+        is_l3 = true
+    end
+    if is_l3 then
+        on_l3_cancel_queue()
+        return true
+    end
+    return false
+end
+
+function tick_smart_queue()
+    -- Never run queue while paused or while modal windows are open
+    if is_game_paused() or count_open_modals() > 0 then
+        sync_queue_badge()
+        return "paused_or_modal"
+    end
+
+    -- Check active step timeout watchdog
+    if state.active_step then
+        if are_hands_free() then
+            state.active_step = nil
+        else
+            local elapsed = now_ms() - (state.active_step.started_ms or 0)
+            if elapsed >= STEP_TIMEOUT_MS then
+                recover_stuck_hands("step_timeout")
+            else
+                return "busy_active_step"
+            end
+        end
+    end
+
+    if not are_hands_free() then
+        return "hands_busy"
+    end
+
+    while #state.smart_queue > 0 do
+        local head = table.remove(state.smart_queue, 1)
+        local valid, reason, obj = validate_queued_item(head)
+        if not valid then
+            cleanup_aborted_entry(head)
+            state.stats.skipped_invalid = state.stats.skipped_invalid + 1
+            log_msg("skipped invalid queued item seq=%d reason=%s", head.seq_id or -1, tostring(reason))
+        else
+            -- D33: If consumable and mode is per_category, collapse remaining valid consumables in same category
+            local collapsed_objs = {}
+            if head.action_type == ACTION_FDDA_CONSUME and state.consumable_anim_mode == ANIM_PER_CATEGORY then
+                local i = 1
+                while i <= #state.smart_queue do
+                    local cand = state.smart_queue[i]
+                    if cand.action_type == ACTION_FDDA_CONSUME and cand.category == head.category then
+                        table.remove(state.smart_queue, i)
+                        cleanup_aborted_entry(cand)
+                        local c_ok, c_reason, c_obj = validate_queued_item(cand)
+                        if c_ok and c_obj then
+                            collapsed_objs[#collapsed_objs + 1] = c_obj
+                        else
+                            state.stats.skipped_invalid = state.stats.skipped_invalid + 1
+                            log_msg("skipped collapsed candidate seq=%d reason=%s", cand.seq_id or -1, tostring(c_reason))
+                        end
+                    else
+                        i = i + 1
+                    end
+                end
+            end
+
+            local ok = execute_action_now(head, obj)
+            if ok then
+                state.stats.executed_from_queue = state.stats.executed_from_queue + 1
+            end
+
+            for c = 1, #collapsed_objs do
+                if apply_consumable_silent(collapsed_objs[c]) then
+                    state.stats.executed_from_queue = state.stats.executed_from_queue + 1
+                    state.stats.collapsed_in_category = state.stats.collapsed_in_category + 1
+                end
+            end
+
+            state.active_step = {
+                seq_id      = head.seq_id,
+                action_type = head.action_type,
+                started_ms  = now_ms(),
+            }
+            sync_queue_badge()
+            return "step_started"
+        end
+    end
+
+    sync_queue_badge()
+    return "queue_empty"
+end
+
+-- =============================================================================
+-- Runtime Hooks for LAM2, Actor Effects & Magazines on Pause
+-- =============================================================================
+
+local function is_lam2_service_action(action_tbl)
+    if type(action_tbl) ~= "table" then
+        return false
+    end
+    local tag = tostring(action_tbl.tag or "")
+    if tag == "stop_lam2"
+        or tag == "show_items_in_hands"
+        or tag == "show_items"
+        or tag == "wpn_hide"
+        or tag == "hide_items_in_hands"
+    then
+        return true
+    end
+    local name = tostring(action_tbl.name or "")
+    if name == "stop_lam2"
+        or name == "show_items_in_hands"
+        or name == "wpn_hide"
+        or name == "hide_items_in_hands"
+    then
+        return true
+    end
+    return false
+end
+
+local function hook_lam2_add_action(action_tbl)
+    if state.in_hook_lam2 then
+        return nil
+    end
+    if not state.suppress_hooks and is_game_paused() then
+        if is_lam2_service_action(action_tbl) then
+            state.lam2_pause_streak = 0
+            state.stats.lam2_service_passthrough = (state.stats.lam2_service_passthrough or 0) + 1
+        else
+            local is_tbl = (type(action_tbl) == "table")
+            local tag = is_tbl and tostring(action_tbl.tag or "") or ""
+            if tag == "backpack_try_open"
+                or tag == "backpack_open"
+                or tag == "body_search"
+                or tag == "wait_for_seconds"
+            then
+                return nil
+            end
+
+            local cur_ms = now_ms()
+            if cur_ms ~= state.lam2_last_streak_ms then
+                state.lam2_last_streak_ms = cur_ms
+                state.lam2_pause_streak = 0
+            end
+            state.lam2_pause_streak = (state.lam2_pause_streak or 0) + 1
+
+            if state.lam2_pause_streak > MAX_LAM2_PAUSE_STREAK then
+                state.stats.lam2_recursion_guarded = (state.stats.lam2_recursion_guarded or 0) + 1
+                log_msg(
+                    "lam2 recursion guard triggered (streak=%d tag=%s), passing through to orig lam2.add_action",
+                    state.lam2_pause_streak,
+                    tag
+                )
+            else
+                local item_ref = is_tbl and (action_tbl.item or action_tbl.obj_id) or nil
+                local sec = is_tbl and action_tbl.section or nil
+                local act_type = ACTION_LAM2_CUSTOM
+                if is_tbl and (
+                    tag == "outfit_animation"
+                    or tag == "headgear_animation"
+                    or action_tbl.obj_id ~= nil
+                    or action_tbl.patch_action_done ~= nil
+                    or tostring(action_tbl.name or ""):find("headgear", 1, true) ~= nil
+                ) then
+                    act_type = ACTION_FDDA_EQUIP
+                elseif item_ref ~= nil then
+                    act_type = ACTION_FDDA_CONSUME
+                end
+                enqueue_fdda_or_mag_action(act_type, item_ref, {
+                    section    = sec,
+                    lam_action = action_tbl,
+                })
+                return nil
+            end
+        end
+    else
+        state.lam2_pause_streak = 0
+    end
+    state.in_hook_lam2 = true
+    local ok, res = pcall(orig_hooks.lam2_add_action, action_tbl)
+    state.in_hook_lam2 = false
+    if not ok then
+        error(res)
+    end
+    return res
+end
+
+local function hook_ae_play_item_fx(section, ...)
+    if state.in_hook_ae then
+        return false
+    end
+    if not state.suppress_hooks and is_game_paused() then
+        return false
+    end
+    state.in_hook_ae = true
+    local ok, res = pcall(orig_hooks.ae_play_item_fx, section, ...)
+    state.in_hook_ae = false
+    if not ok then
+        error(res)
+    end
+    return res
+end
+
+local function hook_mag_load_magazine(magazine, capacity, delay)
+    if state.in_hook_mag_load then
+        return false
+    end
+    if not state.suppress_hooks and is_game_paused() then
+        if magazines and type(magazines.do_interrupt_magload) == "function" then
+            pcall(magazines.do_interrupt_magload)
+        end
+        enqueue_fdda_or_mag_action(ACTION_MAG_LOAD, magazine, {
+            capacity = capacity,
+            delay    = delay,
+        })
+        return false
+    end
+    state.in_hook_mag_load = true
+    local ok, res = pcall(orig_hooks.mag_load_magazine, magazine, capacity, delay)
+    state.in_hook_mag_load = false
+    if not ok then
+        error(res)
+    end
+    return res
+end
+
+local function hook_mag_unload_magazine(magazine, delay)
+    if state.in_hook_mag_unload then
+        return false
+    end
+    if not state.suppress_hooks and is_game_paused() then
+        if magazines and type(magazines.do_interrupt_magload) == "function" then
+            pcall(magazines.do_interrupt_magload)
+        end
+        enqueue_fdda_or_mag_action(ACTION_MAG_UNLOAD, magazine, {
+            delay = delay,
+        })
+        return false
+    end
+    state.in_hook_mag_unload = true
+    local ok, res = pcall(orig_hooks.mag_unload_magazine, magazine, delay)
+    state.in_hook_mag_unload = false
+    if not ok then
+        error(res)
+    end
+    return res
+end
+
+local function hook_sleep_on_btn(self_dlg, ...)
+    if state.in_hook_sleep then
+        return nil
+    end
+    force_cleanup_all("UISleep_OnButtonSleep")
+    state.in_hook_sleep = true
+    local ok, res = pcall(orig_hooks.sleep_on_btn, self_dlg, ...)
+    state.in_hook_sleep = false
+    if not ok then
+        error(res)
+    end
+    return res
+end
+
+local function hook_inv_on_keyboard(self_inv, dik, keyboard_action)
+    if (keyboard_action == nil or keyboard_action == 1 or (ui_events and keyboard_action == ui_events.WINDOW_KEY_PRESSED))
+        and on_key_press(dik)
+    then
+        return true
+    end
+    if orig_hooks.inv_on_keyboard then
+        return orig_hooks.inv_on_keyboard(self_inv, dik, keyboard_action)
+    end
+    return false
+end
+
+local function hook_inv_update(self_inv, ...)
+    state.lam2_pause_streak = 0
+    state.lam2_last_streak_ms = -1
+    local r1, r2, r3 = nil, nil, nil
+    if orig_hooks.inv_update then
+        r1, r2, r3 = orig_hooks.inv_update(self_inv, ...)
+    end
+    sync_queue_badge()
+    return r1, r2, r3
+end
+
+function install_fdda_and_mags_hooks()
+    if lam2 ~= orig_hooks_target.lam2_tbl then
+        orig_hooks_target.lam2_tbl = lam2
+        orig_hooks.lam2_add_action = nil
+    end
+    if lam2 and type(lam2.add_action) == "function" and orig_hooks.lam2_add_action == nil and lam2.add_action ~= hook_lam2_add_action then
+        orig_hooks.lam2_add_action = lam2.add_action
+        lam2.add_action = hook_lam2_add_action
+    end
+
+    if actor_effects ~= orig_hooks_target.ae_tbl then
+        orig_hooks_target.ae_tbl = actor_effects
+        orig_hooks.ae_play_item_fx = nil
+    end
+    if actor_effects and type(actor_effects.play_item_fx) == "function" and orig_hooks.ae_play_item_fx == nil and actor_effects.play_item_fx ~= hook_ae_play_item_fx then
+        orig_hooks.ae_play_item_fx = actor_effects.play_item_fx
+        actor_effects.play_item_fx = hook_ae_play_item_fx
+    end
+
+    if magazines ~= orig_hooks_target.mag_tbl then
+        orig_hooks_target.mag_tbl = magazines
+        orig_hooks.mag_load_magazine = nil
+        orig_hooks.mag_unload_magazine = nil
+    end
+    if magazines and type(magazines.load_magazine) == "function" and orig_hooks.mag_load_magazine == nil and magazines.load_magazine ~= hook_mag_load_magazine then
+        orig_hooks.mag_load_magazine = magazines.load_magazine
+        magazines.load_magazine = hook_mag_load_magazine
+    end
+
+    if magazines and type(magazines.unload_magazine) == "function" and orig_hooks.mag_unload_magazine == nil and magazines.unload_magazine ~= hook_mag_unload_magazine then
+        orig_hooks.mag_unload_magazine = magazines.unload_magazine
+        magazines.unload_magazine = hook_mag_unload_magazine
+    end
+
+    if ui_sleep_dialog and ui_sleep_dialog.UISleep then
+        local cls = ui_sleep_dialog.UISleep
+        if cls ~= orig_hooks_target.sleep_cls then
+            orig_hooks_target.sleep_cls = cls
+            orig_hooks.sleep_on_btn = nil
+        end
+        if type(cls.OnButtonSleep) == "function" and orig_hooks.sleep_on_btn == nil and cls.OnButtonSleep ~= hook_sleep_on_btn then
+            orig_hooks.sleep_on_btn = cls.OnButtonSleep
+            cls.OnButtonSleep = hook_sleep_on_btn
+        end
+    end
+
+    if ui_inventory and ui_inventory.UIInventory then
+        local inv_cls = ui_inventory.UIInventory
+        if not rawequal(inv_cls, orig_hooks_target.inv_cls) then
+            orig_hooks_target.inv_cls = inv_cls
+            orig_hooks.inv_on_keyboard = nil
+            orig_hooks.inv_update = nil
+        end
+        if type(inv_cls.OnKeyboard) == "function" and orig_hooks.inv_on_keyboard == nil and inv_cls.OnKeyboard ~= hook_inv_on_keyboard then
+            orig_hooks.inv_on_keyboard = inv_cls.OnKeyboard
+            inv_cls.OnKeyboard = hook_inv_on_keyboard
+        end
+        if type(inv_cls.Update) == "function" and orig_hooks.inv_update == nil and inv_cls.Update ~= hook_inv_update then
+            orig_hooks.inv_update = inv_cls.Update
+            inv_cls.Update = hook_inv_update
+        end
+    end
+
+    state.hooks_installed = true
+    return true
+end
+
+-- =============================================================================
+-- Forced Cleanup of Pause Tokens & Modal Stack Before Context Changes
+-- =============================================================================
+
+function track_pause_token(tok_id)
+    if tok_id ~= nil then
+        state.tracked_tokens[tok_id] = tok_id
+    end
+end
+
+function untrack_pause_token(tok_id)
+    if tok_id ~= nil then
+        state.tracked_tokens[tok_id] = nil
+    end
+end
+
+function close_all_modals(reason)
+    local why = tostring(reason or "context_change")
+    local closed = 0
+
+    -- 1. Close _G._UI_stack in reverse (LIFO) order, resolving string entries via _G._GUIs
+    if type(_G._UI_stack) == "table" then
+        local lifo = {}
+        for i = #_G._UI_stack, 1, -1 do
+            lifo[#lifo + 1] = resolve_ui_stack_window(_G._UI_stack[i])
+            _G._UI_stack[i] = nil
+        end
+        for i = 1, #lifo do
+            local w = lifo[i]
+            if w then
+                local is_open = true
+                if type(w.IsShown) == "function" then
+                    local ok_s, s = pcall(w.IsShown, w)
+                    if ok_s then is_open = (s == true) end
+                end
+                if is_open then
+                    if type(w.Close) == "function" then
+                        pcall(w.Close, w)
+                        closed = closed + 1
+                    elseif type(w.HideDialog) == "function" then
+                        pcall(w.HideDialog, w)
+                        closed = closed + 1
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Close active _G._GUIs instances
+    if type(_G._GUIs) == "table" then
+        for k, w in pairs(_G._GUIs) do
+            if w then
+                local is_open = true
+                if type(w.IsShown) == "function" then
+                    local ok_s, s = pcall(w.IsShown, w)
+                    if ok_s then
+                        is_open = (s == true)
+                    end
+                end
+                if is_open then
+                    if type(w.Close) == "function" then
+                        pcall(w.Close, w)
+                        closed = closed + 1
+                    elseif type(w.HideDialog) == "function" then
+                        pcall(w.HideDialog, w)
+                        closed = closed + 1
+                    end
+                end
+            end
+            _G._GUIs[k] = nil
+        end
+    end
+
+    -- 3. Close inventory GUI if still shown
+    if ui_inventory and ui_inventory.GUI then
+        local gui = ui_inventory.GUI
+        local shown = false
+        if type(gui.IsShown) == "function" then
+            local ok_s, s = pcall(gui.IsShown, gui)
+            shown = (ok_s and s == true)
+        end
+        if shown then
+            if type(gui.Close) == "function" then
+                pcall(gui.Close, gui)
+                closed = closed + 1
+            elseif type(gui.HideDialog) == "function" then
+                pcall(gui.HideDialog, gui)
+                closed = closed + 1
+            end
+        end
+    end
+
+    -- 4. Close PDA menu if open
+    if ActorMenu and type(ActorMenu.get_pda_menu) == "function" then
+        local ok, pda = pcall(ActorMenu.get_pda_menu)
+        if ok and pda and type(pda.IsShown) == "function" then
+            local ok_s, s = pcall(pda.IsShown, pda)
+            if ok_s and s == true and type(pda.HideDialog) == "function" then
+                pcall(pda.HideDialog, pda)
+                closed = closed + 1
+            end
+        end
+    end
+
+    -- 5. Close weapon wheel if open
+    if gp_wheel then
+        if type(gp_wheel.is_open) == "function" then
+            local ok_w, w_open = pcall(gp_wheel.is_open)
+            if ok_w and w_open == true then
+                if type(gp_wheel.close) == "function" then
+                    pcall(gp_wheel.close, why)
+                    closed = closed + 1
+                end
+            end
+        end
+    end
+
+    -- 6. Engine HUD & focus stack emergency reset
+    if type(hide_hud_inventory) == "function" then
+        pcall(hide_hud_inventory)
+    end
+    if type(exec_console_cmd) == "function" then
+        pcall(exec_console_cmd, "gp_focus_test emergency_reset")
+    end
+
+    state.stats.modals_closed_total = state.stats.modals_closed_total + closed
+    return closed
+end
+
+function release_all_pause_tokens(reason)
+    local why = tostring(reason or "context_change")
+    local released = 0
+
+    -- 1. Direct level binding if present
+    if level and type(level.gp_pause_release_all) == "function" then
+        local ok, n = pcall(level.gp_pause_release_all, why)
+        if ok and type(n) == "number" and n > 0 then
+            released = released + n
+        end
+    end
+
+    -- 2. Direct game binding if present
+    if game and type(game.release_all_pause_tokens) == "function" then
+        local ok, n = pcall(game.release_all_pause_tokens, why)
+        if ok and type(n) == "number" and n > 0 then
+            released = released + n
+        end
+    end
+
+    -- 3. Release gp_inv_pause token if held
+    if gp_inv_pause and type(gp_inv_pause.release_token) == "function" then
+        local has_inv_tok = false
+        if type(gp_inv_pause.get_active_token) == "function" then
+            local ok_t, tok = pcall(gp_inv_pause.get_active_token)
+            has_inv_tok = (ok_t and tok ~= nil)
+        end
+        pcall(gp_inv_pause.release_token, "lifecycle_" .. why)
+        if has_inv_tok then
+            released = released + 1
+        end
+    end
+
+    -- 4. Release any locally tracked tokens
+    if game and type(game.release_pause_token) == "function" then
+        for k, tok_id in pairs(state.tracked_tokens) do
+            if tok_id then
+                pcall(game.release_pause_token, tok_id)
+                released = released + 1
+            end
+            state.tracked_tokens[k] = nil
+        end
+    end
+
+    -- 5. Pop remaining engine/stub tokens via gp_pause_pop while device is paused
+    if type(exec_console_cmd) == "function" then
+        local iter = 0
+        while iter < MAX_PAUSE_POP_ITER and (is_device_paused() or count_active_pause_tokens() > 0) do
+            iter = iter + 1
+            pcall(exec_console_cmd, "gp_pause_pop")
+            released = released + 1
+            if not is_device_paused() and count_active_pause_tokens() == 0 then
+                break
+            end
+        end
+    end
+
+    -- 6. Ensure device pause is cleared and time factors are restored to 1.0
+    if is_device_paused() and type(device) == "function" then
+        local ok, dev = pcall(device)
+        if ok and dev and type(dev.pause) == "function" then
+            pcall(dev.pause, dev, false)
+        end
+    end
+    if game and type(game.reset_time_factors) == "function" then
+        pcall(game.reset_time_factors, "lifecycle_" .. why)
+    end
+
+    state.stats.tokens_released_total = state.stats.tokens_released_total + released
+    return released
+end
+
+function force_cleanup_all(reason)
+    local why = tostring(reason or "unspecified")
+
+    local tokens_before = count_active_pause_tokens()
+    local paused_before = is_device_paused()
+    if tokens_before == 0 and paused_before then
+        tokens_before = 1
+    end
+    local modals_before = count_open_modals()
+    local queue_before  = #state.smart_queue
+    local busy_before   = not are_hands_free()
+
+    -- 1. Open Category D transaction in gp_bridge if available (preempts lower categories)
+    if gp_bridge and type(gp_bridge.txn_begin) == "function" then
+        pcall(gp_bridge.txn_begin, "D", "lifecycle_" .. why)
+    end
+
+    -- 2. Clear pending FDDA/Magazines queue and recover hands
+    clear_smart_queue(why)
+    recover_stuck_hands(why)
+
+    -- 3. Close modal UI stack
+    local modals_closed = close_all_modals(why)
+
+    -- 4. Force-release all pause tokens & reset time factors
+    local tokens_released = release_all_pause_tokens(why)
+
+    local tokens_after = count_active_pause_tokens()
+    local paused_after = is_device_paused()
+    local modals_after = count_open_modals()
+    local queue_after  = #state.smart_queue
+    local busy_after   = not are_hands_free()
+
+    local record = {
+        reason               = why,
+        time_ms              = now_ms(),
+        tokens_before        = tokens_before,
+        tokens_after         = tokens_after,
+        tokens_released      = tokens_released,
+        device_paused_before = paused_before,
+        device_paused_after  = paused_after,
+        modals_before        = modals_before,
+        modals_after         = modals_after,
+        modals_closed        = modals_closed,
+        queue_before         = queue_before,
+        queue_after          = queue_after,
+        hands_busy_before    = busy_before,
+        hands_busy_after     = busy_after,
+    }
+
+    state.last_cleanup_record = record
+    state.stats.cleanups_total = state.stats.cleanups_total + 1
+    if #state.telemetry_history >= MAX_TELEMETRY_LOG then
+        table.remove(state.telemetry_history, 1)
+    end
+    state.telemetry_history[#state.telemetry_history + 1] = record
+
+    log_msg("%s", format_telemetry_line(record))
+    return record
+end
+
+-- =============================================================================
+-- Telemetry & Formatting
+-- =============================================================================
+
+function format_telemetry_line(rec)
+    local r = rec or state.last_cleanup_record
+    if not r then
+        return string.format(
+            "idle tokens=%d paused=%s modals=%d queue=%d hands_free=%s",
+            count_active_pause_tokens(),
+            tostring(is_device_paused()),
+            count_open_modals(),
+            #state.smart_queue,
+            tostring(are_hands_free())
+        )
+    end
+    return string.format(
+        "cleanup[%s] tokens:%d->%d paused:%s->%s modals:%d->%d queue:%d->%d hands_busy:%s->%s",
+        tostring(r.reason),
+        r.tokens_before or 0,
+        r.tokens_after or 0,
+        tostring(r.device_paused_before),
+        tostring(r.device_paused_after),
+        r.modals_before or 0,
+        r.modals_after or 0,
+        r.queue_before or 0,
+        r.queue_after or 0,
+        tostring(r.hands_busy_before),
+        tostring(r.hands_busy_after)
+    )
+end
+
+function get_telemetry()
+    return {
+        pause_fdda_policy    = state.pause_fdda_policy,
+        consumable_anim_mode = state.consumable_anim_mode,
+        queue_len            = #state.smart_queue,
+        active_tokens        = count_active_pause_tokens(),
+        device_paused        = is_device_paused(),
+        open_modals          = count_open_modals(),
+        hands_free           = are_hands_free(),
+        last_cleanup         = state.last_cleanup_record,
+        history_count        = #state.telemetry_history,
+        stats = {
+            enqueued_total        = state.stats.enqueued_total,
+            executed_from_queue   = state.stats.executed_from_queue,
+            collapsed_in_category = state.stats.collapsed_in_category,
+            executed_in_menu      = state.stats.executed_in_menu,
+            executed_live         = state.stats.executed_live,
+            skipped_invalid       = state.stats.skipped_invalid,
+            cancelled_lifo        = state.stats.cancelled_lifo,
+            queue_cleared         = state.stats.queue_cleared,
+            hands_recovered       = state.stats.hands_recovered,
+            cleanups_total        = state.stats.cleanups_total,
+            tokens_released_total    = state.stats.tokens_released_total,
+            modals_closed_total      = state.stats.modals_closed_total,
+            lam2_service_passthrough = state.stats.lam2_service_passthrough,
+            lam2_recursion_guarded   = state.stats.lam2_recursion_guarded,
+        },
+    }
+end
+
+function reset_telemetry()
+    state.telemetry_history   = {}
+    state.last_cleanup_record = nil
+    state.lam2_pause_streak   = 0
+    state.lam2_last_streak_ms = -1
+    for k, _ in pairs(state.stats) do
+        state.stats[k] = 0
+    end
+    return true
+end
+
+-- =============================================================================
+-- Game Lifecycle Callbacks
+-- =============================================================================
+
+function on_actor_update()
+    state.lam2_pause_streak = 0
+    state.lam2_last_streak_ms = -1
+    install_fdda_and_mags_hooks()
+    tick_smart_queue()
+end
+
+function on_actor_sleep(hours)
+    return force_cleanup_all("actor_on_sleep")
+end
+
+function on_gui_show(name)
+    local gui_name = tostring(name or "")
+    if gui_name == "UISleep" or gui_name == "ui_sleep_dialog" then
+        return force_cleanup_all("GUI_on_show_UISleep")
+    end
+    sync_queue_badge()
+    return nil
+end
+
+function on_gui_hide(name)
+    local gui_name = tostring(name or "")
+    sync_queue_badge()
+    if gui_name == "UIInventory" and not is_game_paused() and count_open_modals() == 0 then
+        tick_smart_queue()
+    end
+end
+
+function on_before_level_change()
+    return force_cleanup_all("on_before_level_changing")
+end
+
+function on_level_change()
+    return force_cleanup_all("on_level_changing")
+end
+
+function on_before_load()
+    return force_cleanup_all("on_before_load_input")
+end
+
+function on_game_load_cb()
+    return force_cleanup_all("on_game_load")
+end
+
+function on_net_destroy()
+    return force_cleanup_all("actor_on_net_destroy")
+end
+
+function on_actor_before_death(who_id)
+    return force_cleanup_all("actor_on_before_death")
+end
+
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_game_start()
+    if _G.gp_compat and _G.gp_compat.is_engine_compatible and not _G.gp_compat.is_engine_compatible() then return end
+    install_fdda_and_mags_hooks()
+    if RegisterScriptCallback then
+        RegisterScriptCallback("actor_on_update",          on_actor_update)
+        RegisterScriptCallback("actor_on_sleep",           on_actor_sleep)
+        RegisterScriptCallback("GUI_on_show",              on_gui_show)
+        RegisterScriptCallback("GUI_on_hide",              on_gui_hide)
+        RegisterScriptCallback("on_key_press",             on_key_press)
+        RegisterScriptCallback("on_before_level_changing", on_before_level_change)
+        RegisterScriptCallback("on_level_changing",        on_level_change)
+        RegisterScriptCallback("on_before_load_input",     on_before_load)
+        RegisterScriptCallback("on_game_load",             on_game_load_cb)
+        RegisterScriptCallback("actor_on_net_destroy",     on_net_destroy)
+        RegisterScriptCallback("actor_on_before_death",    on_actor_before_death)
+    end
+end
+
+-- =============================================================================
+-- Built-in Self-Test (gp_lifecycle.selftest)
+-- =============================================================================
+
+function selftest()
+    local saved_policy = state.pause_fdda_policy
+    local saved_anim   = state.consumable_anim_mode
+    clear_smart_queue("selftest_init")
+    reset_telemetry()
+
+    local results = {
+        passed = true,
+        checks = {},
+    }
+
+    local function record_check(name, cond, detail)
+        results.checks[#results.checks + 1] = {
+            name   = name,
+            ok     = (cond == true),
+            detail = tostring(detail or ""),
+        }
+        if not cond then
+            results.passed = false
+        end
+    end
+
+    -- Check 1: Category resolution (D33)
+    record_check(
+        "category_resolution",
+        resolve_consumable_category("medkit_army") == "medical"
+            and resolve_consumable_category("bread") == "food_drink"
+            and resolve_consumable_category("cigar") == "smoke"
+            and resolve_consumable_category("wpn_ak74") == "other",
+        "medical/food_drink/smoke/other"
+    )
+
+    -- Check 2: Policy toggles (D11 / D33)
+    set_pause_fdda_policy(POLICY_EXECUTE_IN_MENU)
+    set_consumable_anim_mode(ANIM_PER_ITEM)
+    local ok_modes = (get_pause_fdda_policy() == POLICY_EXECUTE_IN_MENU)
+        and (get_consumable_anim_mode() == ANIM_PER_ITEM)
+    set_pause_fdda_policy(POLICY_QUEUE)
+    set_consumable_anim_mode(ANIM_PER_CATEGORY)
+    record_check("policy_toggles", ok_modes, "queue/execute_in_menu + per_category/per_item")
+
+    -- Check 3: Smart queue LIFO pop and stale item rejection
+    state.smart_queue[#state.smart_queue + 1] = {
+        seq_id               = 9001,
+        action_type          = ACTION_FDDA_CONSUME,
+        stable_id            = { session_gen = -999, object_id = 65001, instance_gen = 1, section = "bread" },
+        category             = "food_drink",
+        payload              = {},
+        require_actor_parent = true,
+        enqueued_ms          = now_ms(),
+    }
+    state.smart_queue[#state.smart_queue + 1] = {
+        seq_id               = 9002,
+        action_type          = ACTION_FDDA_CONSUME,
+        stable_id            = { session_gen = -999, object_id = 65002, instance_gen = 1, section = "medkit" },
+        category             = "medical",
+        payload              = {},
+        require_actor_parent = true,
+        enqueued_ms          = now_ms(),
+    }
+    local popped = pop_last_queued_action()
+    local valid_stale, stale_reason = validate_queued_item(state.smart_queue[1])
+    clear_smart_queue("selftest_after_check3")
+    record_check(
+        "smart_queue_lifo_and_stale_guard",
+        popped ~= nil and popped.seq_id == 9002 and (not valid_stale),
+        "popped=9002 stale_reason=" .. tostring(stale_reason)
+    )
+
+    -- Check 4: Stuck hands recovery
+    recover_stuck_hands("selftest_hands")
+    record_check(
+        "stuck_hands_recovery",
+        are_hands_free() == true,
+        "hands_free=" .. tostring(are_hands_free())
+    )
+
+    -- Check 5: Forced cleanup on sleep, level change, load, and death
+    local tok_id = nil
+    if game and type(game.acquire_pause_token) == "function" then
+        tok_id = game.acquire_pause_token("selftest_token")
+        track_pause_token(tok_id)
+    end
+    local rec_sleep = on_actor_sleep(1)
+    local rec_lvl   = on_before_level_change()
+    local rec_load  = on_before_load()
+    local rec_death = on_actor_before_death(0)
+    local ok_cleanup = rec_sleep ~= nil and rec_sleep.tokens_after == 0 and not rec_sleep.device_paused_after
+        and rec_lvl ~= nil and rec_lvl.tokens_after == 0
+        and rec_load ~= nil and rec_load.tokens_after == 0
+        and rec_death ~= nil and rec_death.tokens_after == 0 and rec_death.queue_after == 0
+    record_check(
+        "force_cleanup_sleep_level_load_death",
+        ok_cleanup,
+        format_telemetry_line(rec_death)
+    )
+
+    -- Check 6: Queue badge visibility and L3 cancel (FG.6d)
+    local tok_b = nil
+    if game and type(game.acquire_pause_token) == "function" then
+        tok_b = game.acquire_pause_token("selftest_badge")
+        track_pause_token(tok_b)
+    end
+    state.smart_queue[#state.smart_queue + 1] = {
+        seq_id               = 9010,
+        action_type          = ACTION_FDDA_CONSUME,
+        stable_id            = { session_gen = -999, object_id = 65010, instance_gen = 1, section = "bread" },
+        category             = "food_drink",
+        payload              = { section = "bread" },
+        require_actor_parent = true,
+        enqueued_ms          = now_ms(),
+    }
+    sync_queue_badge()
+    local st_vis = get_queue_badge_status()
+    local popped_l3 = on_l3_cancel_queue()
+    local st_hid = get_queue_badge_status()
+    if tok_b and game and type(game.release_pause_token) == "function" then
+        untrack_pause_token(tok_b)
+        game.release_pause_token(tok_b)
+    end
+    record_check(
+        "queue_badge_and_l3_cancel",
+        st_vis.visible == true and st_vis.text ~= "" and popped_l3 ~= nil and popped_l3.seq_id == 9010 and st_hid.visible == false,
+        "vis=" .. tostring(st_vis.visible) .. " after_l3=" .. tostring(st_hid.visible)
+    )
+
+    -- Check 7: LAM2 service actions pass through on pause & recursion guard (FIX-Crash10)
+    local tok_c10 = nil
+    if game and type(game.acquire_pause_token) == "function" then
+        tok_c10 = game.acquire_pause_token("selftest_crash10")
+        track_pause_token(tok_c10)
+    end
+    clear_smart_queue("selftest_crash10_init")
+    local svc_ok = is_lam2_service_action({ tag = "stop_lam2" })
+        and is_lam2_service_action({ tag = "show_items_in_hands" })
+        and is_lam2_service_action({ tag = "wpn_hide" })
+        and is_lam2_service_action({ name = "hide_items_in_hands" })
+        and not is_lam2_service_action({ tag = "vanilla_item_use" })
+        and not is_lam2_service_action("not_a_table")
+    if lam2 and type(lam2.add_action) == "function" then
+        lam2.add_action({ tag = "show_items_in_hands" })
+        lam2.add_action({ tag = "stop_lam2" })
+        lam2.add_action({ tag = "wpn_hide" })
+        lam2.add_action({ tag = "body_search" })
+        lam2.add_action({ tag = "wait_for_seconds" })
+    end
+    local q_after_svc = get_queue_size()
+    local q_stat_str  = query_queue_status()
+    if tok_c10 and game and type(game.release_pause_token) == "function" then
+        untrack_pause_token(tok_c10)
+        game.release_pause_token(tok_c10)
+    end
+    record_check(
+        "lam2_pause_service_passthrough_and_guard",
+        svc_ok and q_after_svc == 0 and type(q_stat_str) == "string" and q_stat_str ~= "",
+        "svc_ok=" .. tostring(svc_ok) .. " q_after_svc=" .. tostring(q_after_svc)
+    )
+
+    -- Restore settings
+    state.pause_fdda_policy    = saved_policy
+    state.consumable_anim_mode = saved_anim
+    return results
+end

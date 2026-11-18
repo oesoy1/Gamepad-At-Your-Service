@@ -1,0 +1,80 @@
+-- gp_fix_meet.script - защита xr_meet.init_meet от раннего спавна НПС (FIX-LIVE1, живой тест 2026-11-15).
+-- Вылет Миши: xr_meet.script:594 (Modular Tweaks, тот же файл в чистой GAMMA)
+--   local comm_actor = character_community(db.actor):sub(7)  -> attempt to index a nil value
+-- Цепочка: z_npc_footsteps motivator_binder.net_spawn -> smart_terrain.setup_gulag_and_logic_on_spawn
+--   -> xr_logic.activate_by_section -> modules.reset_generic_schemes -> xr_meet.reset_generic_scheme -> init_meet.
+-- character_community(nil) в _g.script возвращает nil: НПС поднялся, когда db.actor ещё пуст
+-- (или у игрока ещё нет группировки). Пока игрок не готов, НПС получает нейтральные настройки встречи
+-- (character_community -> "actor_stalker", отношение -> neutral); как только игрок готов,
+-- настройки пересчитываются настоящим init_meet (actor_on_update, пока очередь не пуста).
+
+local orig_init_meet = nil
+local pending = {}
+
+function actor_ready()
+    local a = db and db.actor
+    if not a then return false end
+    local ok, comm = pcall(a.character_community, a)
+    return ok and type(comm) == "string"
+end
+
+local function init_neutral(npc, ini, section, st, scheme)
+    local cc = _G.character_community
+    local gr = _G.game_relations
+    local rel = gr.get_npcs_relation
+    _G.character_community = function(obj)
+        if obj == nil or obj == db.actor then return "actor_stalker" end
+        return cc(obj)
+    end
+    gr.get_npcs_relation = function(a, b)
+        if a == nil or b == nil or b == db.actor then return game_object.neutral end
+        return rel(a, b)
+    end
+    local ok, err = pcall(orig_init_meet, npc, ini, section, st, scheme)
+    _G.character_community, gr.get_npcs_relation = cc, rel
+    if not ok then error(err, 0) end
+end
+
+function guarded_init_meet(npc, ini, section, st, scheme)
+    if actor_ready() then return orig_init_meet(npc, ini, section, st, scheme) end
+    init_neutral(npc, ini, section, st, scheme)
+    if npc then
+        pending[npc:id()] = { ini = ini, section = section, st = st, scheme = scheme }
+        printf("~ [GP-MEET] npc %s spawned before actor community, neutral meet until actor is ready", tostring(npc:id()))
+    end
+end
+
+function flush_pending()
+    if next(pending) == nil or not actor_ready() then return 0 end
+    local list = pending
+    pending = {}
+    local n = 0
+    for id, p in pairs(list) do
+        local npc = level.object_by_id(id)
+        if npc and p.st.meet_section == p.section then
+            p.st.meet_section = nil
+            local ok, err = pcall(orig_init_meet, npc, p.ini, p.section, p.st, p.scheme)
+            if ok then n = n + 1 else printf("! [GP-MEET] reinit %s failed: %s", tostring(id), tostring(err)) end
+        end
+    end
+    return n
+end
+
+function pending_count()
+    local n = 0
+    for _ in pairs(pending) do n = n + 1 end
+    return n
+end
+
+function install()
+    local m = _G.xr_meet
+    if type(m) ~= "table" or type(m.init_meet) ~= "function" or m.init_meet == guarded_init_meet then return false end
+    orig_init_meet = m.init_meet
+    m.init_meet = guarded_init_meet
+    return true
+end
+
+function on_game_start()
+    install()
+    RegisterScriptCallback("actor_on_update", flush_pending)
+end

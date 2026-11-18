@@ -1,0 +1,15 @@
+<w>
+    <card x="0" y="0" width="95" height="74" stretch="1">
+        <texture>ui_gp_panel_flat</texture>
+    </card>
+    <name x="0" y="0" width="90" height="18">
+        <text font="graffiti19" r="238" g="238" b="231" align="l" vert_align="c"/>
+    </name>
+    <detail x="0" y="0" width="45" height="15">
+        <text font="letterica18" r="194" g="197" b="188" align="l" vert_align="c"/>
+    </detail>
+    <hint x="0" y="0" width="120" height="22" stretch="1">
+        <texture>ui\ui_gp_p16_strip</texture>
+        <text font="graffiti19" r="225" g="225" b="225" align="c" vert_align="c"/>
+    </hint>
+</w>

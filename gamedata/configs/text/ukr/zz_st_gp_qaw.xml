@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="st_gp_qaw_wheel"><text>Колесо</text></string>
+    <string id="st_gp_qaw_meds"><text>Витратники</text></string>
+    <string id="st_gp_qaw_grenades"><text>Гранати та обвіси</text></string>
+    <string id="st_gp_qaw_devices"><text>Пристрої та інше</text></string>
+    <string id="st_gp_qaw_companions"><text>Напарники</text></string>
+    <string id="st_gp_qaw_moving"><text>Перенесення</text></string>
+    <string id="st_gp_qaw_assigned"><text>Витратник призначено на короткий LB</text></string>
+    <string id="st_gp_qaw_quick_empty"><text>Немає витратника</text></string>
+    <string id="st_gp_qaw_unavailable"><text>Колесо недоступне</text></string>
+    <string id="st_gp_qaw_prev"><text>Вкладка назад</text></string>
+    <string id="st_gp_qaw_next"><text>Вкладка вперед</text></string>
+    <string id="st_gp_qaw_use"><text>Застосувати</text></string>
+    <string id="st_gp_qaw_close"><text>Закрити</text></string>
+    <string id="st_gp_qaw_move"><text>призначити</text></string>
+    <string id="st_gp_qaw_remove"><text>прибрати</text></string>
+    <string id="st_gp_qaw_add_meds"><text>Додати в колесо / Лікування та їжа</text></string>
+    <string id="st_gp_qaw_add_grenades"><text>Додати в колесо / Гранати та обвіси</text></string>
+    <string id="st_gp_qaw_settings"><text>Налаштування колеса</text></string>
+    <string id="st_gp_qaw_settings_keys"><text>^v Вибір    A Увімк/вимк    LB/RB Порядок    B Назад</text></string>
+    <string id="st_gp_qaw_quick"><text>Швидкий витратник</text></string>
+    <string id="st_gp_qaw_time"><text>Режим часу</text></string>
+    <string id="st_gp_qaw_on"><text>Увімк</text></string>
+    <string id="st_gp_qaw_off"><text>Вимк</text></string>
+    <string id="st_gp_qaw_empty"><text>Порожньо</text></string>
+    <string id="ui_mm_control_gamepad_open_wheel"><text>Колесо</text></string>
+    <string id="ui_mm_hint_control_gamepad_open_wheel"><text>Налаштування колеса</text></string>
+    <string id="st_gp_qaw_add"><text>додати в колесо</text></string>
+    <string id="st_gp_qaw_full"><text>Колесо заповнене</text></string>
+    <string id="st_gp_qaw_laser"><text>ЛЦВ</text></string>
+    <string id="st_gp_qaw_binocular"><text>Бінокль</text></string>
+    <string id="st_gp_qaw_place"><text>покласти</text></string>
+    <string id="st_gp_qaw_quick_missing"><text>Витратник не призначено</text></string>
+    <string id="st_gp_qaw_quick_spent"><text>Витратник закінчився</text></string>
+    <!-- FIX-LIVE3 п.18 -->
+    <string id="st_gp_pin_set"><text>Закріплено на хрестовині: %1. Використати: LB + цей напрямок</text></string>
+    <string id="st_gp_pin_ask"><text>Напрямок зайнятий: %1. Замінити на %2? A — так, B — ні</text></string>
+    <string id="st_gp_pin_kept"><text>Залишено як було</text></string>
+    <string id="st_gp_pin_same"><text>Вже закріплено: %1</text></string>
+    <string id="st_gp_pin_empty"><text>На цьому напрямку хрестовини нічого не закріплено</text></string>
+    <string id="st_gp_pin_spent"><text>Закінчилося: %1</text></string>
+    <string id="st_gp_pin_unavailable"><text>Зараз недоступно: %1</text></string>
+    <string id="st_gp_pin_unpinnable"><text>Це не можна закріпити на хрестовині</text></string>
+    <string id="st_gp_pin_no_sector"><text>Наведи стік на сектор колеса, потім натисни напрямок хрестовини</text></string>
+</string_table>

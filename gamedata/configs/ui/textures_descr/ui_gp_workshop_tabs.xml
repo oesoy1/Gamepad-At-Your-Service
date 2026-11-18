@@ -1,0 +1,17 @@
+<w>
+    <file name="ui\ui_gp_workshop_tabs">
+        <texture id="ui_gp_workshop_tabs_background" x="0" y="0" width="969" height="669" />
+        <texture id="ui_gp_workshop_tabs_state_off" x="8" y="680" width="181" height="34" />
+        <texture id="ui_gp_workshop_tabs_state_on" x="8" y="720" width="181" height="34" />
+        <texture id="ui_gp_workshop_tabs_state_icon" x="8" y="764" width="14" height="14" />
+        <texture id="ui_gp_workshop_tabs_repair_off" x="256" y="680" width="191" height="34" />
+        <texture id="ui_gp_workshop_tabs_repair_on" x="256" y="720" width="191" height="34" />
+        <texture id="ui_gp_workshop_tabs_repair_icon" x="256" y="764" width="38" height="18" />
+        <texture id="ui_gp_workshop_tabs_upgrade_off" x="504" y="680" width="191" height="34" />
+        <texture id="ui_gp_workshop_tabs_upgrade_on" x="504" y="720" width="191" height="34" />
+        <texture id="ui_gp_workshop_tabs_upgrade_icon" x="504" y="764" width="16" height="18" />
+        <texture id="ui_gp_workshop_tabs_craft_off" x="752" y="680" width="191" height="34" />
+        <texture id="ui_gp_workshop_tabs_craft_on" x="752" y="720" width="191" height="34" />
+        <texture id="ui_gp_workshop_tabs_craft_icon" x="752" y="764" width="25" height="18" />
+    </file>
+</w>

@@ -1,0 +1,1296 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+	<string id="ui_gp_eng_talk_select">
+		<text>Select</text>
+	</string>
+	<string id="ui_gp_eng_talk_exit">
+		<text>Exit</text>
+	</string>
+	<string id="ui_gp_eng_talk_trade">
+		<text>Trade</text>
+	</string>
+	<string id="ui_gp_eng_talk_scroll">
+		<text>Scroll</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_cross">
+		<text>[Cross]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_circle">
+		<text>[Circle]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_square">
+		<text>[Square]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_triangle">
+		<text>[Triangle]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_up">
+		<text>[D-Up]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_down">
+		<text>[D-Down]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_left">
+		<text>[D-Left]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_right">
+		<text>[D-Right]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_hold_prefix">
+		<text>Hold </text>
+	</string>
+	<string id="ui_gp_eng_err_seh_av">
+		<text>EXCEPTION_ACCESS_VIOLATION (null or invalid memory access)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_div0">
+		<text>EXCEPTION_INT_DIVIDE_BY_ZERO (integer division by zero)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_bounds">
+		<text>EXCEPTION_ARRAY_BOUNDS_EXCEEDED (array index out of bounds)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_ill">
+		<text>EXCEPTION_ILLEGAL_INSTRUCTION (illegal CPU instruction)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_stack">
+		<text>EXCEPTION_STACK_OVERFLOW (call stack overflow)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_cpp">
+		<text>CPP_STD_EXCEPTION (C++ exception)</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_main_menu">
+		<text>In the main menu or game settings screen.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_wheel">
+		<text>While opening or selecting an item in the Quick Action Wheel.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_pda">
+		<text>While using the PDA (Zone map, tasks, or PDA tabs).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_menu_ui">
+		<text>While using an open window (inventory, loot, trade, repair, or action modal).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_dialog">
+		<text>During an NPC conversation (dialog).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_osk">
+		<text>While entering text on the on-screen keyboard.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_sleep">
+		<text>In the sleep duration dialog.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_placement">
+		<text>While placing furniture or items in the hideout.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_console">
+		<text>While the developer console (~) was open.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_world">
+		<text>During normal world gameplay (movement, camera look, or combat).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_generic">
+		<text>During a regular gamepad input update frame.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_paused_suffix">
+		<text> The game was paused at that moment.</text>
+	</string>
+	<string id="ui_gp_eng_err_unknown_stage">
+		<text>unknown stage</text>
+	</string>
+	<string id="ui_gp_eng_err_unexpected_fault">
+		<text>unexpected fault</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_wheel">
+		<text>An unexpected error occurred while handling the gamepad Quick Action Wheel.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_pda">
+		<text>An unexpected error occurred while controlling the PDA with the gamepad.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_ui">
+		<text>An unexpected error occurred while handling a gamepad button or cursor in inventory / menu.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_field">
+		<text>An unexpected error occurred while executing a field or weapon action from the gamepad.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_generic">
+		<text>An unexpected error occurred in one of the gamepad helper handlers.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_seh">
+		<text>A critical memory or math fault occurred while polling the gamepad in the engine core and was caught by the built-in guard.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_update">
+		<text>An unexpected fault occurred during per-frame polling of gamepad buttons and sticks.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_look">
+		<text>An unexpected fault occurred while calculating right-stick camera rotation.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_move">
+		<text>An unexpected fault occurred while calculating left-stick character movement.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_frame_fmt">
+		<text>An unexpected error occurred while processing a gamepad input frame (%s).</text>
+	</string>
+	<string id="ui_gp_eng_err_recovery_default">
+		<text>The faulty gamepad frame was safely skipped. All buttons, triggers, sticks, and rumble were reset to neutral (no stuck movement or firing), controls switched automatically to keyboard and mouse, and the game continued running without crashing.</text>
+	</string>
+	<string id="ui_gp_eng_err_hdr_title">
+		<text>GAMEPAD GUARD CRASH REPORT (gamepad_last_error.log)</text>
+	</string>
+	<string id="ui_gp_eng_err_hdr_time">
+		<text>Recorded at: </text>
+	</string>
+	<string id="ui_gp_eng_err_sec_what">
+		<text>1. WHAT HAPPENED:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_when">
+		<text>2. GAMEPLAY MOMENT:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_recovery">
+		<text>3. GUARD RECOVERY ACTION:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_tech">
+		<text>TECHNICAL DETAILS FOR DIAGNOSTICS:</text>
+	</string>
+	<string id="ui_gp_eng_ctx_world_gameplay">
+		<text>World / Gameplay</text>
+	</string>
+	<string id="ui_gp_eng_ctx_menu_ui">
+		<text>Menu / Inventory / UI</text>
+	</string>
+	<string id="ui_gp_eng_ctx_main_menu">
+		<text>Main Menu</text>
+	</string>
+	<string id="ui_gp_eng_ctx_dialog_npc">
+		<text>NPC Dialog</text>
+	</string>
+	<string id="ui_gp_eng_ctx_radial_wheel">
+		<text>Radial Wheel</text>
+	</string>
+	<string id="ui_gp_eng_ctx_world_3dpda">
+		<text>3D PDA</text>
+	</string>
+	<string id="ui_gp_eng_ctx_placement">
+		<text>Hideout Placement</text>
+	</string>
+	<string id="ui_gp_eng_ctx_vehicle">
+		<text>Vehicle / Holder</text>
+	</string>
+	<string id="ui_gp_eng_ctx_console">
+		<text>Console</text>
+	</string>
+	<string id="ui_gp_eng_ctx_text_entry">
+		<text>Text Entry</text>
+	</string>
+	<string id="ui_gp_eng_ctx_cutscene">
+		<text>Cutscene</text>
+	</string>
+	<string id="ui_gp_eng_ctx_sleep">
+		<text>Sleep</text>
+	</string>
+	<string id="ui_gp_eng_ctx_unknown">
+		<text>Unknown</text>
+	</string>
+	<string id="ui_gp_eng_act_menu">
+		<text>Pause / Menu [PROTECTED]</text>
+	</string>
+	<string id="ui_gp_eng_act_confirm">
+		<text>Confirm / Select [PROTECTED]</text>
+	</string>
+	<string id="ui_gp_eng_act_back">
+		<text>Back / Close [PROTECTED]</text>
+	</string>
+	<string id="ui_gp_eng_act_context_menu">
+		<text>Item Context Menu</text>
+	</string>
+	<string id="ui_gp_eng_act_quick_action">
+		<text>Quick Action / Transfer</text>
+	</string>
+	<string id="ui_gp_eng_act_tab_prev">
+		<text>Previous Tab (LB)</text>
+	</string>
+	<string id="ui_gp_eng_act_tab_next">
+		<text>Next Tab (RB)</text>
+	</string>
+	<string id="ui_gp_eng_act_page_prev">
+		<text>Previous Page / Sub-tab</text>
+	</string>
+	<string id="ui_gp_eng_act_page_next">
+		<text>Next Page / Sub-tab</text>
+	</string>
+	<string id="ui_gp_eng_act_jump">
+		<text>Jump / Climb</text>
+	</string>
+	<string id="ui_gp_eng_act_crouch">
+		<text>Crouch (Toggle)</text>
+	</string>
+	<string id="ui_gp_eng_act_low_crouch">
+		<text>Low Crouch</text>
+	</string>
+	<string id="ui_gp_eng_act_sprint">
+		<text>Sprint</text>
+	</string>
+	<string id="ui_gp_eng_act_freelook">
+		<text>Freelook</text>
+	</string>
+	<string id="ui_gp_eng_act_melee_quick">
+		<text>Quick Melee</text>
+	</string>
+	<string id="ui_gp_eng_act_fire">
+		<text>Fire</text>
+	</string>
+	<string id="ui_gp_eng_act_aim">
+		<text>Aim Down Sights (ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_context_use_reload">
+		<text>Interact / Reload / Unjam</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_check">
+		<text>Check Magazine</text>
+	</string>
+	<string id="ui_gp_eng_act_fast_reload">
+		<text>Tactical Fast Reload</text>
+	</string>
+	<string id="ui_gp_eng_act_next_weapon">
+		<text>Swap Weapon</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_wheel">
+		<text>Weapon / Quick Wheel</text>
+	</string>
+	<string id="ui_gp_eng_act_grenade_quick">
+		<text>Quick Grenade</text>
+	</string>
+	<string id="ui_gp_eng_act_lean_left">
+		<text>Lean Left (in ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_lean_right">
+		<text>Lean Right (in ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_torch_toggle">
+		<text>Headlamp / Torch</text>
+	</string>
+	<string id="ui_gp_eng_act_night_vision">
+		<text>Night Vision (NVG)</text>
+	</string>
+	<string id="ui_gp_eng_act_detector_toggle">
+		<text>Detector</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_3d_toggle">
+		<text>3D PDA Toggle</text>
+	</string>
+	<string id="ui_gp_eng_act_mask_clean">
+		<text>Wipe Mask</text>
+	</string>
+	<string id="ui_gp_eng_act_underbarrel_toggle">
+		<text>Underbarrel (GL)</text>
+	</string>
+	<string id="ui_gp_eng_act_fire_mode_next">
+		<text>Fire Mode</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_type_next">
+		<text>Switch Ammo Type</text>
+	</string>
+	<string id="ui_gp_eng_act_pause_menu">
+		<text>Pause Menu (World)</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_full_toggle">
+		<text>PDA / Map</text>
+	</string>
+	<string id="ui_gp_eng_act_dialog_select">
+		<text>Select Phrase</text>
+	</string>
+	<string id="ui_gp_eng_act_dialog_exit">
+		<text>Exit Dialog</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_confirm">
+		<text>Confirm Slot</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_cancel">
+		<text>Cancel Wheel</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_tab_prev">
+		<text>Previous Wheel Category</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_tab_next">
+		<text>Next Wheel Category</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_interactive">
+		<text>PDA Cursor / Interact</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_close">
+		<text>Put Away 3D PDA</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_confirm">
+		<text>Place Object</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_cancel">
+		<text>Cancel Placement</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_rotate">
+		<text>Rotate Object</text>
+	</string>
+	<string id="ui_gp_eng_act_quick_bolt_slot">
+		<text>Quick Bolt / Slot</text>
+	</string>
+	<string id="ui_gp_eng_act_switch_panel">
+		<text>Switch Panel (Backpack / Loot)</text>
+	</string>
+	<string id="ui_gp_eng_act_cancel_queue">
+		<text>Cancel Paused Action Queue</text>
+	</string>
+	<string id="ui_gp_eng_act_knife_draw">
+		<text>Draw Knife</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_lower">
+		<text>Lower / Raise Weapon</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_flat">
+		<text>PDA (Flat)</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_wheel">
+		<text>Ammo Type Wheel</text>
+	</string>
+	<string id="ui_gp_eng_act_bolt_throw">
+		<text>Bolt</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_select">
+		<text>Firearm Selector</text>
+	</string>
+	<string id="ui_gp_eng_act_force_reload">
+		<text>Forced Reload / Unjam</text>
+	</string>
+	<string id="ui_gp_eng_act_tutorial_prompt">
+		<text>Open / Hide Tutorial Prompt</text>
+	</string>
+	<string id="ui_gp_eng_act_unknown">
+		<text>Unknown Action</text>
+	</string>
+	<string id="ui_gp_eng_trig_unbound">
+		<text>[Unbound]</text>
+	</string>
+	<string id="ui_gp_eng_trig_press_fmt">
+		<text>Press [%s]</text>
+	</string>
+	<string id="ui_gp_eng_trig_hold_fmt">
+		<text>Hold [%s] (%u ms)</text>
+	</string>
+	<string id="ui_gp_eng_trig_chord_fmt">
+		<text>Chord [%s + %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_title">
+		<text>GAMEPAD STICK &amp; TRIGGER CALIBRATION</text>
+	</string>
+	<string id="ui_gp_eng_cal_subtitle_fmt">
+		<text>Profile v%u | Source Arb DZ=%.2f | LB/RB (Q/E): Switch Target | D-Pad: Select/Adjust | X (R): Reset Tab | B (Esc): Save &amp; Exit</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_short_radial">
+		<text>radial</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_short_axial">
+		<text>axial</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_linear">
+		<text>linear</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_power">
+		<text>power</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_scurve">
+		<text>s_curve</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_twozone">
+		<text>two_zone</text>
+	</string>
+	<string id="ui_gp_eng_cal_ls_title_fmt">
+		<text>Left Stick (Move) [%s, %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_stick_readout_fmt">
+		<text>Raw: (%+.2f, %+.2f) |v|=%.2f  -&gt;  Out: (%+.2f, %+.2f) |v|=%.2f   [DZ=%.2f Sat=%.2f]</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_title_fmt">
+		<text>Curve: %s</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_readout_fmt">
+		<text>gamma=%.2f  s_exp=%.2f  knee=(%.2f -&gt; %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_rs_title_fmt">
+		<text>Right Stick (Look) [%s, %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_trig_pressed">
+		<text>PRESSED</text>
+	</string>
+	<string id="ui_gp_eng_cal_trig_released">
+		<text>RELEASED</text>
+	</string>
+	<string id="ui_gp_eng_cal_lt_readout_fmt">
+		<text>LT: Raw=%.2f Out=%.2f [%s] (DZ=%.2f Rel=%.2f Press=%.2f Sat=%.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_rt_readout_fmt">
+		<text>RT: Raw=%.2f Out=%.2f [%s] (DZ=%.2f Rel=%.2f Press=%.2f Sat=%.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_ls">
+		<text>Left Stick (Movement)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_rs">
+		<text>Right Stick (Camera Look)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_ui">
+		<text>UI Stick (Menu Navigation)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_trig">
+		<text>Triggers LT/RT (Analog &amp; Thresholds)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_target_fmt">
+		<text>Target Group               :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_radial_full">
+		<text>Radial (Vector Length)</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_axial_full">
+		<text>Axial (Per-Axis Cross)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_shape_fmt">
+		<text>Deadzone Shape             :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_inner_dz_fmt">
+		<text>Inner Deadzone (ring)      :  &lt;  %.2f  &gt;   (min %.2f .. max %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_outer_sat_fmt">
+		<text>Outer Saturation (ring)    :  &lt;  %.2f  &gt;   (min %.2f .. max %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_curve_fmt">
+		<text>Response Curve             :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_gamma_fmt">
+		<text>Curve Exponent (gamma)     :  &lt;  %.2f  &gt;   (0.50 .. 4.00)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_sexp_fmt">
+		<text>S-Curve Exponent           :  &lt;  %.2f  &gt;   (0.50 .. 4.00)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_knee_in_fmt">
+		<text>TwoZone Knee Input (X)     :  &lt;  %.2f  &gt;   (0.05 .. 0.95)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_linear_param">
+		<text>Curve Parameter            :  (Linear f(t) = t)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_knee_out_fmt">
+		<text>TwoZone Knee Output (Y)    :  &lt;  %.2f  &gt;   (0.05 .. 0.95)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_omega_fmt">
+		<text>Look Speed (Omega H / V)   :  &lt;  %.2f / %.2f rad/s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_sec_none">
+		<text>Secondary Curve Param      :  ---</text>
+	</string>
+	<string id="ui_gp_eng_cal_on">
+		<text>ON</text>
+	</string>
+	<string id="ui_gp_eng_cal_off">
+		<text>OFF</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_invert_fmt">
+		<text>Axis Inversion (X / Y)     :  Left: Invert X [%s]  |  Right: Invert Y [%s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_reset_fmt">
+		<text>[ Action: Press A / Enter or X to Reset %s to Default ]</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_dz_fmt">
+		<text>LT Inner Deadzone          :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_sat_fmt">
+		<text>LT Outer Saturation        :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_press_fmt">
+		<text>LT Digital Press Thresh    :  &lt;  %.2f  &gt;   (hysteresis press)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_rel_fmt">
+		<text>LT Digital Release Thresh  :  &lt;  %.2f  &gt;   (&lt;= press - 0.05)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_dz_fmt">
+		<text>RT Inner Deadzone          :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_sat_fmt">
+		<text>RT Outer Saturation        :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_press_fmt">
+		<text>RT Digital Press Thresh    :  &lt;  %.2f  &gt;   (hysteresis press)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_rel_fmt">
+		<text>RT Digital Release Thresh  :  &lt;  %.2f  &gt;   (&lt;= press - 0.05)</text>
+	</string>
+	<string id="ui_gp_eng_cal_footer_fmt">
+		<text>File: %s | Yellow=Raw Stick, Green=Processed Stick, Orange=Deadzone Ring, Cyan=Saturation Ring</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_01_title">
+		<text>1/21: South Button (A / Cross)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_01_prompt">
+		<text>Press the BOTTOM face button (A / Cross)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_02_title">
+		<text>2/21: East Button (B / Circle)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_02_prompt">
+		<text>Press the RIGHT face button (B / Circle)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_03_title">
+		<text>3/21: West Button (X / Square)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_03_prompt">
+		<text>Press the LEFT face button (X / Square)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_04_title">
+		<text>4/21: North Button (Y / Triangle)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_04_prompt">
+		<text>Press the TOP face button (Y / Triangle)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_05_title">
+		<text>5/21: Back / Select / Share</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_05_prompt">
+		<text>Press the BACK / SELECT / VIEW / SHARE button</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_06_title">
+		<text>6/21: Guide / Home (Optional)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_06_prompt">
+		<text>Press GUIDE / HOME button (or press SPACE/TAB to skip)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_07_title">
+		<text>7/21: Start / Menu / Options</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_07_prompt">
+		<text>Press the START / MENU / OPTIONS button</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_08_title">
+		<text>8/21: Left Stick Click (L3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_08_prompt">
+		<text>Click the LEFT THUMBSTICK down (L3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_09_title">
+		<text>9/21: Right Stick Click (R3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_09_prompt">
+		<text>Click the RIGHT THUMBSTICK down (R3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_10_title">
+		<text>10/21: Left Shoulder (LB / L1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_10_prompt">
+		<text>Press LEFT SHOULDER bumper (LB / L1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_11_title">
+		<text>11/21: Right Shoulder (RB / R1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_11_prompt">
+		<text>Press RIGHT SHOULDER bumper (RB / R1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_12_title">
+		<text>12/21: D-Pad UP</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_12_prompt">
+		<text>Press UP on the D-Pad</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_13_title">
+		<text>13/21: D-Pad DOWN</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_13_prompt">
+		<text>Press DOWN on the D-Pad</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_14_title">
+		<text>14/21: D-Pad LEFT</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_14_prompt">
+		<text>Press LEFT on the D-Pad</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_15_title">
+		<text>15/21: D-Pad RIGHT</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_15_prompt">
+		<text>Press RIGHT on the D-Pad</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_16_title">
+		<text>16/21: Left Stick Horizontal (+X)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_16_prompt">
+		<text>Push the LEFT STICK fully to the RIGHT</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_17_title">
+		<text>17/21: Left Stick Vertical (+Y)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_17_prompt">
+		<text>Push the LEFT STICK fully DOWN (towards you)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_18_title">
+		<text>18/21: Right Stick Horizontal (+X)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_18_prompt">
+		<text>Push the RIGHT STICK fully to the RIGHT</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_19_title">
+		<text>19/21: Right Stick Vertical (+Y)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_19_prompt">
+		<text>Push the RIGHT STICK fully DOWN (towards you)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_20_title">
+		<text>20/21: Left Trigger (LT / L2)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_20_prompt">
+		<text>Pull LEFT TRIGGER (LT / L2) all the way</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_21_title">
+		<text>21/21: Right Trigger (RT / R2)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_21_prompt">
+		<text>Pull RIGHT TRIGGER (RT / R2) all the way</text>
+	</string>
+	<string id="ui_gp_eng_remap_ready">
+		<text>Ready. Select an action and press [A / Enter] to rebind, or [Y / F2] for Class C Wizard.</text>
+	</string>
+	<string id="ui_gp_eng_remap_mode_active">
+		<text>Remap active: [LB/RB] Context, [A] Bind, [X] Unbind, [Y/F2] Class C Wizard, [B/Start] Save &amp; Exit.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_exited">
+		<text>Exited Class C Wizard back to Remapping Screen.</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_cancelled_kbd">
+		<text>Capture cancelled.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_started">
+		<text>Class C Device Wizard started. Press requested inputs or [SPACE/TAB] to skip optional steps.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_skipped">
+		<text>Skipped step. Waiting for neutral position before next step...</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_prev">
+		<text>Returned to previous step.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_captured_fmt">
+		<text>Captured %s = %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_err_disconnected">
+		<text>Class C Wizard error: target joystick device is no longer connected.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_saved_ok">
+		<text>Class C device promoted to SDL_Gamepad (Class B) and mapping saved!</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_save_fail">
+		<text>Failed to apply/save SDL mapping string. Check console log.</text>
+	</string>
+	<string id="ui_gp_eng_remap_listening">
+		<text>Listening for gamepad input... Tap for Single, Hold (0.45s) for Hold, or Hold Mod + Press 2nd for Chord.</text>
+	</string>
+	<string id="ui_gp_eng_remap_bound_fmt">
+		<text>Bound [%s] -&gt; %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_swapped_suffix_fmt">
+		<text> (swapped: %s)</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_status">
+		<text>Conflict detected in this context! Press [A / Enter] to Swap/Overwrite, or [B / Esc] to Cancel.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_protected_trigger">
+		<text>Protected navigation action (Menu/Confirm/Back) requires a direct button or hold on a standard button.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_protected_unbind">
+		<text>Protected navigation action cannot be unbound; it can only be swapped with another valid button.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_nav_broken">
+		<text>Cannot resolve conflict: would break MenuUI navigation.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_invalid_trigger">
+		<text>Invalid button or chord trigger specification.</text>
+	</string>
+	<string id="ui_gp_eng_remap_confirmed_fmt">
+		<text>Confirmed [%s] -&gt; %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_unbound_fmt">
+		<text>Unbound [%s].</text>
+	</string>
+	<string id="ui_gp_eng_remap_ctx_restored_fmt">
+		<text>Restored default bindings for context [%s].</text>
+	</string>
+	<string id="ui_gp_eng_remap_exported_fmt">
+		<text>Exported bindings to '%s'.</text>
+	</string>
+	<string id="ui_gp_eng_remap_export_fail_fmt">
+		<text>Export failed: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_imported_fmt">
+		<text>Imported %u bindings from '%s'.</text>
+	</string>
+	<string id="ui_gp_eng_remap_import_fail_fmt">
+		<text>Import failed: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_reset_done">
+		<text>EMERGENCY RESET EXECUTED: All contexts restored to safe canonical defaults and saved!</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_wiz_exit">
+		<text>Emergency Reset (Start+Back 5s) restored defaults and exited wizard.</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_held_done">
+		<text>EMERGENCY RESET (Start+Back held 5s): Restored all bindings to safe defaults!</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_timeout">
+		<text>Capture timed out after 8 seconds; previous binding kept.</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_cancelled">
+		<text>Capture cancelled from gamepad.</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_cancelled">
+		<text>Conflict resolution cancelled; previous binding kept.</text>
+	</string>
+	<string id="ui_gp_eng_remap_title">
+		<text>GAMEPAD BINDINGS &amp; REMAPPING</text>
+	</string>
+	<string id="ui_gp_eng_remap_inv_ok">
+		<text>OK (Protected)</text>
+	</string>
+	<string id="ui_gp_eng_remap_inv_broken">
+		<text>BROKEN</text>
+	</string>
+	<string id="ui_gp_eng_remap_subtitle_fmt">
+		<text>Profile: %s (Schema v%u) | Menu Navigation Invariant: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_col_header_fmt">
+		<text>ACTION (%s - %zu actions)                                         CURRENT BINDING</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_title_fmt">
+		<text>CAPTURING INPUT FOR: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_release_all">
+		<text>Release all buttons to begin capture...</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_prompt_1">
+		<text>Press any button (Tap = Single, Hold 0.45s = Hold, Hold Mod + 2nd Button = Chord)</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_prompt_2">
+		<text>Press [Start / Guide / Esc] to cancel capture.</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_holding_fmt">
+		<text>Holding [%s] (%u ms) - release now for Single, hold &gt;= 450 ms for Hold, or press 2nd button for Chord!</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_hold_reached">
+		<text>&gt;&gt; HOLD THRESHOLD REACHED! Release button to confirm Hold(300ms) &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_title">
+		<text>CONFLICT DETECTED IN CURRENT CONTEXT!</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_prefix_fmt">
+		<text>Candidate %s conflicts with: </text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_prompt">
+		<text>Press [A / Enter] to Swap &amp; Resolve, or [B / Esc] to Cancel.</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_title_fmt">
+		<text>EMERGENCY RESET HOLD (Start + Back): %u / %u ms</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_body">
+		<text>Keep holding Start + Back for 5 seconds to reset all bindings to safe defaults...</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_title">
+		<text>PROTECTED NAVIGATION &amp; GESTURE RULES</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_body1">
+		<text>Menu, Confirm, and Back in MenuUI/MainMenu are protected: they cannot be unbound, only swapped with a valid single button.</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_body2">
+		<text>Emergency Reset: Hold [Start + Back] for 5 seconds in any screen, or run 'gp_bind_reset' in console.</text>
+	</string>
+	<string id="ui_gp_eng_remap_footer1">
+		<text>[DPad Up/Down] Select | [LB/RB] Context | [A/Enter] Bind | [X/Del] Unbind | [R3/R] Reset Context | [B/Start/Esc] Save &amp; Exit</text>
+	</string>
+	<string id="ui_gp_eng_remap_footer2">
+		<text>[Y / F2] Class C Device Mapping Wizard | [F5] Export Layout | [F6] Import Layout | [F8 / Start+Back 5s] Emergency Reset</text>
+	</string>
+	<string id="ui_gp_eng_wiz_title">
+		<text>CLASS C DEVICE MAPPING WIZARD (SDL_AddGamepadMapping)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_c">
+		<text>C (Unmapped Joystick)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_b">
+		<text>B (Mapped Gamepad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_a">
+		<text>A (Console Gamepad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_sub_device_fmt">
+		<text>Target Device: id=%u '%s' (Class=%s, Buttons=%d, Axes=%d, Hats=%d, GUID=%s)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_sub_no_device">
+		<text>No joystick or gamepad detected. Connect a Class C controller.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_done_bar">
+		<text>&gt;&gt; WIZARD COMPLETED - SDL MAPPING APPLIED &amp; SAVED &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_wiz_done_col">
+		<text>Saved to $app_data_root$\gamepad\user_mappings.txt (gamecontrollerdb.txt untouched):</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_bar_fmt">
+		<text>&gt;&gt; STEP %s &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_skipped">
+		<text>[Skipped]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_release">
+		<text>[Release all controls...]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_waiting">
+		<text>[Waiting for input...]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_pending">
+		<text>[Pending]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_gen_title">
+		<text>GENERATED SDL3 MAPPING STRING</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_saved_fmt">
+		<text>Saved file: %s | Press [A / B / Start / Enter / Esc] to return to Remapping Screen.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw_title">
+		<text>LIVE RAW HID JOYSTICK TELEMETRY</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw1_fmt">
+		<text>Raw Buttons Mask: 0x%08X | Hat[0]: 0x%02X</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw2_fmt">
+		<text>Raw Axes[0..5]: [%d, %d, %d, %d, %d, %d]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_wait_title">
+		<text>WAITING FOR DEVICE</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_wait_body">
+		<text>Connect a Class C controller or press [Esc] to return to Remapping Screen.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_footer1">
+		<text>Wizard Controls: [SPACE / TAB] Skip Current Step | [BACKSPACE / LEFT] Previous Step | [ENTER] Finish &amp; Save Early</text>
+	</string>
+	<string id="ui_gp_eng_wiz_footer2">
+		<text>[ESC] Return to Remapping Screen | Custom mappings are saved to $app_data_root$\gamepad\user_mappings.txt</text>
+	</string>
+	<string id="ui_gp_eng_osk_default_zone">
+		<text>Zone</text>
+	</string>
+	<string id="ui_gp_eng_osk_default_day_time">
+		<text>Day 1 12-00</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_loc_date">
+		<text>Location - Date</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_before_fight">
+		<text>Pre-combat</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_after_emission">
+		<text>After emission</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_campfire">
+		<text>Campfire</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_before_raid">
+		<text>Before raid</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_base_trade">
+		<text>Base and trade</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_weapons">
+		<text>Weapons</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_parts">
+		<text>Parts</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_meds">
+		<text>Medicine</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_ammo">
+		<text>Ammo</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_armor">
+		<text>Armor</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_artefacts">
+		<text>Artifacts</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_stash">
+		<text>Stash</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_danger">
+		<text>Danger</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_check">
+		<text>Check</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_camp">
+		<text>Camp</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_trader">
+		<text>Trader</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_target">
+		<text>Target</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_stalker">
+		<text>Stalker</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_marked_one">
+		<text>Marked One</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_strelok">
+		<text>Strelok</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_degtyarev">
+		<text>Degtyarev</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_scar">
+		<text>Scar</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_strider">
+		<text>Strider</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_lang_ru">
+		<text>Lang: RU (R3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_lang_en">
+		<text>Lang: EN (R3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_case_upper">
+		<text>Case: ABC (L3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_case_lower">
+		<text>Case: abc (L3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_space">
+		<text>Space (Y)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_backspace">
+		<text>&lt;- Delete (X)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_clear">
+		<text>Clear</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_done">
+		<text>Done (Start)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_save">
+		<text>Save Game (UISaveDialog)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_stash">
+		<text>Create Stash (UICreateStash)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_waypoint">
+		<text>PDA Pin / Waypoint (PAW)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_newgame">
+		<text>Character Name (New Game)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_numeric">
+		<text>Numeric Value (0..255)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_generic">
+		<text>Text Input Field</text>
+	</string>
+	<string id="ui_gp_eng_osk_title">
+		<text>GAMEPAD ON-SCREEN KEYBOARD</text>
+	</string>
+	<string id="ui_gp_eng_osk_layout_ru">
+		<text>RU (YTSUKEN)</text>
+	</string>
+	<string id="ui_gp_eng_osk_layout_en">
+		<text>EN (QWERTY)</text>
+	</string>
+	<string id="ui_gp_eng_osk_case_hdr_upper">
+		<text>ABC</text>
+	</string>
+	<string id="ui_gp_eng_osk_case_hdr_lower">
+		<text>abc</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_caption">
+		<text>1-Click Templates (Up/Down - move to grid, A - insert):</text>
+	</string>
+	<string id="ui_gp_eng_osk_footer">
+		<text>[A] Type/Template  [X] Backspace  [Y] Space  [L3/LT] Case  [R3/LB/RB] RU/EN  [Start] Confirm  [B] Cancel</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_equipment">
+		<text>EQUIPMENT</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_backpack">
+		<text>BACKPACK</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_health">
+		<text>HEALTH</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_magazines">
+		<text>MAGAZINES</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_pda">
+		<text>PDA</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_skills">
+		<text>SKILLS</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_settings">
+		<text>SETTINGS</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_all">
+		<text>All</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_weapons">
+		<text>Weapons</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_ammo">
+		<text>Ammo</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_meds">
+		<text>Medicine</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_food">
+		<text>Food</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_armor_af">
+		<text>Armor/Art.</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_tools">
+		<text>Tools</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_misc">
+		<text>Misc</text>
+	</string>
+	<string id="ui_gp_eng_wid_view_grid">
+		<text>Grid 4xN</text>
+	</string>
+	<string id="ui_gp_eng_wid_view_list">
+		<text>List</text>
+	</string>
+	<string id="ui_gp_eng_wid_pause_on">
+		<text>[PAUSED]</text>
+	</string>
+	<string id="ui_gp_eng_wid_pause_off">
+		<text>[LIVE WORLD]</text>
+	</string>
+	<string id="ui_gp_eng_wid_topbar_telemetry_fmt">
+		<text> [RB]  | Weight: %.1f/%.1f kg | %u RU | %s</text>
+	</string>
+	<string id="ui_gp_eng_wid_catbar_suffix_fmt">
+		<text> [RT]   (View: %s, items: %zu)</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_focused">
+		<text> &gt; [Empty] No items in this category - press [LT/RT] to switch category</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_unfocused">
+		<text>   [Empty] No items in this category</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_short">
+		<text>[Empty]</text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_equipped">
+		<text>[Equipped] </text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_junk">
+		<text>[Junk] </text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_quest">
+		<text>[Quest] </text>
+	</string>
+	<string id="ui_gp_eng_wid_weight_kg_fmt">
+		<text>  %.2f kg</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_node_title">
+		<text>Comparison Card (Accurate Defense Values)</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_empty_1">
+		<text>No item selected (empty category)</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_empty_2">
+		<text>Use [LT/RT] to select a category with items.</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_br_class">
+		<text>ADV Armor Class (BR)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_unit_class">
+		<text>cl.</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_fire_wound">
+		<text>ADV Ballistic (FireWound)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_ap_res">
+		<text>ADV AP Resistance (AP Res)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_wound">
+		<text>ADV Rupture (Wound)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_strike">
+		<text>ADV Impact (Strike)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_explosion">
+		<text>ADV Blast (Explosion)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_burn">
+		<text>ADV Burn (Burn)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_shock">
+		<text>ADV Shock (Shock)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_acid">
+		<text>ADV Chem. Burn (Acid)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_psi">
+		<text>ADV Psy Protection (Psi)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_radia">
+		<text>ADV Radiation (Radia)</text>
+	</string>
+	<string id="ui_gp_eng_wid_mode_100">
+		<text>[100% MODE]</text>
+	</string>
+	<string id="ui_gp_eng_wid_mode_cur">
+		<text>[CURRENT]</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_hdr_fmt">
+		<text>%s (%s) | Cond.: %d%% %s | Weight: %.2f kg | %u RU</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_cmp_item_fmt">
+		<text>Comparing vs Slot #%u: %s (%d%%)  [R3 - switch slot / 100%%]</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_slot_equipped">
+		<text>this item is equipped</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_slot_empty">
+		<text>slot empty</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_cmp_slot_fmt">
+		<text>Comparison: Slot #%u (%s)</text>
+	</string>
+	<string id="ui_gp_eng_wid_wpo_prefix">
+		<text>WPO Parts: </text>
+	</string>
+	<string id="ui_gp_eng_wid_actor_body_fmt">
+		<text>Actor ADV [Body]: BR %d (premitigation &lt;%d%%) | Ballistic %.0f%% | Rupture %.0f%% | Chem %.0f%% | Psy %.0f%%</text>
+	</string>
+	<string id="ui_gp_eng_wid_actor_head_fmt">
+		<text>Actor ADV [Head]: BR %d (premitigation &lt;%d%%) | Ballistic %.0f%% | Psy %.0f%%</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_title">
+		<text>Select Quantity</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_slider">
+		<text>Quantity Slider [&lt; / &gt; +-1 | LB/RB +-10 | LT/RT Min/Max]</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_confirm">
+		<text>[A] Confirm Selected Quantity</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_cancel">
+		<text>[B] Cancel</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_summary_fmt">
+		<text>Select Quantity: %s | %s %d / %d pcs | Weight: %.2f kg | Total: %u RU</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_yes">
+		<text>[Yes, confirm]</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_no">
+		<text>[Cancel]</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_title">
+		<text>Confirm Action</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_mags_warn">
+		<text>Warning (mags_patches): changing armor moves vest magazines to backpack. Continue?</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_item_fmt">
+		<text>Confirm selecting item &quot;%s&quot; (read-only test)?</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_confirm_choice">
+		<text>Confirm choice</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_select_btn">
+		<text>Select button</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cancel_back">
+		<text>Cancel (back)</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_qty_step">
+		<text>Qty +-1 (hold)</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_step_10">
+		<text>Step +-10</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_min_max">
+		<text>Min / Max</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_accept">
+		<text>Accept</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cancel">
+		<text>Cancel</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_view_grid">
+		<text>View: Grid 4xN</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_view_list">
+		<text>View: List</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_confirm_dlg">
+		<text>Confirm dialog</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_select_qty">
+		<text>Select quantity</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_section">
+		<text>Section</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_category">
+		<text>Category</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cmp_slot2">
+		<text>Compare: Slot 2</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cmp_slot1">
+		<text>Compare: Slot 1</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_stats_cur">
+		<text>Stats: Current</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_stats_100">
+		<text>Stats: 100%</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_scroll_stats">
+		<text>Scroll stats</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_close">
+		<text>Close</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_switch_cat">
+		<text>Switch category</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_type">
+		<text>Type</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_backspace">
+		<text>Backspace</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_space">
+		<text>Space</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_lang">
+		<text>Lang</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_done">
+		<text>Done</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_cancel">
+		<text>Cancel</text>
+	</string>
+	<string id="ui_gp_eng_act_mouse_cursor">
+		<text>Mouse Cursor Mode</text>
+	</string>
+	<string id="ui_gp_eng_talk_repair">
+		<text>Repair</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_mask">
+		<text>Wipe Mask (wheel shortcut)</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_laser">
+		<text>Laser (wheel shortcut)</text>
+	</string>
+</string_table>

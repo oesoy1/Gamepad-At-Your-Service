@@ -1,0 +1,538 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- GPSET-2 (docs/ui/gamepad-settings-v2/BRIEF.md 11.4): Gamepad button test window.
+-- Pure ASCII source; localized strings live in configs/text/{rus,eng}/ui_st_gamepad.xml.
+-- Shows the active controller schematic; pressed buttons, triggers, and sticks light up grey/white.
+-- Holding B for 1.0 s (0.3 s pause + 0.7 s white progress bar) closes the window so tapping B tests B itself.
+
+local gui = nil
+local on_close_cb = nil
+
+local HOLD_DELAY_MS = 300
+local HOLD_ANIM_MS  = 700
+local HOLD_TOTAL_MS = HOLD_DELAY_MS + HOLD_ANIM_MS
+
+local CARD_X, CARD_Y, CARD_W, CARD_H = 272, 114, 480, 540
+local PAD_BASE_W, PAD_BASE_H = 300, 360
+
+-- Anchor points inside 300x360 pad schematic (from configs/ui/textures_descr/ui_gp_pads.xml).
+local ANCHORS_XBOX = {
+    { id = "LT",    dx =  73, dy =  94 },
+    { id = "LB",    dx =  90, dy =  99 },
+    { id = "View",  dx = 132, dy = 143 },
+    { id = "Guide", dx = 151, dy = 115 },
+    { id = "Menu",  dx = 170, dy = 144 },
+    { id = "RB",    dx = 212, dy =  99 },
+    { id = "RT",    dx = 228, dy =  94 },
+    { id = "LS",    dx =  85, dy = 144 },
+    { id = "L3",    dx =  85, dy = 153 },
+    { id = "DU",    dx = 117, dy = 178 },
+    { id = "DL",    dx = 102, dy = 192 },
+    { id = "DR",    dx = 131, dy = 192 },
+    { id = "DD",    dx = 117, dy = 207 },
+    { id = "Y",     dx = 218, dy = 126 },
+    { id = "X",     dx = 199, dy = 144 },
+    { id = "B",     dx = 236, dy = 144 },
+    { id = "A",     dx = 218, dy = 162 },
+    { id = "RS",    dx = 183, dy = 194 },
+    { id = "R3",    dx = 183, dy = 204 },
+}
+
+local ANCHORS_PS = {
+    { id = "LT",    dx =  57, dy =  89 },
+    { id = "LB",    dx =  59, dy =  99 },
+    { id = "View",  dx =  91, dy = 127 },
+    { id = "Guide", dx = 150, dy = 202 },
+    { id = "Menu",  dx = 209, dy = 127 },
+    { id = "RB",    dx = 241, dy =  99 },
+    { id = "RT",    dx = 243, dy =  89 },
+    { id = "LS",    dx = 103, dy = 197 },
+    { id = "L3",    dx = 103, dy = 206 },
+    { id = "DU",    dx =  57, dy = 133 },
+    { id = "DL",    dx =  35, dy = 155 },
+    { id = "DR",    dx =  79, dy = 155 },
+    { id = "DD",    dx =  57, dy = 178 },
+    { id = "Y",     dx = 243, dy = 133 },
+    { id = "X",     dx = 222, dy = 155 },
+    { id = "B",     dx = 265, dy = 155 },
+    { id = "A",     dx = 243, dy = 177 },
+    { id = "RS",    dx = 197, dy = 197 },
+    { id = "R3",    dx = 197, dy = 206 },
+}
+
+local BUTTON_ORDER = {
+    "A", "B", "X", "Y", "LB", "RB", "LT", "RT",
+    "DU", "DD", "DL", "DR", "L3", "R3", "LS", "RS", "View", "Menu", "Guide",
+}
+
+local BUTTON_ALIASES = {
+    A = "A", SOUTH = "A",
+    B = "B", EAST = "B",
+    X = "X", WEST = "X",
+    Y = "Y", NORTH = "Y",
+    LB = "LB", LSHOULDER = "LB", L1 = "LB",
+    RB = "RB", RSHOULDER = "RB", R1 = "RB",
+    LT = "LT", LTRIGGER = "LT", L2 = "LT",
+    RT = "RT", RTRIGGER = "RT", R2 = "RT",
+    VIEW = "View", BACK = "View", SELECT = "View",
+    MENU = "Menu", START = "Menu", OPTIONS = "Menu",
+    GUIDE = "Guide", HOME = "Guide",
+    L3 = "L3", LSTICK = "L3",
+    R3 = "R3", RSTICK = "R3",
+    LS = "LS", RS = "RS",
+    DU = "DU", DPUP = "DU", DPADUP = "DU", UP = "DU",
+    DD = "DD", DPDOWN = "DD", DPADDOWN = "DD", DOWN = "DD",
+    DL = "DL", DPLEFT = "DL", DPADLEFT = "DL", LEFT = "DL",
+    DR = "DR", DPRIGHT = "DR", DPADRIGHT = "DR", RIGHT = "DR",
+}
+
+local function clr(a, r, g, b)
+    return GetARGB(a, r, g, b)
+end
+
+local function tr(key)
+    return game.translate_string(key)
+end
+
+local function kx()
+    if device then
+        local d = device()
+        if d and d.width and d.height and d.height > 0 then
+            return 0.75 / (d.width / d.height)
+        end
+    end
+    return 0.75
+end
+
+local function now_ms()
+    if _G.game and type(_G.game.get_time_continual) == "function" then
+        local ok, t = pcall(_G.game.get_time_continual)
+        if ok and type(t) == "number" then return t end
+    end
+    if type(_G.time_global) == "function" then
+        local ok, t = pcall(_G.time_global)
+        if ok and type(t) == "number" then return t end
+    end
+    return 0
+end
+
+local function set_rect(w, x, y, width, height)
+    w:SetWndPos(vector2():set(x, y))
+    w:SetWndSize(vector2():set(width, height))
+end
+
+local function make_fill(parent, x, y, width, height, color)
+    local s = CUIStatic()
+    s:SetAutoDelete(true)
+    set_rect(s, x, y, width, height)
+    s:InitTexture("ui_gp_solid_white")
+    s:SetStretchTexture(true)
+    s:SetTextureColor(color)
+    parent:AttachChild(s)
+    return s
+end
+
+function normalize_button(raw)
+    local key = string.upper(tostring(raw or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+    return BUTTON_ALIASES[key]
+end
+
+local function resolve_family()
+    if ui_gp_controls and type(ui_gp_controls.resolve_pad_family) == "function" then
+        local ov = gp_bridge and gp_bridge.get_glyph_override and gp_bridge.get_glyph_override() or "auto"
+        return ui_gp_controls.resolve_pad_family(ov)
+    end
+    return "xbox"
+end
+
+local function b_icon_tex(family)
+    if _G.gp_icons and type(_G.gp_icons.tex) == "function" then
+        local asp = 1
+        if type(_G.gp_icons.dims) == "function" then
+            local _, _, tw, th = _G.gp_icons.dims("B", "round")
+            if tw and th and th > 0 then asp = tw / th end
+        end
+        return _G.gp_icons.tex("B", "round"), asp
+    end
+    local tag = (family == "playstation") and "ps"
+        or (family == "nintendo" and "nintendo" or (family == "generic" and "generic" or "xbox"))
+    return "ui_gp_white_" .. tag .. "_east", 1
+end
+
+local function icon_scale_k()
+    if _G.gp_icons and type(_G.gp_icons.scale_k) == "function" then
+        local ok, k = pcall(_G.gp_icons.scale_k)
+        if ok and type(k) == "number" and k > 0 then return k end
+    end
+    return 1.0
+end
+
+local function icon_revision()
+    if _G.gp_icons and type(_G.gp_icons.revision) == "function" then
+        local ok, r = pcall(_G.gp_icons.revision)
+        if ok and type(r) == "number" then return r end
+    end
+    return 0
+end
+
+local function footer_icon_visible()
+    if _G.game and type(_G.game.is_gamepad_active_source) == "function" then
+        local ok_gp, gp_on = pcall(_G.game.is_gamepad_active_source)
+        if ok_gp and gp_on == false then return false end
+    end
+    if _G.gp_icons and type(_G.gp_icons.hints_visible) == "function" then
+        local ok_h, vis = pcall(_G.gp_icons.hints_visible, "menu")
+        if ok_h and vis == false then return false end
+    end
+    return true
+end
+
+local function button_display_name(id, family)
+    if id == "Guide" then
+        return tr("ui_gp_btntest_guide")
+    end
+    local fam_tag = (family == "playstation") and "ps"
+        or (family == "nintendo" and "nin" or (family == "generic" and "gen" or "xbox"))
+    local key = "ui_gp_btn_name_" .. fam_tag .. "_" .. id
+    local res = tr(key)
+    if res ~= key and res ~= "" then return res end
+    return id
+end
+
+class "UIGpButtonTest" (CUIScriptWnd)
+
+function UIGpButtonTest:__init() super()
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    if self.AllowWorkInPause then self:AllowWorkInPause(true) end
+    self.pressed = {}
+    self.stick_rs_active = false
+    self.b_down_ms = nil
+    self.b_hold_progress = 0
+    self.host_dialog = nil
+
+    self.backdrop = make_fill(self, 0, 0, 1024, 768, clr(185, 10, 10, 12))
+    self.card_bg  = make_fill(self, CARD_X, CARD_Y, CARD_W, CARD_H, clr(242, 18, 18, 20))
+
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ui_gp_button_test.xml")
+    self.xml = xml
+
+    self.card = xml:InitFrame("card_frame", self)
+    set_rect(self.card, CARD_X, CARD_Y, CARD_W, CARD_H)
+    self.cap = xml:InitFrameLine("cap_bar", self.card)
+    self.title = xml:InitTextWnd("t_title", self.card)
+    self.title:SetText(tr("ui_gp_btntest_title"))
+
+    self.pad = xml:InitStatic("pad_img", self.card)
+    self.pad:SetStretchTexture(true)
+
+    self.markers = {}
+    for i = 1, #ANCHORS_XBOX do
+        local m = {}
+        m.disc = xml:InitStatic("hl_disc", self.card)
+        m.disc:SetStretchTexture(true)
+        m.ring = xml:InitStatic("hl_ring", self.card)
+        m.ring:SetStretchTexture(true)
+        self.markers[i] = m
+    end
+
+    self.lbl_status = xml:InitTextWnd("t_status", self.card)
+    self.lbl_sub    = xml:InitTextWnd("t_sub", self.card)
+    self.lbl_sub:SetText(tr("ui_gp_btntest_sub"))
+
+    -- Bottom bar inside card: B icon + hold label + white progress track
+    self.foot_bg = make_fill(self.card, 2, CARD_H - 38, CARD_W - 4, 36, clr(190, 12, 12, 14))
+    self.foot_ln = make_fill(self.card, 2, CARD_H - 38, CARD_W - 4, 1, clr(120, 145, 145, 150))
+    self.foot_icon = CUIStatic()
+    self.foot_icon:SetAutoDelete(true)
+    local b0_tex = b_icon_tex(resolve_family())
+    self.foot_icon._gp_tex = b0_tex
+    self.foot_icon:InitTexture(b0_tex)
+    self.foot_icon:SetStretchTexture(true)
+    self.card:AttachChild(self.foot_icon)
+
+    self.foot_lbl = xml:InitTextWnd("t_footer", self.card)
+    self.foot_lbl:SetText(tr("ui_gp_btntest_exit_hold"))
+
+    self.hold_track = make_fill(self.card, 344, CARD_H - 23, 116, 6, clr(110, 70, 70, 75))
+    self.hold_fill  = make_fill(self.card, 344, CARD_H - 23, 1, 6, clr(240, 245, 245, 248))
+    self.hold_fill:Show(false)
+end
+
+function UIGpButtonTest:ResetState()
+    self.pressed = {}
+    self.stick_rs_active = false
+    self.b_down_ms = nil
+    self.b_hold_progress = 0
+    self:Refresh()
+end
+
+function UIGpButtonTest:Refresh()
+    local k = kx()
+    local fam = resolve_family()
+    local anchors = (fam == "playstation") and ANCHORS_PS or ANCHORS_XBOX
+
+    local pad_w = PAD_BASE_W * k
+    local pad_h = PAD_BASE_H
+    local pad_x = (CARD_W - pad_w) * 0.5
+    local pad_y = 46
+    set_rect(self.pad, pad_x, pad_y, pad_w, pad_h)
+
+    -- Collect active button IDs in canonical display order
+    local active_ids = {}
+    for _, id in ipairs(BUTTON_ORDER) do
+        local is_on = (self.pressed[id] == true)
+            or (id == "LS" and self.pressed.L3 == true)
+            or (id == "RS" and (self.pressed.R3 == true or self.stick_rs_active == true))
+        if is_on then
+            active_ids[#active_ids + 1] = id
+        end
+    end
+
+    local pad_tex = (fam == "playstation") and "ui_gp_pad_ps"
+        or (fam == "generic" and "ui_gp_pad_generic" or "ui_gp_pad_xbox")
+    for i, a in ipairs(anchors) do
+        local m = self.markers[i]
+        local is_on = (self.pressed[a.id] == true)
+            or (a.id == "LS" and self.pressed.L3 == true)
+            or (a.id == "RS" and (self.pressed.R3 == true or self.stick_rs_active == true))
+        local cx = pad_x + (a.dx / PAD_BASE_W) * pad_w
+        local cy = pad_y + (a.dy / PAD_BASE_H) * pad_h
+        if is_on then
+            local rw, rh = 28 * k, 28
+            local dw, dh = 18 * k, 18
+            set_rect(m.ring, cx - rw * 0.5, cy - rh * 0.5, rw, rh)
+            set_rect(m.disc, cx - dw * 0.5, cy - dh * 0.5, dw, dh)
+            m.ring:SetTextureColor(clr(245, 245, 245, 250))
+            m.disc:SetTextureColor(clr(195, 232, 232, 238))
+            m.ring:Show(true)
+            m.disc:Show(true)
+        else
+            local dw, dh = 8 * k, 8
+            set_rect(m.disc, cx - dw * 0.5, cy - dh * 0.5, dw, dh)
+            m.disc:SetTextureColor(clr(85, 145, 145, 152))
+            m.disc:Show(true)
+            m.ring:Show(false)
+        end
+    end
+    if self.pad._gp_tex ~= pad_tex then
+        self.pad._gp_tex = pad_tex
+        self.pad:InitTexture(pad_tex)
+        self.pad:SetStretchTexture(true)
+    end
+
+    if #active_ids > 0 then
+        local names = {}
+        for _, id in ipairs(active_ids) do
+            names[#names + 1] = button_display_name(id, fam)
+        end
+        self.lbl_status:SetText(tr("ui_gp_btntest_pressed") .. " " .. table.concat(names, "  +  "))
+        self.lbl_status:SetTextColor(clr(255, 245, 245, 248))
+    else
+        self.lbl_status:SetText(tr("ui_gp_btntest_idle"))
+        self.lbl_status:SetTextColor(clr(255, 175, 175, 180))
+    end
+
+    local b_tex, b_asp = b_icon_tex(fam)
+    if self.foot_icon._gp_tex ~= b_tex then
+        self.foot_icon._gp_tex = b_tex
+        self.foot_icon:InitTexture(b_tex)
+        self.foot_icon:SetStretchTexture(true)
+    end
+    local show_ic = footer_icon_visible()
+    local cy = CARD_H - 20
+    local ih_base = 18 * icon_scale_k()
+    local iw, ih, iy, ly
+    local align = _G.gp_hint_align
+    if align and type(align.px_w) == "function" and type(align.px_h) == "function" and type(align.label_y) == "function" then
+        local h_sc = ih_base * ((type(align.icon_scale) == "function") and align.icon_scale(b_tex) or 1)
+        local sh = 1080
+        if type(align.screen) == "function" then
+            local _, s_h = align.screen()
+            if tonumber(s_h) and tonumber(s_h) > 0 then sh = tonumber(s_h) end
+        end
+        local px_h = math.max(8, math.floor(h_sc * sh / 768 + 0.5))
+        local px_w = (b_asp == 1) and px_h or math.max(8, math.floor(px_h * b_asp + 0.5))
+        iw, ih = align.px_w(px_w), align.px_h(px_h)
+        iy = (type(align.snap_y) == "function") and align.snap_y(cy - ih * 0.5) or (cy - ih * 0.5)
+        ly = align.label_y(iy + ih * 0.5, 20, "letterica16")
+    else
+        ih = ih_base
+        iw = ih_base * k * b_asp
+        iy = cy - ih * 0.5
+        ly = CARD_H - 30
+    end
+    set_rect(self.foot_icon, 16, iy, iw, ih)
+    self.foot_icon:Show(show_ic)
+    local lbl_x = show_ic and (16 + iw + 8) or 16
+    set_rect(self.foot_lbl, lbl_x, ly, 340 - lbl_x, 20)
+    self._last_icon_rev = icon_revision()
+    self._last_show_ic = show_ic
+
+    if self.b_hold_progress > 0 then
+        local fill_w = math.max(2, math.floor(116 * math.min(1, self.b_hold_progress) + 0.5))
+        set_rect(self.hold_fill, 344, CARD_H - 23, fill_w, 6)
+        self.hold_fill:Show(true)
+    else
+        self.hold_fill:Show(false)
+    end
+end
+
+function UIGpButtonTest:Tick(cur_ms)
+    local t = tonumber(cur_ms) or now_ms()
+    local rs_now = false
+    if _G.game and type(_G.game.is_wheel_stick_active) == "function" then
+        local ok, act = pcall(_G.game.is_wheel_stick_active)
+        rs_now = (ok and act == true)
+    end
+    if not rs_now and _G.game and type(_G.game.get_gamepad_right_stick) == "function" then
+        local ok_s, rx, ry = pcall(_G.game.get_gamepad_right_stick)
+        if ok_s and type(rx) == "number" and type(ry) == "number" then
+            rs_now = (rx * rx + ry * ry) > 0.04
+        end
+    end
+    local rev_now = icon_revision()
+    local vis_now = footer_icon_visible()
+    local dirty = (rs_now ~= self.stick_rs_active)
+        or (rev_now ~= self._last_icon_rev)
+        or (vis_now ~= self._last_show_ic)
+    self.stick_rs_active = rs_now
+
+    if self.b_down_ms ~= nil and _G.game and type(_G.game.is_gamepad_active_source) == "function" and not _G.game.is_gamepad_active_source() then
+        self.pressed["B"] = nil
+        self.b_down_ms = nil
+        self.b_hold_progress = 0
+        dirty = true
+    end
+
+    if self.b_down_ms ~= nil then
+        local elapsed = math.max(0, t - self.b_down_ms)
+        if elapsed >= HOLD_TOTAL_MS then
+            if _G.game and type(_G.game.gamepad_menu_pulse) == "function" then
+                pcall(_G.game.gamepad_menu_pulse, "btntest_close")
+            end
+            close()
+            return true
+        end
+        local prog = 0
+        if elapsed > HOLD_DELAY_MS then
+            prog = (elapsed - HOLD_DELAY_MS) / HOLD_ANIM_MS
+        end
+        if math.abs(prog - self.b_hold_progress) > 0.005 then
+            self.b_hold_progress = prog
+            dirty = true
+        end
+    end
+
+    if dirty then
+        self:Refresh()
+    end
+    return false
+end
+
+function UIGpButtonTest:Update()
+    CUIScriptWnd.Update(self)
+    if self:IsShown() then
+        self:Tick(now_ms())
+    end
+end
+
+function UIGpButtonTest:OnKeyboard(dik, action)
+    if action == ui_events.WINDOW_KEY_PRESSED and DIK_keys and dik == DIK_keys.DIK_ESCAPE then
+        close()
+        return true
+    end
+    return CUIScriptWnd.OnKeyboard(self, dik, action)
+end
+
+function is_open()
+    return gui ~= nil and gui:IsShown() == true
+end
+
+function get_gui()
+    return gui
+end
+
+function open(host_dialog, close_callback)
+    if not gui then
+        gui = UIGpButtonTest()
+    end
+    on_close_cb = close_callback
+    if host_dialog and host_dialog.AttachChild then
+        if not rawequal(gui.host_dialog, host_dialog) then
+            if gui.host_dialog and gui.host_dialog.DetachChild then
+                gui.host_dialog:DetachChild(gui)
+            end
+            gui:SetAutoDelete(false)
+            host_dialog:AttachChild(gui)
+            gui.host_dialog = host_dialog
+        end
+        gui:ResetState()
+        gui:Show(true)
+        gui:Enable(true)
+    else
+        gui.host_dialog = nil
+        gui:ResetState()
+        gui:ShowDialog(true)
+        if _G.Register_UI then
+            _G.Register_UI("UIGpButtonTest", "ui_gp_button_test")
+        end
+    end
+    return gui
+end
+
+function close()
+    if not gui then return false end
+    local was_shown = gui:IsShown()
+    gui.pressed = {}
+    gui.b_down_ms = nil
+    gui.b_hold_progress = 0
+    if gui.host_dialog then
+        gui:Show(false)
+    else
+        if was_shown and gui.HideDialog then
+            gui:HideDialog()
+        end
+        if _G.Unregister_UI then
+            _G.Unregister_UI("UIGpButtonTest")
+        end
+    end
+    local cb = on_close_cb
+    on_close_cb = nil
+    if type(cb) == "function" then
+        cb()
+    end
+    return was_shown == true
+end
+
+function on_gamepad_button(btn_name, phase, timestamp_ms)
+    if not is_open() then return false end
+    local id = normalize_button(btn_name)
+    if not id then return false end
+    local ph = string.lower(tostring(phase or "down"))
+    local ts = tonumber(timestamp_ms) or now_ms()
+    if ph == "up" then
+        gui.pressed[id] = nil
+        if id == "B" then
+            gui.b_down_ms = nil
+            gui.b_hold_progress = 0
+        end
+    else
+        gui.pressed[id] = true
+        if id == "B" and gui.b_down_ms == nil then
+            gui.b_down_ms = ts
+            gui.b_hold_progress = 0
+        end
+    end
+    gui:Refresh()
+    return true
+end
+
+function selftest()
+    if #ANCHORS_XBOX ~= #ANCHORS_PS then
+        return false, "anchor count mismatch"
+    end
+    if normalize_button("south") ~= "A" or normalize_button("east") ~= "B" then
+        return false, "normalize_button broken"
+    end
+    return true, "ok"
+end

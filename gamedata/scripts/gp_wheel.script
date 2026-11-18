@@ -1,0 +1,119 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- Stable entry points used by the gamepad dispatcher and other gamepad scripts.
+local modes = {realtime = "slowmo", slowmo = "pause", pause = "realtime"}
+local time_mode = "realtime"
+
+function get_time_mode() return time_mode end
+function get_effective_time_factor() return (game and game.get_effective_time_factor and game.get_effective_time_factor()) or (level and level.get_time_factor and level.get_time_factor()) or 1 end
+function set_time_mode(mode)
+    time_mode = modes[mode] and mode or "realtime"
+    if game.set_wheel_time_mode then game.set_wheel_time_mode(time_mode) end
+    return time_mode
+end
+function cycle_time_mode() return set_time_mode(modes[time_mode]) end
+function reset_time_factors()
+    if game.release_time_factor then game.release_time_factor("gp_qaw") end
+end
+function get_wheel_bound_button(action, fallback, context)
+    local binding = gp_bridge and gp_bridge.get_binding and gp_bridge.get_binding(context or "RadialWheel", action)
+    return binding and binding.button or fallback
+end
+function open_radial_menu(button) return gp_qaw_patch.open(button) end
+function open_from_wheel_hold(button) return open_radial_menu(button) end
+function open_from_lb_hold(button) return open_radial_menu(button) end
+function open_ammo_wheel() return gp_qaw_patch.open_ammo() end
+function on_gamepad_confirm() return gp_qaw_patch.confirm() end
+function on_gamepad_cancel() return gp_qaw_patch.cancel() end
+function on_gamepad_tab_prev() return gp_qaw_patch.tab_step(-1) end
+function on_gamepad_tab_next() return gp_qaw_patch.tab_step(1) end
+function on_gamepad_wheel_hold_released(button) return gp_qaw_patch.release(button) end
+function on_gamepad_lb_released() return gp_qaw_patch.release() end
+function on_ammo_wheel_hold_released(button) return gp_qaw_patch.release(button) end
+function get_opened_wheel_hold_button() return gp_qaw_patch.get_hold_button() end
+function on_quick_consumable() return gp_qaw_patch.quick_use() end
+-- FIX-LIVE2 p.15: LB + R3 / LB + D-pad right (C++ WheelMaskClean / WheelLaser), wheel open or not
+function on_shortcut_mask() return gp_qaw_patch.shortcut("mask") end
+function on_shortcut_laser() return gp_qaw_patch.shortcut("laser") end
+-- FIX-LIVE3 p.18: D-pad pins. C++ calls on_pin_wheel_<dir> (D-pad inside the open wheel) and on_pin_use_<dir>.
+-- FIX-LIVE5: inside the wheel RS on a sector = pin it, RS centred = use the pin (gp_qaw_patch.wheel_dpad).
+-- and on_pin_use_<dir> (LB + D-pad in the world = use the pinned item/action).
+function on_pin_wheel_up() return gp_qaw_patch.wheel_dpad("up") end
+function on_pin_wheel_down() return gp_qaw_patch.wheel_dpad("down") end
+function on_pin_wheel_left() return gp_qaw_patch.wheel_dpad("left") end
+function on_pin_wheel_right() return gp_qaw_patch.wheel_dpad("right") end
+function on_pin_use_up() return gp_qaw_patch.use_pin("up") end
+function on_pin_use_down() return gp_qaw_patch.use_pin("down") end
+function on_pin_use_left() return gp_qaw_patch.use_pin("left") end
+function on_pin_use_right() return gp_qaw_patch.use_pin("right") end
+function on_edit_remove_press() return gp_qaw_patch.press_edit("X") end
+function on_edit_remove_release() return gp_qaw_patch.release_edit("X") end
+function on_edit_move_press() return gp_qaw_patch.press_edit("Y") end
+function on_edit_move_release() return gp_qaw_patch.release_edit("Y") end
+function on_gamepad_secondary() return on_edit_remove_press() end
+function on_actor_damage_interrupt() return on_gamepad_cancel() end
+-- FIX-LIVE2 p.25 (Misha 2026-11-16, 25a): in a radiation (or psy / burn / chemical) field the actor is hit every
+-- tick, and actor_on_hit_callback closed the wheel at once. Only real blows (bullet, strike, explosion, bite) close it.
+-- FIX-LIVE6 (2026-11-16): in the game `hit` is a luabind class (userdata, not a table), so the old
+-- `type(H) ~= "table"` check treated every geiger/radiation tick (~5 per second, type 3) as a real blow and
+-- closed the wheel and the ammo wheel at once. Read the constants via pcall; fall back to engine ALife::EHitType ids.
+INTERRUPT_HIT_IDS = { [5] = true, [6] = true, [7] = true, [8] = true, [9] = true } -- wound, fire_wound, strike, explosion, wound_2
+function is_interrupting_hit(shit)
+    if shit == nil then return true end
+    local ok, t = pcall(function() return shit.type end)
+    if not ok or t == nil then return true end
+    local H = rawget(_G, "hit")
+    local known = false
+    if H ~= nil then
+        for _, name in ipairs({ "wound", "fire_wound", "strike", "explosion", "wound_2" }) do
+            local okc, v = pcall(function() return H[name] end)
+            if okc and v ~= nil then
+                known = true
+                if v == t then return true end
+            end
+        end
+    end
+    if known then return false end
+    return INTERRUPT_HIT_IDS[t] == true
+end
+function on_actor_before_hit(shit, bone_id, flags)
+    if flags and flags.ret_value == false then return "cancelled" end
+    if not is_interrupting_hit(shit) then return "ignored" end
+    return on_gamepad_cancel()
+end
+function close() return on_gamepad_cancel() end
+function is_open() return gp_qaw_patch.is_open() end
+function make_qaw_action(spec) return gp_qaw_tabs.make(spec) end
+function get_state_summary() return gp_qaw_patch.is_open() and "qaw:shown" or "qaw:hidden" end
+function console_set(args)
+    local mode = tostring(args or ""):match("^%s*time_mode%s+(%a+)")
+    if mode then return set_time_mode(mode) end
+    return get_state_summary()
+end
+function on_wheel_action(action, phase, button)
+    local released = phase == "release" or phase == "released"
+    if action == "WeaponWheel" or action == "WheelHoldOpen" then
+        if released then return on_gamepad_wheel_hold_released(button) end
+        return open_radial_menu()
+    elseif action == "AmmoWheel" or action == "AmmoTypeNext" or action == "AmmoType" then
+        if released then return on_ammo_wheel_hold_released() end
+        return open_ammo_wheel()
+    elseif action == "WheelConfirm" then return on_gamepad_confirm()
+    elseif action == "WheelCancel" then return on_gamepad_cancel()
+    elseif action == "WheelTabPrev" then return on_gamepad_tab_prev()
+    elseif action == "WheelTabNext" then return on_gamepad_tab_next()
+    elseif action == "WheelSubMode" then
+        if released then return on_edit_remove_release() end
+        return on_edit_remove_press()
+    end
+end
+function on_option_change() return gp_qaw_patch.on_option_change() end
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    set_time_mode(time_mode)
+    RegisterScriptCallback("actor_on_before_hit", on_actor_before_hit)
+    RegisterScriptCallback("actor_on_before_death", on_actor_damage_interrupt)
+    RegisterScriptCallback("actor_on_net_destroy", on_actor_damage_interrupt)
+    RegisterScriptCallback("on_game_load", on_actor_damage_interrupt)
+end

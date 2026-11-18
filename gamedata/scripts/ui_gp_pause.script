@@ -1,0 +1,607 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- ui_gp_pause.script — MENU-FOCUS P16 / W5-MENU (docs/ui/concept/00-windows-concept.md §4.1, §4.8)
+--
+-- 1. Pause menu hint strip between the last menu item and the bottom credits line: "A Выбрать · B В игру ·
+--    Y Быстрое сохранение"; outside the game "A Выбрать · B Выход" (B = stock quit-to-Windows question);
+--    over a dead actor on a loaded level (В6): only "A Выбрать" (no false "B Выход" or "B В игру").
+--    Only while the gamepad is the active input source. P16b: built lazily from the menu Update as well, because the
+--    start-up menu is created before on_game_start registers main_menu_on_init.
+-- 2. Y in the pause menu (engine: CGamepadContextDispatcher::HandleMenuShortcuts -> menu_quick_save): quick save into
+--    the stock quicksave_N queue and straight back to the game. P16b: the menu is closed FIRST and the save runs on
+--    the next actor_on_update: CMainMenu::Activate(false) is ignored while the save screenshot is pending
+--    (MainMenu.cpp:180-183), so closing after the save made the menu pop back. Where saving is refused (YACS "on_before_save_input"
+--    rule: campfire or base) the Y line is grey; pressing Y shakes it, gives one weak pulse and shows the top message
+--    "Сохраняться можно только у костра или базы". The menu stays open.
+--    LB+Y = the YACS "Папочка/Мамочка" save (ish_campfire_saving SHIFT+F5: create_emergency_save, name
+--    "<user> - Папочкаsave"). Token not granted yet: quick save where saving is allowed, otherwise the stock YACS
+--    text "token_pending" with the seconds left. Hidden: never shown in any hint.
+-- 3. Settings and MCM: "LT/RT Колонки · View К кнопкам" inside the empty plate above the bottom buttons
+--    (the stock "pending changes" line; hidden while that line has text).
+-- Save messages in the world ("Игра сохранена" / "Автосохранение") are engine side: configs/ui/ui_gp_toasts.xml.
+
+local STRIP_Y = 700          -- P16b: midway between "Выйти в Windows" (712/843) and the credits line (820/843)
+local STRIP_H = 26
+local STRIP_PAD = 70         -- dissolving ends of the strip
+local ICON_H = 18            -- ~20 units of the mockup frame
+local SMALL_ICON_H = 22      -- Settings/MCM plate (P16b: was 16)
+local GAP = 5                -- icon -> label
+local SMALL_GAP = 8
+local ICON_SPACE = 2         -- icon -> icon (LT RT)
+local SMALL_ICON_SPACE = 5
+local SEP_W = 16             -- "·" block
+local SMALL_SEP_W = 30
+local SHAKE_MS = 500
+local SHAKE_AMP = 4
+local TOAST_IN, TOAST_HOLD, TOAST_OUT = 200, 2000, 400
+local EMERGENCY_MS = 3 * 60 * 1000
+local NORMAL = { 225, 225, 225 }
+local GREY = { 120, 120, 120 }
+
+local X
+local menu_ref
+local installed = {}
+local token_since
+local pending_save           -- "quick" | "emergency", run on the next actor_on_update (menu already closed)
+
+local function now() return device():time_continual() end
+local function tr(id) return game.translate_string(id) end
+local function gamepad() return game and game.is_gamepad_active_source and game.is_gamepad_active_source() and true or false end
+local function pulse() if game and game.gamepad_menu_pulse then game.gamepad_menu_pulse() end end
+local function in_game() return level.present() and db.actor ~= nil and db.actor:alive() end
+local function argb(a, rgb) return GetARGB(math.floor(a + 0.5), rgb[1], rgb[2], rgb[3]) end
+local function xmlh()
+    if not X then
+        X = CScriptXmlInit()
+        X:ParseFile("ui_gp_pause.xml")
+    end
+    return X
+end
+-- UI units are stretched horizontally on wide screens; keep the icons round.
+local function aspect()
+    local dev = device()
+    return (dev.height / dev.width) * (1024 / 768)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+-- Saving rules
+------------------------------------------------------------------------------------------------------------------------
+
+-- Ask every "on_before_save_input" handler (YACS, cars, soulslike...) without letting them act: their refusal path
+-- closes the menu and prints a message, which is exactly what the menu must not do here.
+function save_allowed()
+    if not in_game() then return false end
+    local flags = { ret = false }
+    local yacs = rawget(_G, "ish_campfire_saving")
+    local real_exec = _G.exec_console_cmd
+    local real_msg = actor_menu and actor_menu.set_msg
+    local real_note = yacs and yacs.send_notification
+    _G.exec_console_cmd = function() end
+    if real_msg then actor_menu.set_msg = function() end end
+    if real_note then yacs.send_notification = function() end end
+    local ok = pcall(SendScriptCallback, "on_before_save_input", flags, 2, tr("st_ui_save"))
+    _G.exec_console_cmd = real_exec
+    if real_msg then actor_menu.set_msg = real_msg end
+    if real_note then yacs.send_notification = real_note end
+    return ok and flags.ret ~= true
+end
+
+-- YACS keeps the emergency timer in a file local; read it when possible, otherwise mirror it (first update / any save).
+local function yacs_token_due()
+    local yacs = rawget(_G, "ish_campfire_saving")
+    local fn = yacs and yacs.redeem_token
+    if not (fn and debug and debug.getupvalue) then return nil end
+    for i = 1, 64 do
+        local name, value = debug.getupvalue(fn, i)
+        if not name then break end
+        if name == "token_granted" then return value end
+    end
+    return nil
+end
+
+function emergency_ready()
+    if not rawget(_G, "ish_campfire_saving") then return false end
+    local due = yacs_token_due() or (token_since and token_since + EMERGENCY_MS)
+    return due ~= nil and time_global() >= due
+end
+
+function on_console_execute(cmd)
+    if cmd == "save" then token_since = time_global() end
+end
+
+function actor_on_first_update()
+    token_since = time_global()
+end
+
+------------------------------------------------------------------------------------------------------------------------
+-- Pause menu: hint strip, shake, top message
+------------------------------------------------------------------------------------------------------------------------
+
+-- game = true: only in the game (alive); game = false: only outside any loaded level; nil: always.
+local HINTS = {
+    { slot = "south", text = "st_gp_hint_select" },
+    { slot = "east", text = "st_gp_hint_to_game", game = true },
+    { slot = "east", text = "st_gp_hint_exit", game = false },
+    { slot = "north", text = "st_gp_hint_quicksave", game = true, save = true },
+}
+
+local FALLBACK_TEX = {
+    south = "ui_gp_xbox_south",
+    east = "ui_gp_xbox_east",
+    north = "ui_gp_xbox_north",
+    ltrigger = "ui_gp_xbox_ltrigger",
+    rtrigger = "ui_gp_xbox_rtrigger",
+    back = "ui_gp_xbox_view_round",
+}
+
+local function resolve_tex(slot)
+    local ic = _G.gp_icons
+    if ic and ic.tex then return ic.tex(slot, "round") end
+    return FALLBACK_TEX[slot] or ("ui_gp_xbox_" .. tostring(slot))
+end
+
+local function icon_scale_k()
+    local ic = _G.gp_icons
+    return (ic and ic.scale_k) and ic.scale_k() or 1.0
+end
+
+local function menu_hints_visible()
+    local ic = _G.gp_icons
+    return (not ic or not ic.hints_visible) or ic.hints_visible("menu")
+end
+
+local function icon_revision()
+    local ic = _G.gp_icons
+    return (ic and ic.revision) and ic.revision() or 0
+end
+
+local function icon_tex_ratio(slot)
+    if not slot then return 1 end
+    local ic = _G.gp_icons
+    if ic and ic.dims then
+        local _, _, tw, th = ic.dims(slot, "round")
+        if tw and th and th > 0 then return tw / th end
+    end
+    return 1
+end
+
+local function refresh_item_icons(it)
+    for i, slot in ipairs(it.slots) do
+        local tex = resolve_tex(slot)
+        if it.texs[i] ~= tex then
+            it.texs[i] = tex
+            it.icons[i]:InitTexture(tex)
+        end
+    end
+end
+
+local function make_item(x, parent, slots, text, small)
+    local it = { icons = {}, small = small, slots = slots, texs = {} }
+    for i, slot in ipairs(slots) do
+        local tex = resolve_tex(slot)
+        it.texs[i] = tex
+        it.icons[i] = x:InitStatic("icon", parent)
+        it.icons[i]:InitTexture(tex)
+    end
+    it.label = x:InitTextWnd(small and "label_small" or "label", parent)
+    it.label:SetText(tr(text))
+    it.label:AdjustWidthToText()
+    it.width = function(self)
+        local h = self.small and SMALL_ICON_H or ICON_H
+        local sp = self.small and SMALL_ICON_SPACE or ICON_SPACE
+        local w = 0
+        for i = 1, #self.icons do w = w + icon_box(h, 0, self.texs[i], self.slots[i]) + sp end
+        return w - sp + (self.small and SMALL_GAP or GAP) + self.label:GetWidth()
+    end
+    return it
+end
+
+-- INV-REWORK-24 (Миша 2026-11-12: «B чуть ниже A»): сторона и верх значка - в целых пикселях экрана (все значки
+-- растеризуются одинаково), подпись выравнивается по оптической оси заглавных букв (LINE = "cap" в gp_hint_align,
+-- graffiti19 / letterica18) относительно середины значка. Без gp_hint_align - прежняя раскладка.
+LABEL_FONT = { [false] = "graffiti19", [true] = "letterica18" }
+
+-- tex: текстура значка - курки/плечи крупнее (gp_hint_align.icon_scale, INV-REWORK-25);
+-- slot: логическая кнопка для пропорции прямоугольных плашек Dot Marks (LT/RT, SEL, START) и gp_icons.scale_k (ICONS-1).
+function icon_box(h, cy, tex, slot)
+    h = h * icon_scale_k()
+    local ratio = icon_tex_ratio(slot)
+    local a = _G.gp_hint_align
+    if not a then return h * ratio * aspect(), h, cy - h / 2 end
+    if tex and a.icon_scale then h = a.icon_scale(tex) * h end
+    local px_h = math.max(8, math.floor(h * device().height / 768 + 0.5))
+    local px_w = (ratio == 1) and px_h or math.max(8, math.floor(px_h * ratio + 0.5))
+    local w, ih = a.px_w(px_w), a.px_h(px_h)
+    return w, ih, a.snap_y(cy - ih / 2)
+end
+
+function label_top(it, mid)
+    local a = _G.gp_hint_align
+    if not a then return mid - 12 end
+    return a.label_y(mid, 24, LABEL_FONT[it.small == true])
+end
+
+local function place_item(it, x0, cy, color, visible)
+    local h = it.small and SMALL_ICON_H or ICON_H
+    local _, ih0, iy0 = icon_box(h, cy)
+    local mid = iy0 + ih0 / 2 -- линия строки - по обычному (круглому) значку
+    local sp = it.small and SMALL_ICON_SPACE or ICON_SPACE
+    local x = x0
+    for i, icon in ipairs(it.icons) do
+        local w, ih, iy = icon_box(h, mid, it.texs[i], it.slots[i])
+        icon:SetWndPos(vector2():set(x, iy))
+        icon:SetWndSize(vector2():set(w, ih))
+        icon:SetTextureColor(argb(color[4] or 255, { 255, 255, 255 }))
+        icon:Show(visible)
+        x = x + w + sp
+    end
+    x = x - sp + (it.small and SMALL_GAP or GAP)
+    it.label:SetWndPos(vector2():set(x, label_top(it, mid)))
+    it.label:SetWndSize(vector2():set(it.label:GetWidth(), 24))
+    it.label:SetTextColor(argb(color[4] or 255, color))
+    it.label:Show(visible)
+end
+
+local function make_sep(x, parent, small)
+    local s = x:InitTextWnd(small and "label_small" or "label", parent)
+    s:SetText("·")
+    s:AdjustWidthToText()
+    return s
+end
+
+local function place_sep(s, x0, cy, visible, w)
+    local a = _G.gp_hint_align
+    local y = a and a.label_y(cy, 24, w and "letterica18" or "graffiti19") or (cy - 12)
+    s:SetWndPos(vector2():set(x0 + ((w or SEP_W) - s:GetWidth()) / 2, y))
+    s:SetTextColor(argb(255, { 125, 130, 127 }))
+    s:Show(visible)
+end
+
+-- FIX-LIVE1 п.2 (Миша 2026-11-15): та же полоса подсказок (плашка, значки, шрифт, размеры), что и в главном меню,
+-- для других окон главного меню — «Создание персонажа» (gp_new_game). specs: { {slot=|slots={...}, text=}, ... }.
+function build_strip(parent, specs)
+    if not parent then return nil end
+    local x = xmlh()
+    local h = { items = {}, seps = {}, icon_rev = icon_revision() }
+    h.strip = x:InitStatic("strip", parent)
+    for i, spec in ipairs(specs) do
+        h.items[i] = make_item(x, parent, spec.slots or { spec.slot }, spec.text)
+        if i > 1 then h.seps[i] = make_sep(x, parent) end
+    end
+    return h
+end
+
+-- visible[i] — показывать ли пункт i; cy — середина полосы (единицы 1024x768). Полоса центрируется по x=512.
+function update_strip(h, visible, cy)
+    if not h then return end
+    local rev = icon_revision()
+    if h.icon_rev ~= rev then
+        h.icon_rev = rev
+        for _, it in ipairs(h.items) do refresh_item_icons(it) end
+    end
+    local list, total = {}, 0
+    for i, it in ipairs(h.items) do
+        if visible[i] then
+            total = total + it:width() + (#list > 0 and SEP_W or 0)
+            list[#list + 1] = i
+        end
+    end
+    local x = 512 - total / 2
+    for i, it in ipairs(h.items) do
+        if h.seps[i] then h.seps[i]:Show(false) end
+        if visible[i] then
+            if i ~= list[1] then
+                place_sep(h.seps[i], x, cy, true)
+                x = x + SEP_W
+            end
+            place_item(it, x, cy, NORMAL, true)
+            x = x + it:width()
+        else
+            place_item(it, 0, cy, NORMAL, false)
+        end
+    end
+    local strip_h = math.max(STRIP_H, math.ceil(ICON_H * icon_scale_k() + 8))
+    h.strip:SetWndPos(vector2():set(512 - total / 2 - STRIP_PAD, cy - strip_h / 2))
+    h.strip:SetWndSize(vector2():set(total + STRIP_PAD * 2, strip_h))
+    h.strip:Show(#list > 0)
+end
+
+-- Значок k пункта i (для кольца удержания в значке подсказки).
+function strip_icon(h, i, k)
+    local it = h and h.items[i]
+    return it and it.icons[k or 1] or nil
+end
+
+function hide_strip(h)
+    if not h then return end
+    h.strip:Show(false)
+    for i, it in ipairs(h.items) do
+        place_item(it, 0, 0, NORMAL, false)
+        if h.seps[i] then h.seps[i]:Show(false) end
+    end
+end
+
+function build_pause(menu)
+    if not menu then return nil end
+    local x = xmlh()
+    local h = { items = {}, seps = {}, icon_rev = icon_revision() }
+    h.strip = x:InitStatic("strip", menu)
+    for i, spec in ipairs(HINTS) do
+        h.items[i] = make_item(x, menu, { spec.slot }, spec.text)
+        if i > 1 then h.seps[i] = make_sep(x, menu) end
+    end
+    h.toast = x:InitStatic("toast", menu)
+    h.toast:Show(false)
+    menu._gp_pause = h
+    menu._gp_can_save = in_game() and save_allowed()
+    update_pause(menu)
+    return h
+end
+
+function shake_offset(t)
+    if not t or t < 0 or t >= SHAKE_MS then return 0 end
+    local k = 1 - t / SHAKE_MS
+    return SHAKE_AMP * k * math.sin(t / SHAKE_MS * math.pi * 8)
+end
+
+function toast_alpha(t)
+    if not t or t < 0 then return 0 end
+    if t < TOAST_IN then return t / TOAST_IN end
+    t = t - TOAST_IN
+    if t < TOAST_HOLD then return 1 end
+    t = t - TOAST_HOLD
+    if t < TOAST_OUT then return 1 - t / TOAST_OUT end
+    return 0
+end
+
+function show_toast(menu, text)
+    local h = menu and menu._gp_pause
+    if not h then return false end
+    h.toast:TextControl():SetText(text)
+    h.toast_at = now()
+    return true
+end
+
+function update_pause(menu)
+    local h = menu._gp_pause
+    if not h then return end
+    local rev = icon_revision()
+    if h.icon_rev ~= rev then
+        h.icon_rev = rev
+        for _, it in ipairs(h.items) do refresh_item_icons(it) end
+    end
+    local show = gamepad() and menu_hints_visible()
+    local on_level = level.present() and true or false
+    local playing = in_game()
+    local list = {}
+    for i, spec in ipairs(HINTS) do
+        -- W5-MENU В6: over a dead actor on a loaded level (on_level == true, playing == false),
+        -- neither "B В игру" (game=true) nor "B Выход" (game=false, main menu only) is valid.
+        local match = (spec.game == nil)
+            or (spec.game == true and playing)
+            or (spec.game == false and not on_level)
+        local visible = show and match
+        h.items[i].visible = visible
+        if visible then list[#list + 1] = i end
+    end
+    local total = 0
+    for n, i in ipairs(list) do
+        total = total + h.items[i]:width() + (n > 1 and SEP_W or 0)
+    end
+    local x = 512 - total / 2
+    local shake = shake_offset(h.shake_at and (now() - h.shake_at))
+    for i, spec in ipairs(HINTS) do
+        local it = h.items[i]
+        if h.seps[i] then h.seps[i]:Show(false) end
+        if it.visible then
+            if i ~= list[1] and h.seps[i] then
+                place_sep(h.seps[i], x, STRIP_Y, true)
+                x = x + SEP_W
+            end
+            local color = (spec.save and not menu._gp_can_save) and GREY or NORMAL
+            place_item(it, x + (spec.save and shake or 0), STRIP_Y, color, true)
+            x = x + it:width()
+        else
+            place_item(it, 0, STRIP_Y, NORMAL, false)
+        end
+    end
+    local strip_h = math.max(STRIP_H, math.ceil(ICON_H * icon_scale_k() + 8))
+    h.strip:SetWndPos(vector2():set(512 - total / 2 - STRIP_PAD, STRIP_Y - strip_h / 2))
+    h.strip:SetWndSize(vector2():set(total + STRIP_PAD * 2, strip_h))
+    h.strip:Show(show and #list > 0)
+
+    local a = toast_alpha(h.toast_at and (now() - h.toast_at))
+    h.toast:Show(a > 0)
+    if a > 0 then
+        h.toast:SetTextureColor(argb(255 * a, { 255, 255, 255 }))
+        h.toast:TextControl():SetTextColor(argb(255 * a, { 240, 240, 240 }))
+    end
+end
+
+function refuse(menu)
+    local h = menu._gp_pause
+    if h then h.shake_at = now() end
+    menu._gp_can_save = false
+    pulse()
+    show_toast(menu, tr("st_gp_save_denied"))
+end
+
+-- Close the menu first, save on the next actor update (see header: the save screenshot blocks closing).
+local function save_in_game(menu, kind)
+    pending_save = kind
+    pulse()
+    if menu.OnButton_return_game then menu:OnButton_return_game() else exec_console_cmd("main_menu off") end
+end
+
+function actor_on_update()
+    local dlg = rawget(_G, "gp_menu_dialogs")
+    if dlg and dlg.actor_on_update then pcall(dlg.actor_on_update) end
+    local kind = pending_save
+    if not kind then return end
+    pending_save = nil
+    if kind == "emergency" then
+        local yacs = rawget(_G, "ish_campfire_saving")
+        if yacs and yacs.create_emergency_save then yacs.create_emergency_save() end
+    elseif level_input and level_input.action_quick_save then
+        level_input.action_quick_save()
+    end
+end
+
+-- Stock YACS wording: "Возможность Папочка сохранения будет предоставлена через N секунд."
+function token_pending_text()
+    local yacs = rawget(_G, "ish_campfire_saving")
+    local due = yacs_token_due() or (token_since and token_since + EMERGENCY_MS)
+    local left = due and math.max(0, math.ceil((due - time_global()) / 1000)) or math.ceil(EMERGENCY_MS / 1000)
+    local parent = yacs and yacs.get_parent_type and yacs.get_parent_type() or tr("mommy_false")
+    local ok, text = pcall(string.format, tr("token_pending"), parent, left)
+    return ok and text or tr("st_gp_save_denied")
+end
+
+-- Engine entry (GamepadContextDispatcher.cpp, PauseMenuQuickSave). true = the press is used.
+function menu_quick_save(with_lb)
+    local menu = menu_ref
+    if not (menu and in_game()) then return false end
+    if with_lb and emergency_ready() then
+        save_in_game(menu, "emergency")
+        return true
+    end
+    if save_allowed() then
+        save_in_game(menu, "quick")
+        return true
+    end
+    if with_lb and rawget(_G, "ish_campfire_saving") then
+        pulse()
+        show_toast(menu, token_pending_text())
+        return true
+    end
+    refuse(menu)
+    return true
+end
+
+------------------------------------------------------------------------------------------------------------------------
+-- Settings and MCM: "LT/RT Колонки · View К кнопкам" in the plate above the bottom buttons
+------------------------------------------------------------------------------------------------------------------------
+
+function build_columns_hint(wnd)
+    local pending = wnd.pending
+    local parent = pending and wnd.dialog
+    if not parent then return nil end
+    local x = xmlh()
+    local h = {
+        cols = make_item(x, parent, { "ltrigger", "rtrigger" }, "st_gp_hint_columns", true),
+        view = make_item(x, parent, { "back" }, "st_gp_hint_to_buttons", true), -- INV-REWORK-24, ICONS-1
+        icon_rev = icon_revision(),
+    }
+    h.sep = make_sep(x, parent, true)
+    wnd._gp_cols = h
+    update_columns_hint(wnd)
+    return h
+end
+
+local function pending_text(w)
+    local ok, text = pcall(function() return w:GetText() end)
+    return ok and text or ""
+end
+
+function update_columns_hint(wnd)
+    local h = wnd._gp_cols
+    if not h then return end
+    local rev = icon_revision()
+    if h.icon_rev ~= rev then
+        h.icon_rev = rev
+        refresh_item_icons(h.cols)
+        refresh_item_icons(h.view)
+    end
+    local pending = wnd.pending
+    local visible = gamepad() and menu_hints_visible() and pending_text(pending) == ""
+    local pos = pending:GetWndPos()
+    local total = h.cols:width() + SMALL_SEP_W + h.view:width()
+    local x = pos.x + (pending:GetWidth() - total) / 2
+    local cy = pos.y + pending:GetHeight() / 2
+    place_item(h.cols, x, cy, NORMAL, visible)
+    place_sep(h.sep, x + h.cols:width(), cy, visible, SMALL_SEP_W)
+    place_item(h.view, x + h.cols:width() + SMALL_SEP_W, cy, NORMAL, visible)
+end
+
+------------------------------------------------------------------------------------------------------------------------
+-- Hooks
+------------------------------------------------------------------------------------------------------------------------
+
+local function wrap_update(cls, key, fn)
+    if installed[key] or not cls then return false end
+    installed[key] = true
+    local base = cls.Update
+    cls.Update = function(self, ...)
+        if base then base(self, ...) end
+        local ok, err = pcall(fn, self)
+        if not ok then printf("! [ui_gp_pause] %s: %s", key, tostring(err)) end
+    end
+    return true
+end
+
+local function columns_tick(self)
+    if not self._gp_cols then
+        if not gamepad() then return end
+        build_columns_hint(self)
+    end
+    update_columns_hint(self)
+end
+
+function install()
+    local _ = _G.gp_icons
+    local dlg = _G.gp_menu_dialogs
+    if dlg and dlg.install then pcall(dlg.install) end
+    local sys_dlg = _G.gp_sys_dialogs
+    if sys_dlg and sys_dlg.install then pcall(sys_dlg.install) end
+    local mcm_mod = _G.gp_mcm
+    if mcm_mod and mcm_mod.install_mcm_hooks then pcall(mcm_mod.install_mcm_hooks) end
+    local mm = rawget(_G, "ui_main_menu")
+    wrap_update(mm and mm.main_menu, "main_menu", function(self)
+        install() -- Settings/MCM scripts may load after the first menu
+        if not self._gp_pause and not self._gp_pause_failed then
+            menu_ref = self -- start-up menu: created before main_menu_on_init was registered
+            local ok, err = pcall(build_pause, self)
+            if not ok then
+                self._gp_pause_failed = true
+                printf("! [ui_gp_pause] build: %s", tostring(err))
+            end
+        end
+        if self._gp_pause then update_pause(self) end
+    end)
+    local opt = rawget(_G, "ui_options")
+    wrap_update(opt and opt.UIOptions, "options", columns_tick)
+    local mcm = rawget(_G, "ui_mcm")
+    wrap_update(mcm and mcm.UI_MCM, "mcm", columns_tick)
+    return installed.main_menu == true
+end
+
+function main_menu_on_init(menu)
+    menu_ref = menu
+    install()
+    local ok, err = pcall(build_pause, menu)
+    if not ok then printf("! [ui_gp_pause] build: %s", tostring(err)) end
+end
+
+-- Outside the game B (engine: GP_BTN_EAST -> DIK_ESCAPE in the main menu) asks the stock "quit to Windows" question;
+-- over a dead actor on a loaded level (В6), B cannot return to the game and gives a light deny pulse without acting.
+function main_menu_on_keyboard(dik, action, menu, present)
+    if not gamepad() or not menu then return end
+    if action ~= ui_events.WINDOW_KEY_PRESSED or dik ~= DIK_keys.DIK_ESCAPE then return end
+    if present then
+        if db.actor ~= nil and not db.actor:alive() then pulse() end
+        return
+    end
+    if menu.OnButton_quit_clicked then
+        menu:OnButton_quit_clicked()
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("main_menu_on_init", main_menu_on_init)
+    RegisterScriptCallback("on_console_execute", on_console_execute)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("main_menu_on_keyboard", main_menu_on_keyboard)
+    local dlg = _G.gp_menu_dialogs
+    if dlg and dlg.on_game_start then pcall(dlg.on_game_start) end
+    install() -- the start-up menu already exists: hook its Update now
+end

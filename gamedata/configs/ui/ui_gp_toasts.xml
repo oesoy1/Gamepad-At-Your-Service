@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<!-- MENU-FOCUS P16: save messages (CUIGameCustom::AddCustomStatic reads this file before ui_custom_msgs.xml).
+     Top centre, dark plate with dissolving edges, only fades in and out (fade_in / fade_out, seconds). -->
+<w>
+	<game_saved x="352" y="46" width="320" height="26" stretch="1" ttl="2.6" fade_in="0.2" fade_out="0.4">
+		<texture>ui\ui_gp_p16_toast</texture>
+		<text font="letterica18" r="240" g="240" b="240" a="255" align="c" vert_align="c"/>
+	</game_saved>
+	<autosave x="352" y="46" width="320" height="26" stretch="1" ttl="2.6" fade_in="0.2" fade_out="0.4">
+		<texture>ui\ui_gp_p16_toast</texture>
+		<text font="letterica18" r="240" g="240" b="240" a="255" align="c" vert_align="c">st_gp_autosave</text>
+	</autosave>
+</w>

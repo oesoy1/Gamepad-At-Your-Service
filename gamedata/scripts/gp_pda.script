@@ -1,0 +1,3807 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- gp_pda.script — PDA1-L + W5-PDA (2026-11-14): полное управление всеми вкладками КПК и окнами PAW с геймпада.
+-- ТЗ: docs/ui/live-layout/pda-gamepad-final.md (§1, §4.6, §5, §6, §7),
+--     docs/ui/remaining-screens/21-pda-remaining.md, docs/ui/concept/00-windows-concept.md.
+-- Договор с движком: docs/ui/live-layout/pda1-contract.md
+--
+-- Архитектура:
+--   * Кеш окон Lua-вкладок через динамическую обёртку pda.set_active_subdialog (без поиска
+--     локального SINGLETON и без повторных вызовов get_ui(), сбрасывающих состояние).
+--   * Кнопки КПК приходят из C++ (StepPdaButtons -> gp_bridge.pda_button -> pda_button(name, phase)):
+--     "" (не наша / клик по точке рамки или закрытие), "used", "hold:<пауза>:<кольцо>[:x1,y1,x2,y2]".
+--   * На карте в режиме «ока» focus_frame_active() == false; в режиме фильтров / оверлеев, в модальных
+--     окнах меток PAW (GUI_WP, GUI_PinOpts, GUI_PinInd) и на всех остальных вкладках (кроме пустых
+--     Отношений/Контактов, зашифрованного чужого КПК и экрана разряда eptGlitched) используется белая
+--     рамка через focus_frame_active() / query(x, y) / snap(x, y, dir).
+--   * Все действия над списками/кнопками выполняются отложенно в drain(state.queue) из HUD Update
+--     или tick(), чтобы не ломать обработчики движка внутри ввода.
+--   * Плоская нижняя плашка UIGpPdaHud рисуется через get_hud():AddDialogToRender вне текстуры rtPDA,
+--     а значки LT/RT крепятся к UITabControl полосы вкладок КПК (скрываются под модалками PAW).
+
+ENABLED = true
+HOLD_PAUSE = 300
+HOLD_FILL = 700
+ARGB_FINE_STEP = 5
+ARGB_COARSE_STEP = 25
+IND_RS_STEP_MS = 120
+LIST_SCROLL_SPEED = 520
+DESC_AUTO_SPEED = 30 -- FIX-LIVE2 10a: slightly slower
+DESC_TOP_PAUSE_MS = 2500 -- FIX-LIVE2 10a: wait 2.5 s before scrolling
+DESC_BOT_PAUSE_MS = 2000
+SCROLL_MARGIN = 2
+
+STRIP_CX = 520
+STRIP_Y1 = 728
+STRIP_Y2 = 756
+STRIP_ICON_H = 18
+STRIP_GAP_H = 5
+STRIP_SPACE_H = 2
+STRIP_STEP_PX = 41
+STRIP_PAD_X_H = 14
+SHOULDER_K = 1.22
+
+TAB_ORDER = {
+    "eptTasks",
+    "eptTaskboard",
+    "eptRanking",
+    "eptRelations",
+    "eptContacts",
+    "eptEncyclopedia",
+    "eptRadio",
+    "eptLogs",
+}
+
+local MAP_EYE_X = 510
+local MAP_EYE_Y = 385
+
+local RADIO_BUTTONS = {
+    { key = "ch1",     btn = "btn_radio_ch", idx = 1, cb = "On_Radio_Channel" },
+    { key = "ch2",     btn = "btn_radio_ch", idx = 2, cb = "On_Radio_Channel" },
+    { key = "rvdn",    btn = "btn_radio_v_down",      cb = "On_Radio_Volume_Down" },
+    { key = "rvup",    btn = "btn_radio_v_up",        cb = "On_Radio_Volume_Up" },
+    { key = "rstop",   btn = "btn_radio_stop",        cb = "On_Radio_Stop" },
+    { key = "rstart",  btn = "btn_radio_start",       cb = "On_Radio_Start" },
+    { key = "pplist",  btn = "btn_plyr_playlist",     cb = "On_Player_Playlist" },
+    { key = "ploop",   btn = "btn_plyr_loop",         cb = "On_Player_Loop" },
+    { key = "pshuf",   btn = "btn_plyr_shuffle",      cb = "On_Player_Shuffle" },
+    { key = "pvdn",    btn = "btn_plyr_v_down",       cb = "On_Player_Volume_Down" },
+    { key = "pvup",    btn = "btn_plyr_v_up",         cb = "On_Player_Volume_Up" },
+    { key = "pprev",   btn = "btn_plyr_prev",         cb = "On_Player_Previous" },
+    { key = "pstop",   btn = "btn_plyr_stop",         cb = "On_Player_Stop" },
+    { key = "pstart",  btn = "btn_plyr_start",        cb = "On_Player_Start" },
+    { key = "pnext",   btn = "btn_plyr_next",         cb = "On_Player_Next" },
+}
+
+local FALLBACK_TEX = {
+    A = "ui_gp_xbox_south",
+    B = "ui_gp_xbox_east",
+    X = "ui_gp_xbox_west",
+    Y = "ui_gp_xbox_north",
+    LT = "ui_gp_xbox_ltrigger",
+    RT = "ui_gp_xbox_rtrigger",
+    LB = "ui_gp_xbox_lshoulder",
+    RB = "ui_gp_xbox_rshoulder",
+    View = "ui_gp_xbox_view_round",
+}
+
+local SHOULDER = { LB = true, RB = true, LT = true, RT = true }
+
+local LABELS_RU = {
+    tabs = "Вкладки",
+    tasks_legend = "Задания / Легенда",
+    select = "Выбрать",
+    toggle = "Переключить",
+    open = "Открыть",
+    refresh = "Обновить",
+    take = "Взять",
+    orders = "Приказы",
+    text_refresh = "Текст / Обновл.",
+    known_refresh = "Известные / Обновл.",
+    img_msg = "Картинки / Сообщ.",
+    press = "Нажать",
+}
+
+local LABELS_EN = {
+    tabs = "Tabs",
+    tasks_legend = "Tasks / Legend",
+    select = "Select",
+    toggle = "Toggle",
+    open = "Open",
+    refresh = "Refresh",
+    take = "Accept",
+    orders = "Orders",
+    text_refresh = "Text / Refresh",
+    known_refresh = "Known / Refresh",
+    img_msg = "Images / Msg",
+    press = "Press",
+}
+
+local XML_INIT = nil
+local hud_wnd = nil
+local last_action = "none"
+local last_paw_action = "none"
+
+state = {
+    tab = nil,
+    tab_ui = {},
+    tab_field = {},
+    focus_id = {},
+    mem_id = {},
+    tb_cat_id = nil,
+    tb_cat_name = nil,
+    contact_key = nil,
+    map_filters_mode = false,
+    saved_eye_x = MAP_EYE_X,
+    saved_eye_y = MAP_EYE_Y,
+    filter_idx = 1,
+    paw_kind = nil,
+    paw_focus = {},
+    ind_rs_acc = 0,
+    radio_playing = false,
+    radio_last_mode = "radio",
+    radio_ch = 1,
+    map_menu = { prop_box = nil, id = nil, level_name = nil, hover_text = "", hover_rect = nil },
+    queue = {},
+    sv_acc = {},
+    ret = nil,
+    desc = { item = nil, phase = "top", since = 0, pos = 0 },
+    last_tick = nil,
+    last_hud_tick = -1,
+    view_icon_rect = nil,
+    hints_synced = nil,
+    fallback_desc_hidden = false,
+    wrapped_set_subdialog = nil,
+    wrapped_paw_menu = nil,
+    callbacks_registered = false,
+    denies = 0,
+    actions = 0,
+}
+
+-- ---------------------------------------------------------------------------
+-- Базовые помощники
+-- ---------------------------------------------------------------------------
+
+local function gget(name)
+    return _G and rawget(_G, name) or nil
+end
+
+local function is_russian()
+    local s = game and game.translate_string and game.translate_string("ui_total_weight") or ""
+    return type(s) == "string" and s:find("[\192-\255]") ~= nil
+end
+
+local function L(key)
+    local id = "ui_gp_pda_lbl_" .. tostring(key or "")
+    if LABELS_EN[key] and game and game.translate_string then
+        local ok, s = pcall(game.translate_string, id)
+        local w_ok, w_s = pcall(game.translate_string, "ui_total_weight")
+        if ok and type(s) == "string" and s ~= "" and s ~= id and (not w_ok or s ~= w_s) then
+            return s
+        end
+    end
+    local t = is_russian() and LABELS_RU or LABELS_EN
+    return t[key] or key
+end
+
+local function now_ms()
+    if device then
+        local ok_d, d = pcall(device)
+        if ok_d and d and type(d.time_continual) == "function" then
+            local ok_t, t = pcall(d.time_continual, d)
+            if ok_t and tonumber(t) then return tonumber(t) end
+        end
+    end
+    if time_global then
+        local ok_g, tg = pcall(time_global)
+        if ok_g and tonumber(tg) then return tonumber(tg) end
+    end
+    return 0
+end
+
+local function screen_wh()
+    if device then
+        local ok_d, d = pcall(device)
+        if ok_d and d then
+            return math.max(1, tonumber(d.width) or 1920), math.max(1, tonumber(d.height) or 1080)
+        end
+    end
+    return 1920, 1080
+end
+
+local function is_gamepad()
+    local b = gget("gp_bridge")
+    if type(b) == "table" and type(b.is_gamepad_active) == "function" then
+        local ok, res = pcall(b.is_gamepad_active)
+        return ok and res == true
+    end
+    return false
+end
+
+local function shown(w)
+    if not w or type(w.IsShown) ~= "function" then return false end
+    local ok, res = pcall(w.IsShown, w)
+    return ok and res == true
+end
+
+local function abs_rect(w)
+    if not w then return nil end
+    if type(w.GetAbsoluteRect) == "function" and Frect then
+        local r = Frect()
+        local ok = pcall(w.GetAbsoluteRect, w, r)
+        if ok and r and r.x1 and r.x2 and (r.x2 - r.x1) > 0.5 and (r.y2 - r.y1) > 0.5 then
+            return { x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2 }
+        end
+    end
+    if type(w.GetWndPos) == "function" and type(w.GetWidth) == "function" and type(w.GetHeight) == "function" then
+        local ok_p, pos = pcall(w.GetWndPos, w)
+        local ok_w, ww = pcall(w.GetWidth, w)
+        local ok_h, hh = pcall(w.GetHeight, w)
+        ww, hh = tonumber(ww), tonumber(hh)
+        if ok_p and pos and ok_w and ww and ok_h and hh and ww > 0.5 and hh > 0.5 then
+            local x1 = tonumber(pos.x) or 0
+            local y1 = tonumber(pos.y) or 0
+            return { x1 = x1, y1 = y1, x2 = x1 + ww, y2 = y1 + hh }
+        end
+    end
+    return nil
+end
+
+local function rect_center(r)
+    return (r.x1 + r.x2) * 0.5, (r.y1 + r.y2) * 0.5
+end
+
+local function rect_contains(r, x, y)
+    return r ~= nil and x >= r.x1 and x <= r.x2 and y >= r.y1 and y <= r.y2
+end
+
+local function inside_rect(r, v)
+    if not v then return true end
+    return r.y1 >= v.y1 - 1 and r.y2 <= v.y2 + 1 and r.x1 >= v.x1 - 1 and r.x2 <= v.x2 + 1
+end
+
+local function cursor_xy()
+    if GetCursorPosition then
+        local ok, p = pcall(GetCursorPosition)
+        if ok and p then return tonumber(p.x) or 0, tonumber(p.y) or 0 end
+    end
+    return 0, 0
+end
+
+local function move_cursor(x, y)
+    if SetCursorPosition and vector2 then
+        pcall(function() SetCursorPosition(vector2():set(x, y)) end)
+    end
+end
+
+local function rw_mod()
+    local m = gget("gp_inv_rework")
+    return type(m) == "table" and m or nil
+end
+
+local function deny()
+    state.denies = state.denies + 1
+    local m = rw_mod()
+    if m and type(m.deny) == "function" then pcall(m.deny) end
+    return "used"
+end
+
+local function no_hit(x, y)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=0;h=0;kind=none", tonumber(x) or 0, tonumber(y) or 0)
+end
+
+local function stay(x, y)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=none", tonumber(x) or 0, tonumber(y) or 0)
+end
+
+local function defer(fn)
+    if type(fn) == "function" then
+        state.queue[#state.queue + 1] = fn
+    end
+end
+
+local function drain_queue()
+    if #state.queue == 0 then return end
+    local q = state.queue
+    local items = {}
+    for i = 1, #q do items[i] = q[i] end
+    for i = #q, 1, -1 do q[i] = nil end
+    for i = 1, #items do
+        local ok, err = pcall(items[i])
+        if not ok and printf then
+            printf("! [gp_pda] deferred action error: %s", tostring(err))
+        end
+    end
+end
+
+local function safe_size(list_wnd)
+    if not list_wnd or type(list_wnd.GetSize) ~= "function" then return 0 end
+    local ok, sz = pcall(list_wnd.GetSize, list_wnd)
+    return ok and tonumber(sz) or 0
+end
+
+local function safe_item(list_wnd, idx)
+    if not list_wnd or type(list_wnd.GetItemByIndex) ~= "function" then return nil end
+    local ok, itm = pcall(list_wnd.GetItemByIndex, list_wnd, idx)
+    return ok and itm or nil
+end
+
+local function reset_scrollview(sv, key)
+    if key then state.sv_acc[key] = nil end
+    if not sv then return end
+    if type(sv.ScrollToBegin) == "function" then
+        pcall(sv.ScrollToBegin, sv)
+    elseif type(sv.SetScrollPos) == "function" then
+        local okn, mn = pcall(sv.GetMinScrollPos, sv)
+        pcall(sv.SetScrollPos, sv, okn and tonumber(mn) or 0)
+    end
+end
+
+local function is_pda_charged_ok()
+    local idm = gget("item_device")
+    if type(idm) == "table" and type(idm.is_pda_charged) == "function" then
+        local ok, res = pcall(idm.is_pda_charged, true)
+        if ok and res == false then return false end
+    end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Мосты движка (договор §2, §3, §4 — с тихой защитой до сборки PDA1-E)
+-- ---------------------------------------------------------------------------
+
+local function pda_map(cmd)
+    if type(game) == "table" and type(game.gamepad_pda_map) == "function" then
+        local ok, res = pcall(game.gamepad_pda_map, tostring(cmd or ""))
+        if ok and type(res) == "string" then return res end
+    end
+    return ""
+end
+
+local function pda_cpp_targets()
+    if type(game) == "table" and type(game.gamepad_pda_targets) == "function" then
+        local ok, res = pcall(game.gamepad_pda_targets)
+        if ok and type(res) == "string" then return res end
+    end
+    return ""
+end
+
+local function set_cpp_hints_hidden(hidden)
+    local flag = (hidden == true)
+    if state.hints_synced == flag then return end
+    if type(game) == "table" and type(game.gamepad_set_pda_hints_hidden) == "function" then
+        pcall(game.gamepad_set_pda_hints_hidden, flag)
+    end
+    state.hints_synced = flag
+end
+
+local function map_overlay()
+    return pda_map("overlay")
+end
+
+-- ---------------------------------------------------------------------------
+-- PAW модальные окна создания/настройки меток и боковой панели значков (G16 + W5-PDA)
+-- ---------------------------------------------------------------------------
+
+function get_open_paw_sidebar()
+    local paw = gget("tasks_placeable_waypoints")
+    if type(paw) ~= "table" then return nil end
+    local ind = paw.GUI_PinInd
+    if not ind then return nil end
+    local has_grid = (type(ind.icons) == "table" and #ind.icons > 0)
+        or (type(ind.grid_cells) == "table" and #ind.grid_cells > 0)
+        or (type(ind.cells) == "table" and #ind.cells > 0)
+    local is_sidebar_ctx = (paw.GUI_PinOpts and shown(paw.GUI_PinOpts))
+        or (ind.settings_mode == true)
+        or (ind.theme == "pin_sidebar")
+        or (type(ind.theme) == "table" and ind.theme.name == "pin_sidebar")
+        or has_grid
+    if not is_sidebar_ctx then return nil end
+    if ind.dialog ~= nil then
+        if not shown(ind.dialog) then return nil end
+        return ind
+    end
+    if shown(ind) then return ind end
+    return nil
+end
+
+function get_open_paw_modal()
+    local paw = gget("tasks_placeable_waypoints")
+    if type(paw) ~= "table" then return nil, nil end
+    if paw.GUI_WP and shown(paw.GUI_WP) then
+        return paw.GUI_WP, "wp"
+    end
+    if paw.GUI_PinOpts and shown(paw.GUI_PinOpts) then
+        return paw.GUI_PinOpts, "pin"
+    end
+    local ind = get_open_paw_sidebar()
+    if ind then
+        return ind, "ind"
+    end
+    return nil, nil
+end
+
+function is_paw_modal_open()
+    local dlg = get_open_paw_modal()
+    return dlg ~= nil
+end
+
+function close_paw_sidebar()
+    local ind = get_open_paw_sidebar()
+    if not ind then return false end
+    local paw = gget("tasks_placeable_waypoints")
+    local pin_dlg = paw and paw.GUI_PinOpts
+    if pin_dlg and shown(pin_dlg) and type(pin_dlg.ToggleSidebar) == "function" then
+        pcall(pin_dlg.ToggleSidebar, pin_dlg)
+    end
+    if type(ind.HideDialog) == "function" then
+        pcall(ind.HideDialog, ind)
+    end
+    if ind.dialog and type(ind.dialog.Show) == "function" then
+        pcall(ind.dialog.Show, ind.dialog, false)
+    elseif type(ind.Show) == "function" and not (paw and paw.GUI_PinOpts and shown(paw.GUI_PinOpts) and ind.dialog ~= nil) then
+        pcall(ind.Show, ind, false)
+    end
+    last_paw_action = "close_paw_sidebar"
+    last_action = last_paw_action
+    return true
+end
+
+function close_paw_modal_if_open()
+    if get_open_paw_sidebar() then
+        local paw = gget("tasks_placeable_waypoints")
+        if paw and paw.GUI_PinOpts and shown(paw.GUI_PinOpts) then
+            close_paw_sidebar()
+        else
+            return close_paw_sidebar()
+        end
+    end
+    local wnd, kind = get_open_paw_modal()
+    if not wnd then return false end
+    local closed = false
+    if type(wnd.Close) == "function" then
+        local ok = pcall(wnd.Close, wnd)
+        if ok then closed = true end
+    end
+    if not closed and type(wnd.HideDialog) == "function" then
+        local ok = pcall(wnd.HideDialog, wnd)
+        if ok then closed = true end
+    end
+    if closed then
+        last_paw_action = "close_paw_modal_" .. tostring(kind)
+        last_action = last_paw_action
+    end
+    return closed
+end
+
+local function paw_ctrl_rect(ctrl, base)
+    if not ctrl or not shown(ctrl) then return nil end
+    local r = abs_rect(ctrl)
+    if not r then return nil end
+    if base and type(ctrl.GetAbsoluteRect) ~= "function" then
+        r = { x1 = base.x1 + r.x1, y1 = base.y1 + r.y1, x2 = base.x1 + r.x2, y2 = base.y1 + r.y2 }
+    end
+    return r
+end
+
+function collect_paw_ind_targets(ind)
+    ind = ind or get_open_paw_sidebar()
+    if not ind then return {} end
+    local paw = gget("tasks_placeable_waypoints")
+    local pin_base = paw and paw.GUI_PinOpts and abs_rect(paw.GUI_PinOpts.dialog) or { x1 = 392, y1 = 200, x2 = 632, y2 = 500 }
+    local base = abs_rect(ind.dialog)
+    if base and ind.dialog and type(ind.dialog.GetAbsoluteRect) ~= "function" then
+        base = { x1 = pin_base.x1 + base.x1, y1 = pin_base.y1 + base.y1, x2 = pin_base.x1 + base.x2, y2 = pin_base.y1 + base.y2 }
+    end
+    base = base or { x1 = pin_base.x1 + 141, y1 = pin_base.y1 + 46, x2 = pin_base.x1 + 302.25, y2 = pin_base.y1 + 204 }
+
+    local out = {}
+    local grid = (type(ind.icons) == "table" and ind.icons)
+        or (type(ind.grid_cells) == "table" and ind.grid_cells)
+        or (type(ind.cells) == "table" and ind.cells)
+        or nil
+    if grid and #grid > 0 then
+        for i = 1, #grid do
+            local cell = grid[i]
+            local r = paw_ctrl_rect(cell, base)
+            if r then
+                local cx, cy = rect_center(r)
+                out[#out + 1] = {
+                    id = "paw_ind_cell_" .. i,
+                    field = "ind_grid",
+                    kind = "paw_icon",
+                    tag = "paw_ind_cell_" .. i,
+                    cell_idx = i,
+                    icon_id = type(cell) == "table" and (cell.icon_id or cell.icon or cell._icon) or nil,
+                    ctrl = cell,
+                    r = r,
+                    vis = true,
+                    x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2,
+                    cx = cx, cy = cy, w = r.x2 - r.x1, h = r.y2 - r.y1,
+                }
+            end
+        end
+        if #out > 0 then return out end
+    end
+
+    local single_ctrl = ind.box_curr or ind.curr or ind.btn_apply or ind.dialog
+    local sr = paw_ctrl_rect(single_ctrl, (single_ctrl == ind.dialog) and nil or base) or base
+    if sr then
+        local cx, cy = rect_center(sr)
+        out[#out + 1] = {
+            id = "paw_ind_curr",
+            field = "ind_single",
+            kind = "paw_icon",
+            tag = "paw_ind_curr",
+            ctrl = single_ctrl,
+            r = sr,
+            vis = true,
+            x1 = sr.x1, y1 = sr.y1, x2 = sr.x2, y2 = sr.y2,
+            cx = cx, cy = cy, w = sr.x2 - sr.x1, h = sr.y2 - sr.y1,
+        }
+    end
+    return out
+end
+
+function collect_paw_modal_targets(dlg, kind)
+    if not dlg then
+        local ind = get_open_paw_sidebar()
+        if ind then return collect_paw_ind_targets(ind) end
+        dlg, kind = get_open_paw_modal()
+    end
+    if not dlg then return {} end
+    if kind == "ind" then
+        return collect_paw_ind_targets(dlg)
+    end
+    local base = abs_rect(dlg.dialog) or { x1 = 352, y1 = 229, x2 = 672, y2 = 539 }
+    local out = {}
+    local function push_ctrl(ctrl, tag, extra_kind, ch_key)
+        local r = paw_ctrl_rect(ctrl, base)
+        if not r then return end
+        local cx, cy = rect_center(r)
+        local tag_s = tostring(tag or "paw")
+        out[#out + 1] = {
+            id = tag_s,
+            field = ch_key and "paw_argb" or "paw",
+            kind = extra_kind or tag_s,
+            argb_ch = ch_key,
+            ctrl = ctrl,
+            r = r,
+            vis = true,
+            x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2,
+            cx = cx, cy = cy, w = r.x2 - r.x1, h = r.y2 - r.y1,
+            tag = tag_s,
+        }
+    end
+    local fields
+    if kind == "wp" then
+        fields = {
+            { dlg.wpname, "paw_wp_name", "edit" },
+            { dlg.wpdesc, "paw_wp_desc", "edit" },
+            { dlg.check_wpactive, "paw_wp_active", "check" },
+            { dlg.check_wphud, "paw_wp_hud", "check" },
+            { dlg.btn_wpreset, "paw_wp_reset", "button" },
+            { dlg.btn_ok, "paw_wp_ok", "button" },
+            { dlg.btn_cancel, "paw_wp_cancel", "button" },
+        }
+    else
+        fields = {
+            { dlg.input, "paw_pin_input", "edit" },
+            { dlg.check_pers, "paw_pin_pers", "check" },
+            { dlg.check_hud, "paw_pin_hud", "check" },
+            { dlg.check_text, "paw_pin_text", "check" },
+            { dlg.check_lock, "paw_pin_lock", "check" },
+            { dlg.check_argb, "paw_pin_argb", "check" },
+            { dlg.btn_sidebar, "paw_pin_sidebar", "button" },
+            { dlg.btn_delete, "paw_pin_delete", "button" },
+            { dlg.btn_ok, "paw_pin_ok", "button" },
+            { dlg.btn_cancel, "paw_pin_cancel", "button" },
+            { dlg.btn_sound, "paw_pin_sound", "button" },
+        }
+    end
+    for i = 1, #fields do
+        push_ctrl(fields[i][1], fields[i][2], fields[i][3], fields[i][4])
+    end
+    if kind ~= "wp" and dlg.argb_controls and shown(dlg.argb_controls) then
+        local argb_base = paw_ctrl_rect(dlg.argb_controls, base) or base
+        local argb_fields = {
+            { dlg.input_a, "paw_pin_argb_a", "argb", "a" },
+            { dlg.input_r, "paw_pin_argb_r", "argb", "r" },
+            { dlg.input_g, "paw_pin_argb_g", "argb", "g" },
+            { dlg.input_b, "paw_pin_argb_b", "argb", "b" },
+        }
+        for i = 1, #argb_fields do
+            local af = argb_fields[i]
+            local r = paw_ctrl_rect(af[1], argb_base)
+            if r then
+                local cx, cy = rect_center(r)
+                out[#out + 1] = {
+                    id = af[2],
+                    field = "paw_argb",
+                    kind = af[3],
+                    argb_ch = af[4],
+                    ctrl = af[1],
+                    r = r,
+                    vis = true,
+                    x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2,
+                    cx = cx, cy = cy, w = r.x2 - r.x1, h = r.y2 - r.y1,
+                    tag = af[2],
+                }
+            end
+        end
+    end
+    return out
+end
+
+function on_map_menu_hover(txt, x1, y1, x2, y2)
+    state.map_menu.hover_text = tostring(txt or "")
+    x1, y1, x2, y2 = tonumber(x1), tonumber(y1), tonumber(x2), tonumber(y2)
+    if state.map_menu.hover_text ~= "" and x1 and y1 and x2 and y2 and (x2 - x1) > 1 and (y2 - y1) > 1 then
+        state.map_menu.hover_rect = { x1 = x1, y1 = y1, x2 = x2, y2 = y2 }
+    else
+        state.map_menu.hover_rect = nil
+    end
+end
+
+local function on_map_spot_menu_add_property(property_ui, id, level_name)
+    state.map_menu.prop_box = property_ui
+    state.map_menu.id = id
+    state.map_menu.level_name = level_name
+    state.map_menu.hover_text = ""
+    state.map_menu.hover_rect = nil
+end
+
+function normalize_empty_map_right_click_table(x, y, z, lvid, gvid, level_name, cur_x, cur_y)
+    local lvl = tostring(level_name or "")
+    if lvl == "" then
+        local level_mod = gget("level")
+        if level_mod and type(level_mod.name) == "function" then
+            local ok, lname = pcall(level_mod.name)
+            if ok and type(lname) == "string" then lvl = lname end
+        end
+    end
+    local px, py, pz = tonumber(x) or 0, tonumber(y) or 0, tonumber(z) or 0
+    local cx, cy = tonumber(cur_x) or 512, tonumber(cur_y) or 384
+    return {
+        object_id  = 65535,
+        id         = 65535,
+        object     = nil,
+        level_name = lvl,
+        level      = lvl,
+        level_vid  = tonumber(lvid) or 0,
+        lvid       = tonumber(lvid) or 0,
+        game_vid   = tonumber(gvid) or 0,
+        gvid       = tonumber(gvid) or 0,
+        pos        = { x = px, y = py, z = pz },
+        position   = { x = px, y = py, z = pz },
+        x          = px,
+        y          = py,
+        z          = pz,
+        cursor_x   = cx,
+        cursor_y   = cy,
+    }
+end
+
+function on_map_context_menu_x(obj_id, x, y, z, lvid, gvid, level_name, property_ui, cur_x, cur_y)
+    local raw_id = tonumber(obj_id)
+    local id = (raw_id and raw_id > 0) and raw_id or 65535
+    local paw = gget("tasks_placeable_waypoints")
+    local prop_box = property_ui or (paw and paw.context_menu_ui)
+
+    if id ~= 65535 then
+        if paw and prop_box and type(paw.get_context_menu_options) == "function" then
+            pcall(function() paw.get_context_menu_options(prop_box, id) end)
+            last_paw_action = "context_menu_obj:" .. tostring(id)
+            return true
+        end
+        return false
+    end
+
+    local map_table = normalize_empty_map_right_click_table(x, y, z, lvid, gvid, level_name, cur_x, cur_y)
+    local prev_temp_zone = paw and paw.last_temp_zone or nil
+    local menu_opened = false
+
+    local rc_fn = gget("COnRightClickMap")
+    if prop_box and type(rc_fn) == "function" then
+        if pcall(function() rc_fn(prop_box, map_table) end) then
+            menu_opened = true
+        end
+    end
+
+    local zone_id = nil
+    if paw then
+        local paw_populated = (paw.last_temp_zone ~= nil and paw.last_temp_zone ~= prev_temp_zone)
+        if not paw_populated and prop_box and type(paw.on_map_right_click) == "function" then
+            local ok_prc = pcall(function() paw.on_map_right_click(prop_box, map_table) end)
+            if ok_prc and paw.last_temp_zone then
+                paw_populated = true
+                menu_opened = true
+            end
+        end
+        if not paw_populated and type(paw.register_script_zone) == "function" then
+            local ok_reg, se_obj = pcall(function()
+                return paw.register_script_zone(map_table.pos, map_table.lvid, map_table.gvid)
+            end)
+            if ok_reg and se_obj and se_obj.id then
+                paw.right_clicked = true
+                paw.last_temp_zone = se_obj.id
+                paw.last_clicked_id = se_obj.id
+                zone_id = se_obj.id
+                if prop_box and type(paw.get_context_menu_options) == "function" then
+                    pcall(function() paw.get_context_menu_options(prop_box, se_obj.id, map_table) end)
+                    if type(prop_box.AutoUpdateSize) == "function" then
+                        pcall(prop_box.AutoUpdateSize, prop_box)
+                    end
+                    menu_opened = true
+                elseif not prop_box then
+                    if type(paw.do_paw_action) == "function" then
+                        pcall(function() paw.do_paw_action("pn_add", se_obj) end)
+                        menu_opened = true
+                    end
+                    if type(paw.open_pin_settings) == "function" then
+                        pcall(function() paw.open_pin_settings(se_obj.id) end)
+                        menu_opened = true
+                    end
+                end
+            end
+        else
+            zone_id = paw.last_temp_zone or paw.last_clicked_id
+        end
+    end
+
+    if not prop_box then
+        local level_mod = gget("level")
+        local dik = gget("DIK_keys")
+        local m2 = dik and (dik.MOUSE_2 or 338)
+        if level_mod and m2 and type(level_mod.release_action) == "function" then
+            if type(level_mod.press_action) == "function" then
+                pcall(function() level_mod.press_action(m2) end)
+            end
+            pcall(function() level_mod.release_action(m2) end)
+            menu_opened = true
+        end
+    end
+
+    if not menu_opened then
+        last_paw_action = "context_menu_unavailable"
+        return false
+    end
+
+    last_paw_action = "context_menu_empty:" .. tostring(zone_id or 65535)
+    last_action = "map_context_menu_x:" .. tostring(map_table.cursor_x) .. tostring(":") .. tostring(map_table.cursor_y)
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Активность КПК и кеш окон Lua-вкладок (ТЗ §3)
+-- ---------------------------------------------------------------------------
+
+local function pda_wnd()
+    -- FIX 2026-11-14: ActorMenu.get_pda_menu разыменовывает CurrentGameUI() без проверки
+    -- (UIActorMenu_script.cpp:44; HUDManager.cpp:30 возвращает nullptr без g_hud). В главном меню
+    -- и на загрузке это давало исключения в sync_context_hints и stack overflow (_g_patches.script:1758).
+    if not (level and type(level.present) == "function" and level.present()) then return nil end
+    local dbm = _G and rawget(_G, "db")
+    if not (type(dbm) == "table" and dbm.actor) then return nil end
+    local am = gget("ActorMenu")
+    if type(am) == "table" and type(am.get_pda_menu) == "function" then
+        local ok, w = pcall(am.get_pda_menu)
+        if ok then return w end
+    end
+    return nil
+end
+
+local function tab_control(w)
+    if not w or type(w.GetTabControl) ~= "function" then return nil end
+    local ok, tc = pcall(w.GetTabControl, w)
+    return ok and tc or nil
+end
+
+local function active_section(w)
+    if w and type(w.GetActiveSection) == "function" then
+        local ok, s = pcall(w.GetActiveSection, w)
+        if ok and type(s) == "string" and s ~= "" then return s end
+    end
+    local tc = tab_control(w)
+    if tc and type(tc.GetActiveId) == "function" then
+        local ok, s = pcall(tc.GetActiveId, tc)
+        if ok and type(s) == "string" and s ~= "" then return s end
+    end
+    return "eptTasks"
+end
+
+local function menu_or_pause_blocking()
+    local mm_fn = gget("MainMenu")
+    if type(mm_fn) == "function" then
+        local ok_m, mm = pcall(mm_fn)
+        if ok_m and mm and type(mm.IsActive) == "function" then
+            local ok_a, act = pcall(mm.IsActive, mm)
+            if ok_a and act == true then return true end
+        end
+    end
+    local pause = _G and _G.ui_gp_pause
+    if type(pause) == "table" and type(pause.is_open) == "function" then
+        local ok_p, po = pcall(pause.is_open)
+        if ok_p and po == true then return true end
+    end
+    return false
+end
+
+local function is_dialog_top(dlg, allowed_names, alt_dlg)
+    if not dlg then return false end
+    if type(game) == "table" and type(game.gamepad_is_top_dialog) == "function" then
+        local ok_t, top = pcall(game.gamepad_is_top_dialog, dlg)
+        if ok_t and top == true then return true end
+        if dlg.dialog then
+            local ok_d, top_d = pcall(game.gamepad_is_top_dialog, dlg.dialog)
+            if ok_d and top_d == true then return true end
+        end
+        if alt_dlg then
+            local ok_a, top_a = pcall(game.gamepad_is_top_dialog, alt_dlg)
+            if ok_a and top_a == true then return true end
+        end
+        return false
+    end
+    local st = gget("_UI_stack")
+    if type(st) ~= "table" or #st == 0 then return true end
+    local top_name = st[#st]
+    for i = 1, #allowed_names do
+        if top_name == allowed_names[i] then return true end
+    end
+    return false
+end
+
+local function get_active_paw_layer()
+    if menu_or_pause_blocking() then return nil, nil end
+    local paw = gget("tasks_placeable_waypoints")
+    if type(paw) ~= "table" then return nil, nil end
+    local ind = get_open_paw_sidebar()
+    if ind then
+        if is_dialog_top(ind, { "UIPAWIndicator", "UIPinSettingsWnd", "UIPda", "CUIPdaWnd" }, paw.GUI_PinOpts) then
+            return ind, "ind"
+        end
+        return nil, nil
+    end
+    if paw.GUI_PinOpts and shown(paw.GUI_PinOpts) then
+        if is_dialog_top(paw.GUI_PinOpts, { "UIPinSettingsWnd", "UIPda", "CUIPdaWnd" }) then
+            return paw.GUI_PinOpts, "pin"
+        end
+        return nil, nil
+    end
+    if paw.GUI_WP and shown(paw.GUI_WP) then
+        if is_dialog_top(paw.GUI_WP, { "UIWPSettings", "UIPda", "CUIPdaWnd" }) then
+            return paw.GUI_WP, "wp"
+        end
+        return nil, nil
+    end
+    return nil, nil
+end
+
+local function top_ok(w)
+    if is_paw_modal_open() then return false end
+    if menu_or_pause_blocking() then return false end
+    return is_dialog_top(w, { "UIPda", "CUIPdaWnd" })
+end
+
+local function stop_desc_scroll()
+    local d = state.desc
+    if d.item and d.item.scrollbar_description then
+        local sv = d.item.scrollbar_description
+        if type(sv.SetScrollPos) == "function" then
+            local okn, mn = pcall(sv.GetMinScrollPos, sv)
+            pcall(sv.SetScrollPos, sv, okn and tonumber(mn) or 0)
+        end
+    end
+    d.item = nil
+    d.key = nil
+    d.phase = "top"
+    d.since = 0
+    d.pos = 0
+end
+
+local function reset_tab_focus(sec)
+    stop_desc_scroll()
+    state.tab = sec
+    if sec ~= nil then state.focus_id[sec] = nil end -- FIX-LIVE1: PDA tab can be nil (gamepad_last_error 2026-11-15)
+    state.contact_key = nil
+    state.ret = nil
+    if sec ~= "eptTasks" then
+        state.map_filters_mode = false
+    end
+    if sec == "eptTaskboard" then
+        state.tab_field["eptTaskboard"] = "cat"
+    elseif sec == "eptEncyclopedia" then
+        state.tab_field["eptEncyclopedia"] = "cat"
+    end
+end
+
+function install_hooks()
+    local pda_mod = gget("pda")
+    if type(pda_mod) == "table" and type(pda_mod.set_active_subdialog) == "function" then
+        if pda_mod.set_active_subdialog ~= state.wrapped_set_subdialog then
+            local prev = pda_mod.set_active_subdialog
+            state.wrapped_set_subdialog = function(section, ...)
+                local sec = tostring(section or "")
+                local ui = prev(section, ...)
+                if ui ~= nil and sec ~= "" then
+                    state.tab_ui[sec] = ui
+                end
+                if sec ~= "" and sec ~= state.tab then
+                    reset_tab_focus(sec)
+                end
+                return ui
+            end
+            pda_mod.set_active_subdialog = state.wrapped_set_subdialog
+        end
+    end
+    local paw = gget("tasks_placeable_waypoints")
+    if type(paw) == "table" and type(paw.get_context_menu_options) == "function" then
+        if paw.get_context_menu_options ~= state.wrapped_paw_menu then
+            local prev_paw = paw.get_context_menu_options
+            state.wrapped_paw_menu = function(property_ui, id, maptbl, ...)
+                state.map_menu.prop_box = property_ui
+                state.map_menu.id = id or (type(maptbl) == "table" and maptbl.object_id) or state.map_menu.id
+                state.map_menu.level_name = (type(maptbl) == "table" and (maptbl.level_name or maptbl.level)) or state.map_menu.level_name
+                return prev_paw(property_ui, id, maptbl, ...)
+            end
+            paw.get_context_menu_options = state.wrapped_paw_menu
+        end
+    end
+end
+
+function get_tab_ui(sec)
+    install_hooks()
+    sec = tostring(sec or "")
+    local cached = state.tab_ui[sec]
+    if cached ~= nil then return cached end
+    if sec == "eptTaskboard" then
+        local tb = gget("ui_pda_taskboard_tab")
+        if type(tb) == "table" and tb.gui ~= nil then
+            state.tab_ui[sec] = tb.gui
+            return tb.gui
+        end
+    end
+    return nil
+end
+
+local function is_pda_top_enabled()
+    install_hooks()
+    if not ENABLED then return false, nil, nil, nil end
+    local paw_dlg, paw_kind = get_active_paw_layer()
+    local w = pda_wnd()
+    if paw_dlg then
+        return true, (w and shown(w)) and w or nil, paw_dlg, paw_kind
+    end
+    if not (w and shown(w)) then return false, nil, nil, nil end
+    if type(w.IsEnabled) == "function" then
+        local ok_e, en = pcall(w.IsEnabled, w)
+        if not (ok_e and en == true) then return false, nil, nil, nil end
+    end
+    if not top_ok(w) then return false, nil, nil, nil end
+    return true, w, nil, nil
+end
+
+function is_active()
+    local ok = is_pda_top_enabled()
+    if not ok then return false end
+    return is_gamepad()
+end
+
+function modal_tag()
+    local ok, _, _, paw_kind = is_pda_top_enabled()
+    if not ok then return nil end
+    if paw_kind == "ind" then return "UIPAWIndicator" end
+    if paw_kind == "pin" then return "UIPinSettingsWnd" end
+    if paw_kind == "wp" then return "UIWPSettings" end
+    return "UIPda"
+end
+
+-- ---------------------------------------------------------------------------
+-- Подсказки на Y (общий флаг gp_inv_rework.state.desc_hidden + hint_wnd + C++)
+-- ---------------------------------------------------------------------------
+
+-- FIX-LIVE2 13b: the PDA owns its own Y flag (no longer shared with the backpack);
+-- it lives until the next Y or until the PDA is closed (reset in tick()).
+local function hints_hidden()
+    return state.fallback_desc_hidden == true
+end
+
+-- FIX-LIVE2 13: in the real game hint_wnd is a luabind instance of utils_ui.UIHint (userdata),
+-- so the old table-only wrapper never applied and every new contact re-opened the popup.
+-- Patch the class method once and only act on hint windows marked by the PDA.
+local function hint_marked(hw)
+    local ok, v = pcall(function() return hw._gp_pda_hint end)
+    return ok and v == true
+end
+
+local function patch_uihint_class()
+    local uu = rawget(_G, "utils_ui")
+    local cls = type(uu) == "table" and uu.UIHint or nil
+    if cls == nil or state.uihint_patched then return end
+    local okg, orig = pcall(function() return cls.Update end)
+    if not okg or type(orig) ~= "function" then return end
+    local oks = pcall(function()
+        cls.Update = function(self, txt, ...)
+            if txt ~= nil and hints_hidden() and hint_marked(self) then
+                return orig(self, nil)
+            end
+            return orig(self, txt, ...)
+        end
+    end)
+    if oks then state.uihint_patched = true end
+end
+
+local function wrap_hint_wnd(ui)
+    local hw = ui and ui.hint_wnd
+    if hw == nil then return end
+    if type(hw) ~= "table" then
+        patch_uihint_class()
+        pcall(function() hw._gp_pda_hint = true end)
+        return
+    end
+    if type(hw.Update) ~= "function" then return end
+    if hw._gp_pda_wrapped then return end
+    local orig = hw.Update
+    hw.Update = function(self, text, ...)
+        if hints_hidden() then
+            return orig(self, nil)
+        end
+        return orig(self, text, ...)
+    end
+    hw._gp_pda_wrapped = true
+end
+
+local function sync_hints_hidden(ui)
+    local hidden = hints_hidden()
+    set_cpp_hints_hidden(hidden)
+    if ui then
+        wrap_hint_wnd(ui)
+        if hidden and ui.hint_wnd and type(ui.hint_wnd.Update) == "function" then
+            pcall(ui.hint_wnd.Update, ui.hint_wnd, nil)
+        end
+    end
+end
+
+local function toggle_hints(ui)
+    state.fallback_desc_hidden = not (state.fallback_desc_hidden == true)
+    local hidden = hints_hidden()
+    state.hints_synced = nil
+    set_cpp_hints_hidden(hidden)
+    if ui then
+        wrap_hint_wnd(ui)
+        if hidden and ui.hint_wnd and type(ui.hint_wnd.Update) == "function" then
+            pcall(ui.hint_wnd.Update, ui.hint_wnd, nil)
+        elseif not hidden and (state.tab == "eptRelations" or state.tab == "eptContacts") and type(ui.Update) == "function" then
+            pcall(ui.Update, ui)
+        end
+    end
+    state.actions = state.actions + 1
+    last_action = "toggle_hints:" .. tostring(hidden)
+    return "used"
+end
+
+-- ---------------------------------------------------------------------------
+-- Сбор целей по вкладкам
+-- ---------------------------------------------------------------------------
+
+local function collect_filters()
+    local raw = pda_map("filters")
+    if raw == "" then return {} end
+    local out = {}
+    local idx = 0
+    for token in raw:gmatch("[^;]+") do
+        local x1, y1, x2, y2 = token:match("^%s*([%-%d%.]+),([%-%d%.]+),([%-%d%.]+),([%-%d%.]+)%s*$")
+        x1, y1, x2, y2 = tonumber(x1), tonumber(y1), tonumber(x2), tonumber(y2)
+        if x1 and y1 and x2 and y2 then
+            idx = idx + 1
+            out[#out + 1] = {
+                id = "flt:" .. idx,
+                field = "flt",
+                kind = "filter",
+                idx = idx,
+                r = { x1 = x1, y1 = y1, x2 = x2, y2 = y2 },
+            }
+        end
+    end
+    return out
+end
+
+local function collect_taskboard(ui, field_only)
+    local out = {}
+    if not ui then return out end
+    if not field_only or field_only == "cat" then
+        if ui.btn_refresh_tasks and shown(ui.btn_refresh_tasks) then
+            local r = abs_rect(ui.btn_refresh_tasks)
+            if r then
+                out[#out + 1] = {
+                    id = "tb:refresh",
+                    field = "cat",
+                    kind = "refresh",
+                    r = r,
+                    vis = true,
+                }
+            end
+        end
+        local cl = ui.category_list
+        local cv = abs_rect(cl)
+        local n = safe_size(cl)
+        for i = 0, n - 1 do
+            local it = safe_item(cl, i)
+            local r = abs_rect(it)
+            if r then
+                local cname = ""
+                if type(it) == "table" and type(it.category_name) == "string" and it.category_name ~= "" then
+                    cname = it.category_name
+                elseif type(it) == "table" and it.text_category and type(it.text_category.GetText) == "function" then
+                    local ok_t, txt = pcall(it.text_category.GetText, it.text_category)
+                    if ok_t and type(txt) == "string" then cname = txt end
+                end
+                out[#out + 1] = {
+                    id = "tb:cat:" .. i,
+                    field = "cat",
+                    kind = "cat",
+                    cat_idx = i,
+                    cat_name = cname,
+                    item = it,
+                    sv = cl,
+                    r = r,
+                    vis = inside_rect(r, cv),
+                }
+            end
+        end
+    end
+    if not field_only or field_only == "task" then
+        local tl = ui.task_list
+        local tv = abs_rect(tl)
+        local n = safe_size(tl)
+        for i = 0, n - 1 do
+            local it = safe_item(tl, i)
+            local r = abs_rect(it)
+            if r then
+                local blocked = (type(it) == "table" and it.is_blocked == true) or false
+                if not blocked and it and type(it.IsEnabled) == "function" then
+                    local ok_e, en = pcall(it.IsEnabled, it)
+                    if ok_e and en == false then blocked = true end
+                end
+                out[#out + 1] = {
+                    id = "tb:task:" .. i,
+                    field = "task",
+                    kind = "task",
+                    task_idx = i,
+                    task_count = n,
+                    is_blocked = blocked,
+                    item = it,
+                    sv = tl,
+                    r = r,
+                    vis = inside_rect(r, tv),
+                }
+            end
+        end
+    end
+    return out
+end
+
+local function collect_child_list_targets(list_wnd, field, kind, out)
+    local ch = type(list_wnd) == "table" and list_wnd._children or nil
+    if type(ch) == "table" and #ch > 0 then
+        local vp = abs_rect(list_wnd)
+        for i = 1, #ch do
+            local r = abs_rect(ch[i])
+            if r then
+                out[#out + 1] = {
+                    id = field .. ":" .. i,
+                    field = field,
+                    kind = kind,
+                    idx = i,
+                    sv = list_wnd,
+                    r = r,
+                    vis = inside_rect(r, vp),
+                }
+            end
+        end
+        return true
+    end
+    local n = safe_size(list_wnd)
+    if n > 0 then
+        local vp = abs_rect(list_wnd)
+        for i = 0, n - 1 do
+            local r = abs_rect(safe_item(list_wnd, i))
+            if r then
+                out[#out + 1] = {
+                    id = field .. ":" .. (i + 1),
+                    field = field,
+                    kind = kind,
+                    idx = i + 1,
+                    sv = list_wnd,
+                    r = r,
+                    vis = inside_rect(r, vp),
+                }
+            end
+        end
+        return true
+    end
+    return false
+end
+
+local function parse_cpp_targets(allowed)
+    local raw = pda_cpp_targets()
+    if raw == "" then return {} end
+    local out = {}
+    local counts = {}
+    for token in raw:gmatch("[^;]+") do
+        local f, x1, y1, x2, y2 = token:match("^%s*([^:]+):([%-%d%.]+),([%-%d%.]+),([%-%d%.]+),([%-%d%.]+)%s*$")
+        if f and (not allowed or allowed[f]) then
+            x1, y1, x2, y2 = tonumber(x1), tonumber(y1), tonumber(x2), tonumber(y2)
+            if x1 and y1 and x2 and y2 then
+                local c = (counts[f] or 0) + 1
+                counts[f] = c
+                out[#out + 1] = {
+                    id = f .. ":" .. c,
+                    field = f,
+                    kind = f,
+                    idx = c,
+                    r = { x1 = x1, y1 = y1, x2 = x2, y2 = y2 },
+                    vis = true,
+                }
+            end
+        end
+    end
+    return out
+end
+
+local function collect_ranking(w)
+    local out = parse_cpp_targets({ ach = true, rank = true })
+    if #out > 0 then return out end
+    if w and type(w.FindChild) == "function" then
+        local _, al = pcall(w.FindChild, w, "achievements_list")
+        local _, rl = pcall(w.FindChild, w, "coc_ranking_list")
+        collect_child_list_targets(al, "ach", "ach", out)
+        collect_child_list_targets(rl, "rank", "rank", out)
+    end
+    return out
+end
+
+local function collect_logs(w)
+    local out = parse_cpp_targets({ logbtn = true })
+    if #out > 0 then return out end
+    if w and type(w.FindChild) == "function" then
+        local names = { "filter_news", "filter_talk", "btn_prev_period", "btn_next_period" }
+        for i = 1, #names do
+            local ok, ctrl = pcall(w.FindChild, w, names[i])
+            if ok and ctrl and shown(ctrl) then
+                local r = abs_rect(ctrl)
+                if r then
+                    out[#out + 1] = {
+                        id = "logbtn:" .. i,
+                        field = "logbtn",
+                        kind = "logbtn",
+                        idx = i,
+                        name = names[i],
+                        r = r,
+                        vis = true,
+                    }
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function collect_relations(ui)
+    local out = {}
+    if not (ui and type(ui.companion_info) == "table") then return out end
+    local lb = ui.companion_listbox
+    local vp = abs_rect(lb)
+    for i = 1, 24 do
+        local ci = ui.companion_info[i]
+        if ci and ci.icon_wnd and shown(ci.icon_wnd) then
+            local r = abs_rect(ci.icon_wnd)
+            if r then
+                out[#out + 1] = {
+                    id = "rel:" .. i,
+                    field = "rel",
+                    kind = "companion",
+                    comp_idx = i,
+                    comp_id = ci.id,
+                    sv = lb,
+                    r = r,
+                    vis = inside_rect(r, vp),
+                }
+            end
+        end
+    end
+    return out
+end
+
+local function collect_contacts(ui)
+    local out = {}
+    if not (ui and type(ui.contact_info) == "table") then return out end
+    local lb = ui.listbox
+    local vp = abs_rect(lb)
+    for i = 1, 50 do
+        local ci = ui.contact_info[i]
+        if ci and ci.icon_field and shown(ci.icon_field) then
+            local r = abs_rect(ci.icon_field)
+            if r then
+                local cname = ""
+                if ci.name_field and type(ci.name_field.GetText) == "function" then
+                    local ok, txt = pcall(ci.name_field.GetText, ci.name_field)
+                    if ok and type(txt) == "string" then cname = txt end
+                end
+                out[#out + 1] = {
+                    id = "con:" .. i,
+                    field = "con",
+                    kind = "contact",
+                    con_idx = i,
+                    name = cname,
+                    sv = lb,
+                    r = r,
+                    vis = inside_rect(r, vp),
+                }
+            end
+        end
+    end
+    return out
+end
+
+local function collect_listbox_field(lb, field, kind)
+    local out = {}
+    local n = safe_size(lb)
+    local vp = abs_rect(lb)
+    for i = 0, n - 1 do
+        local it = safe_item(lb, i)
+        local r = abs_rect(it)
+        if r then
+            out[#out + 1] = {
+                id = field .. ":" .. i,
+                field = field,
+                kind = kind,
+                idx = i,
+                item = it,
+                sv = lb,
+                r = r,
+                vis = inside_rect(r, vp),
+            }
+        end
+    end
+    return out
+end
+
+local function collect_encyclopedia(ui, field_only)
+    local out = {}
+    if not ui then return out end
+    if not field_only or field_only == "cat" then
+        for _, t in ipairs(collect_listbox_field(ui.category_list, "cat", "cat")) do
+            out[#out + 1] = t
+        end
+    end
+    if not field_only or field_only == "art" then
+        for _, t in ipairs(collect_listbox_field(ui.article_list, "art", "art")) do
+            local it = t.item
+            local locked = false
+            if type(it) == "table" and (it.locked == true or it.is_locked == true) then
+                locked = true
+            elseif it and type(it.IsEnabled) == "function" then
+                local ok_e, en = pcall(it.IsEnabled, it)
+                if ok_e and en == false then locked = true end
+            end
+            t.locked = locked
+            out[#out + 1] = t
+        end
+    end
+    return out
+end
+
+local function collect_radio(ui)
+    local out = {}
+    if not ui then return out end
+    for _, spec in ipairs(RADIO_BUTTONS) do
+        local w = spec.idx and (type(ui[spec.btn]) == "table" and ui[spec.btn][spec.idx]) or ui[spec.btn]
+        if w and shown(w) then
+            local r = abs_rect(w)
+            if r then
+                out[#out + 1] = {
+                    id = "rad:" .. spec.key,
+                    field = "rad",
+                    kind = "radio",
+                    cb = spec.cb,
+                    ch_idx = spec.idx,
+                    r = r,
+                    vis = true,
+                }
+            end
+        end
+    end
+    return out
+end
+
+local function is_npc_interactive(ui)
+    if not ui then return false end
+    if ui.state ~= "default" then return false end
+    if ui.dialog and not shown(ui.dialog) then return false end
+    return safe_size(ui.message_list) > 0
+end
+
+local function collect_npc(ui)
+    if not is_npc_interactive(ui) then return {} end
+    return collect_listbox_field(ui.message_list, "msg", "npc_msg")
+end
+
+local function collect_tab_targets(w, tab, ui, field_only)
+    if tab == "eptTasks" then
+        return state.map_filters_mode and collect_filters() or {}
+    elseif tab == "eptTaskboard" then
+        return collect_taskboard(ui, field_only)
+    elseif tab == "eptRanking" then
+        return collect_ranking(w)
+    elseif tab == "eptRelations" then
+        return collect_relations(ui)
+    elseif tab == "eptContacts" then
+        return collect_contacts(ui)
+    elseif tab == "eptEncyclopedia" then
+        return collect_encyclopedia(ui, field_only)
+    elseif tab == "eptRadio" then
+        return collect_radio(ui)
+    elseif tab == "eptLogs" then
+        return collect_logs(w)
+    elseif tab == "eptNPC" then
+        return collect_npc(ui)
+    end
+    return {}
+end
+
+-- ---------------------------------------------------------------------------
+-- Навигация, выбор стартовой цели и прокрутка
+-- ---------------------------------------------------------------------------
+
+local function by_id(list, id)
+    if not id then return nil end
+    for i = 1, #list do
+        if list[i].id == id then return list[i] end
+    end
+    return nil
+end
+
+local function in_field(list, field)
+    local out = {}
+    for i = 1, #list do
+        if list[i].field == field then out[#out + 1] = list[i] end
+    end
+    return out
+end
+
+local function target_at(list, x, y, field)
+    for i = 1, #list do
+        local t = list[i]
+        if (not field or t.field == field) and rect_contains(t.r, x, y) then
+            return t
+        end
+    end
+    return nil
+end
+
+local function ensure_visible(t)
+    local sv = t and t.sv
+    if not sv or type(sv.GetCurrentScrollPos) ~= "function" or type(sv.SetScrollPos) ~= "function" then
+        return t
+    end
+    local vp = abs_rect(sv)
+    if not vp then return t end
+    local dy = 0
+    if t.r.y1 < vp.y1 then
+        dy = t.r.y1 - vp.y1 - SCROLL_MARGIN
+    elseif t.r.y2 > vp.y2 then
+        dy = t.r.y2 - vp.y2 + SCROLL_MARGIN
+    end
+    if dy ~= 0 then
+        local ok_c, cur = pcall(sv.GetCurrentScrollPos, sv)
+        local old = ok_c and tonumber(cur) or 0
+        local p = old + dy
+        local ok_n, mn = pcall(sv.GetMinScrollPos, sv)
+        local ok_x, mx = pcall(sv.GetMaxScrollPos, sv)
+        if ok_n and tonumber(mn) then p = math.max(tonumber(mn), p) end
+        if ok_x and tonumber(mx) then p = math.min(tonumber(mx), p) end
+        p = math.floor(p + 0.5)
+        pcall(sv.SetScrollPos, sv, p)
+        local ok2, actual = pcall(sv.GetCurrentScrollPos, sv)
+        local shift = (ok2 and tonumber(actual) or p) - old
+        t.r = { x1 = t.r.x1, x2 = t.r.x2, y1 = t.r.y1 - shift, y2 = t.r.y2 - shift }
+        t.vis = true
+    end
+    return t
+end
+
+local function remember_target(tab, t)
+    if not t then return nil, nil end
+    state.focus_id[tab] = t.id
+    if t.field then state.mem_id[tab .. ":" .. t.field] = t.id end
+    if tab == "eptContacts" then state.contact_key = t.name end
+    if tab == "eptTaskboard" and t.field == "cat" and t.cat_idx ~= nil then
+        state.tb_cat_id = t.id
+        state.tb_cat_name = (t.cat_name and t.cat_name ~= "") and t.cat_name or nil
+    end
+    return rect_center(t.r)
+end
+
+local function focus(tab, t, no_move)
+    if not t then return nil, nil end
+    ensure_visible(t)
+    local cx, cy = remember_target(tab, t)
+    if not no_move then
+        move_cursor(cx, cy)
+    end
+    return cx, cy
+end
+
+local function remember_paw_target(kind, t)
+    if not t then return nil, nil end
+    state.paw_focus[kind] = t.id
+    return rect_center(t.r)
+end
+
+local function focus_paw(kind, t, no_move)
+    if not t then return nil, nil end
+    local cx, cy = remember_paw_target(kind, t)
+    if not no_move then
+        move_cursor(cx, cy)
+    end
+    return cx, cy
+end
+
+local function start_paw_target(kind, list)
+    if #list == 0 then return nil end
+    if kind == "wp" then
+        return by_id(list, "paw_wp_ok") or list[1]
+    elseif kind == "pin" then
+        return by_id(list, "paw_pin_ok") or list[1]
+    end
+    return list[1]
+end
+
+local function resolve_paw_target(dlg, kind, x, y)
+    local list = (kind == "ind") and collect_paw_ind_targets(dlg) or collect_paw_modal_targets(dlg, kind)
+    if #list == 0 then return nil, list end
+    if x and y then
+        local at = target_at(list, x, y)
+        if at then return at, list end
+    end
+    local cur = by_id(list, state.paw_focus[kind])
+    if cur then return cur, list end
+    return start_paw_target(kind, list), list
+end
+
+local function is_pin_locked(dlg, kind)
+    if kind ~= "pin" or not dlg then return false end
+    if dlg.locked == true then return true end
+    if dlg.check_lock and type(dlg.check_lock.GetCheck) == "function" then
+        local ok_c, chk = pcall(dlg.check_lock.GetCheck, dlg.check_lock)
+        if ok_c and chk == true then return true end
+    end
+    return false
+end
+
+local ARGB_ORDER = { "a", "r", "g", "b" }
+
+local function adjust_paw_argb(dlg, ch, delta)
+    if not (dlg and ch) then return false end
+    local ctrl = dlg["input_" .. tostring(ch)]
+    local cur_v = 255
+    if ctrl and type(ctrl.GetText) == "function" then
+        local ok_t, txt = pcall(ctrl.GetText, ctrl)
+        if ok_t and tonumber(txt) then cur_v = tonumber(txt) end
+    elseif type(dlg.colors) == "table" and tonumber(dlg.colors[ch]) then
+        cur_v = tonumber(dlg.colors[ch])
+    end
+    local nxt = math.max(0, math.min(255, math.floor(cur_v + delta + 0.5)))
+    if type(dlg.SetARGBVal) == "function" then
+        pcall(dlg.SetARGBVal, dlg, ch, tostring(nxt))
+    elseif ctrl and type(ctrl.SetText) == "function" then
+        pcall(ctrl.SetText, ctrl, tostring(nxt))
+    end
+    if type(dlg.colors) ~= "table" then dlg.colors = { a = 255, r = 255, g = 255, b = 255 } end
+    dlg.colors[ch] = nxt
+    dlg.cust_argb = true
+    dlg.icon_refresh = true
+    if type(dlg.RefreshIcon) == "function" then
+        pcall(dlg.RefreshIcon, dlg)
+    end
+    state.actions = state.actions + 1
+    last_paw_action = string.format("argb:%s:%d", tostring(ch), nxt)
+    last_action = "paw:" .. last_paw_action
+    return true
+end
+
+local function start_target(tab, w, ui, list)
+    if #list == 0 then return nil end
+    if tab == "eptTaskboard" then
+        local cats = in_field(list, "cat")
+        for i = 1, #cats do
+            if cats[i].kind == "cat" then return cats[i] end
+        end
+        return cats[1] or list[1]
+    elseif tab == "eptRanking" then
+        local a = in_field(list, "ach")
+        return a[1] or in_field(list, "rank")[1] or list[1]
+    elseif tab == "eptRadio" then
+        return by_id(list, "rad:rstart") or list[1]
+    elseif tab == "eptEncyclopedia" then
+        local f = state.tab_field["eptEncyclopedia"] or "cat"
+        local fl = in_field(list, f)
+        return fl[1] or in_field(list, "cat")[1] or list[1]
+    end
+    return list[1]
+end
+
+local function best_dir(list, cur, dir)
+    if not cur or #list == 0 then return nil end
+    local cx, cy = rect_center(cur.r)
+    local best, best_score = nil, math.huge
+    for i = 1, #list do
+        local t = list[i]
+        if t.id ~= cur.id then
+            local tx, ty = rect_center(t.r)
+            local dx, dy = tx - cx, ty - cy
+            local primary, cross
+            if dir == 1 then
+                primary, cross = -dy, math.abs(dx)
+            elseif dir == 2 then
+                primary, cross = dy, math.abs(dx)
+            elseif dir == 3 then
+                primary, cross = -dx, math.abs(dy)
+            elseif dir == 4 then
+                primary, cross = dx, math.abs(dy)
+            end
+            if primary and primary > 4 then
+                local score = primary * primary + cross * cross * 2.5
+                if score < best_score then
+                    best, best_score = t, score
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function step_linear(items, cur, dir, wrap)
+    if #items == 0 then return nil end
+    local cur_i = 1
+    for i = 1, #items do
+        if cur and items[i].id == cur.id then cur_i = i break end
+    end
+    if dir == 1 then
+        if cur_i > 1 then return items[cur_i - 1] end
+        if wrap then return items[#items] end
+    elseif dir == 2 then
+        if cur_i < #items then return items[cur_i + 1] end
+        if wrap then return items[1] end
+    end
+    return nil
+end
+
+local function step_horiz(items, cur, dir)
+    if #items == 0 then return nil end
+    local cur_i = 1
+    for i = 1, #items do
+        if cur and items[i].id == cur.id then cur_i = i break end
+    end
+    if dir == 3 and cur_i > 1 then return items[cur_i - 1] end
+    if dir == 4 and cur_i < #items then return items[cur_i + 1] end
+    return nil
+end
+
+local function nav_target(tab, w, ui, list, cur, dir)
+    if tab == "eptTasks" then
+        if state.map_filters_mode and (dir == 3 or dir == 4) then
+            return step_horiz(list, cur, dir)
+        end
+        return nil
+    elseif tab == "eptTaskboard" then
+        if dir ~= 1 and dir ~= 2 then return nil end
+        local f = state.tab_field["eptTaskboard"] or "cat"
+        local items = in_field(list, f)
+        return step_linear(items, cur, dir, false)
+    elseif tab == "eptEncyclopedia" then
+        if dir ~= 1 and dir ~= 2 then return nil end
+        local f = state.tab_field["eptEncyclopedia"] or "cat"
+        local items = in_field(list, f)
+        return step_linear(items, cur, dir, true)
+    elseif tab == "eptNPC" then
+        if dir ~= 1 and dir ~= 2 then return nil end
+        return step_linear(list, cur, dir, true)
+    elseif tab == "eptRanking" then
+        local same = in_field(list, cur.field)
+        if dir == 1 or dir == 2 then
+            return best_dir(same, cur, dir)
+        elseif dir == 3 or dir == 4 then
+            local other_field = (cur.field == "ach") and "rank" or "ach"
+            local other = in_field(list, other_field)
+            if #other > 0 then
+                local candidates = { cur }
+                for i = 1, #other do candidates[#candidates + 1] = other[i] end
+                local hit = best_dir(candidates, cur, dir)
+                if hit and hit.id ~= cur.id then return hit end
+                return other[1]
+            end
+        end
+        return nil
+    elseif tab == "eptLogs" then
+        if dir == 3 or dir == 4 then
+            return best_dir(list, cur, dir) or step_horiz(list, cur, dir)
+        end
+        return nil
+    else
+        return best_dir(list, cur, dir)
+    end
+end
+
+local function active_field_filter(tab)
+    if tab == "eptTaskboard" then return state.tab_field["eptTaskboard"] or "cat" end
+    if tab == "eptEncyclopedia" then return state.tab_field["eptEncyclopedia"] or "cat" end
+    return nil
+end
+
+local function resolve_current_target(tab, w, ui, x, y)
+    local ff = active_field_filter(tab)
+    local list = collect_tab_targets(w, tab, ui, ff)
+    if #list == 0 then return nil, list end
+    if tab == "eptContacts" and state.contact_key and state.contact_key ~= "" then
+        local by_i = by_id(list, state.focus_id[tab])
+        if by_i and by_i.name == state.contact_key then
+            return by_i, list
+        end
+        for i = 1, #list do
+            if list[i].name == state.contact_key then
+                return list[i], list
+            end
+        end
+    end
+    if x and y then
+        local at = target_at(list, x, y, ff)
+        if at then return at, list end
+    end
+    local cur = by_id(list, state.focus_id[tab])
+    if cur then return cur, list end
+    return start_target(tab, w, ui, list), list
+end
+
+local function ensure_initial_focus()
+    if not is_active() then return end
+    local _, w, paw_dlg, paw_kind = is_pda_top_enabled()
+    if paw_dlg then
+        local prev_kind = state.paw_kind
+        if paw_kind ~= prev_kind then
+            state.paw_kind = paw_kind
+            state.ind_rs_acc = 0
+            if paw_kind ~= "pin" or prev_kind ~= "ind" then
+                state.paw_focus[paw_kind] = nil
+            end
+        end
+        local list = (paw_kind == "ind") and collect_paw_ind_targets(paw_dlg) or collect_paw_modal_targets(paw_dlg, paw_kind)
+        if #list > 0 then
+            local cur = by_id(list, state.paw_focus[paw_kind])
+            if not cur then
+                local st = start_paw_target(paw_kind, list)
+                if st then focus_paw(paw_kind, st, false) end
+            end
+        end
+        return
+    elseif state.paw_kind ~= nil then
+        state.paw_kind = nil
+        state.paw_focus = {}
+        state.ind_rs_acc = 0
+    end
+    local tab = active_section(w)
+    if tab ~= state.tab then
+        reset_tab_focus(tab)
+        sync_hints_hidden(get_tab_ui(tab))
+        if tab == "eptTasks" then
+            pda_map("eye_home")
+            move_cursor(MAP_EYE_X, MAP_EYE_Y)
+            return
+        end
+    end
+    if tab == "eptTasks" and not state.map_filters_mode then return end
+    local ui = get_tab_ui(tab)
+    local ff = active_field_filter(tab)
+    local list = collect_tab_targets(w, tab, ui, ff)
+    if #list == 0 then return end
+    local cur = by_id(list, state.focus_id[tab])
+    if tab == "eptContacts" and state.contact_key and state.contact_key ~= "" then
+        if not cur or cur.name ~= state.contact_key then
+            local matched = nil
+            for i = 1, #list do
+                if list[i].name == state.contact_key then matched = list[i] break end
+            end
+            if matched then
+                focus(tab, matched, false)
+                return
+            end
+        end
+    end
+    if not cur then
+        local st = start_target(tab, w, ui, list)
+        if st then focus(tab, st, false) end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Контракт движка: focus_frame_active, query, snap, rs_analog
+-- ---------------------------------------------------------------------------
+
+function focus_frame_active()
+    if not is_active() then return false end
+    local _, w, paw_dlg, paw_kind = is_pda_top_enabled()
+    if paw_dlg then
+        local list = (paw_kind == "ind") and collect_paw_ind_targets(paw_dlg) or collect_paw_modal_targets(paw_dlg, paw_kind)
+        return #list > 0
+    end
+    local tab = active_section(w)
+    local ui = get_tab_ui(tab)
+    if tab == "eptTasks" then
+        if state.map_filters_mode then return true end
+        local ov = map_overlay()
+        return ov == "menu" or ov == "tasks" or ov == "legend"
+    elseif tab == "eptRelations" then
+        return #collect_relations(ui) > 0
+    elseif tab == "eptContacts" then
+        return #collect_contacts(ui) > 0
+    elseif tab == "eptNPC" then
+        return is_npc_interactive(ui)
+    elseif tab == "eptTaskboard" then
+        return #collect_taskboard(ui) > 0
+    elseif tab == "eptEncyclopedia" then
+        return #collect_encyclopedia(ui) > 0
+    elseif tab == "eptRadio" then
+        return #collect_radio(ui) > 0
+    elseif tab == "eptRanking" or tab == "eptLogs" then
+        return #collect_tab_targets(w, tab, ui) > 0
+    end
+    return false
+end
+
+function query(x, y)
+    if not is_active() then return nil end
+    x, y = tonumber(x) or 0, tonumber(y) or 0
+    local _, w, paw_dlg, paw_kind = is_pda_top_enabled()
+    if paw_dlg then
+        local t = resolve_paw_target(paw_dlg, paw_kind, x, y)
+        if not t then return no_hit(x, y) end
+        local cx, cy = remember_paw_target(paw_kind, t)
+        return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s",
+            cx, cy, t.r.x2 - t.r.x1, t.r.y2 - t.r.y1, tostring(t.kind or "cell"))
+    end
+    local tab = active_section(w)
+    if tab == "eptTasks" and not state.map_filters_mode then
+        local ov = map_overlay()
+        if ov == "legend" then return no_hit(x, y) end
+        return "hit:0"
+    end
+    if not focus_frame_active() then
+        return no_hit(x, y)
+    end
+    local ui = get_tab_ui(tab)
+    local t = resolve_current_target(tab, w, ui, x, y)
+    if not t or t.vis == false then
+        return no_hit(x, y)
+    end
+    local cx, cy = remember_target(tab, t)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s",
+        cx, cy, t.r.x2 - t.r.x1, t.r.y2 - t.r.y1, tostring(t.kind or "cell"))
+end
+
+local function snap_paw(paw_dlg, paw_kind, x, y, dir)
+    state.paw_kind = paw_kind
+    local cur, list = resolve_paw_target(paw_dlg, paw_kind, x, y)
+    if #list == 0 then return stay(x, y) end
+    if paw_kind == "ind" and cur and cur.field == "ind_single" then
+        if dir == 1 and type(paw_dlg.IconPrev) == "function" then
+            pcall(paw_dlg.IconPrev, paw_dlg)
+            state.actions = state.actions + 1
+            last_paw_action = "ind:icon_prev"
+            last_action = "paw:" .. last_paw_action
+        elseif dir == 2 and type(paw_dlg.IconNext) == "function" then
+            pcall(paw_dlg.IconNext, paw_dlg)
+            state.actions = state.actions + 1
+            last_paw_action = "ind:icon_next"
+            last_action = "paw:" .. last_paw_action
+        elseif dir == 3 and type(paw_dlg.SetPrev) == "function" then
+            pcall(paw_dlg.SetPrev, paw_dlg)
+            state.actions = state.actions + 1
+            last_paw_action = "ind:set_prev"
+            last_action = "paw:" .. last_paw_action
+        elseif dir == 4 and type(paw_dlg.SetNext) == "function" then
+            pcall(paw_dlg.SetNext, paw_dlg)
+            state.actions = state.actions + 1
+            last_paw_action = "ind:set_next"
+            last_action = "paw:" .. last_paw_action
+        end
+        local cx, cy = focus_paw(paw_kind, cur, true)
+        return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, tostring(cur.kind or "paw_icon"))
+    end
+    if paw_kind == "pin" and cur and cur.argb_ch then
+        local ch = cur.argb_ch
+        if dir == 1 or dir == 2 then
+            if is_pin_locked(paw_dlg, paw_kind) then
+                deny()
+            else
+                adjust_paw_argb(paw_dlg, ch, (dir == 1) and ARGB_FINE_STEP or -ARGB_FINE_STEP)
+            end
+            local cx, cy = rect_center(cur.r)
+            return stay(cx, cy)
+        elseif dir == 3 or dir == 4 then
+            local idx = 1
+            for i = 1, #ARGB_ORDER do
+                if ARGB_ORDER[i] == ch then idx = i break end
+            end
+            local nxt_idx = idx + ((dir == 4) and 1 or -1)
+            local nxt = nil
+            if nxt_idx >= 1 and nxt_idx <= #ARGB_ORDER then
+                nxt = by_id(list, "paw_pin_argb_" .. ARGB_ORDER[nxt_idx])
+            elseif nxt_idx < 1 then
+                nxt = by_id(list, "paw_pin_argb") or best_dir(list, cur, dir)
+            else
+                nxt = by_id(list, "paw_pin_ok") or best_dir(list, cur, dir)
+            end
+            if nxt then
+                local cx, cy = focus_paw(paw_kind, nxt, true)
+                return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, tostring(nxt.kind or "cell"))
+            end
+            local cx, cy = rect_center(cur.r)
+            return stay(cx, cy)
+        end
+    end
+    local nxt = cur and best_dir(list, cur, dir) or start_paw_target(paw_kind, list)
+    if not nxt then
+        if cur then x, y = rect_center(cur.r) end
+        return stay(x, y)
+    end
+    local cx, cy = focus_paw(paw_kind, nxt, true)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, tostring(nxt.kind or "cell"))
+end
+
+function snap(x, y, dir)
+    if not is_active() then return nil end
+    x, y, dir = tonumber(x) or 0, tonumber(y) or 0, tonumber(dir) or 0
+    local _, w, paw_dlg, paw_kind = is_pda_top_enabled()
+    if paw_dlg then
+        return snap_paw(paw_dlg, paw_kind, x, y, dir)
+    end
+    local tab = active_section(w)
+    if tab == "eptTasks" and not state.map_filters_mode then
+        local ov = map_overlay()
+        if ov == "legend" then return stay(x, y) end
+        return "snap:0"
+    end
+    if not focus_frame_active() then
+        return stay(x, y)
+    end
+    local ui = get_tab_ui(tab)
+    local cur, list = resolve_current_target(tab, w, ui, x, y)
+    local nxt
+    if cur then
+        nxt = nav_target(tab, w, ui, list, cur, dir)
+    else
+        nxt = start_target(tab, w, ui, list)
+    end
+    if not nxt then
+        if cur then x, y = rect_center(cur.r) end
+        return stay(x, y)
+    end
+    local cx, cy = focus(tab, nxt, true)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, tostring(nxt.kind or "cell"))
+end
+
+local function sv_scroll(sv, key, y, dt)
+    if not sv or type(sv.GetCurrentScrollPos) ~= "function" or type(sv.SetScrollPos) ~= "function" then
+        return false
+    end
+    local ok, cur = pcall(sv.GetCurrentScrollPos, sv)
+    cur = ok and tonumber(cur) or nil
+    if not cur then return false end
+    local acc = state.sv_acc[key]
+    if not acc or math.floor(acc + 0.5) ~= cur then acc = cur end
+    local okn, mn = pcall(sv.GetMinScrollPos, sv)
+    local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+    mn = okn and tonumber(mn) or 0
+    mx = okx and tonumber(mx) or cur
+    acc = math.max(mn, math.min(mx, acc + (tonumber(y) or 0) * LIST_SCROLL_SPEED * (tonumber(dt) or 0) / 1000))
+    state.sv_acc[key] = acc
+    local ip = math.floor(acc + 0.5)
+    if ip ~= cur then pcall(sv.SetScrollPos, sv, ip) end
+    return true
+end
+
+function rs_analog(y, dt)
+    if not is_active() then return false end
+    local _, w, paw_dlg, paw_kind = is_pda_top_enabled()
+    if paw_dlg then
+        if paw_kind == "ind" then
+            state.ind_rs_acc = (state.ind_rs_acc or 0) + (tonumber(y) or 0) * (tonumber(dt) or 0)
+            while math.abs(state.ind_rs_acc) >= IND_RS_STEP_MS do
+                if state.ind_rs_acc > 0 then
+                    state.ind_rs_acc = state.ind_rs_acc - IND_RS_STEP_MS
+                    if type(paw_dlg.IconNext) == "function" then pcall(paw_dlg.IconNext, paw_dlg) end
+                else
+                    state.ind_rs_acc = state.ind_rs_acc + IND_RS_STEP_MS
+                    if type(paw_dlg.IconPrev) == "function" then pcall(paw_dlg.IconPrev, paw_dlg) end
+                end
+            end
+        end
+        return true
+    end
+    local tab = active_section(w)
+    if tab == "eptRanking" then
+        -- FIX-LIVE2 12a: C++ CUIPdaWnd::GpScrollAnalog picks the list under the UI cursor.
+        -- Park the (hidden) cursor at a fixed anchor inside the list that holds the white frame,
+        -- so RS scrolls exactly that list and stops at its edge. The anchor is taken when the
+        -- focus moves and kept while scrolling (the focused row itself may scroll away).
+        local fid = state.focus_id["eptRanking"]
+        local a = state.rank_anchor
+        if fid and (not a or a.id ~= fid) then
+            local t = by_id(collect_ranking(w), fid)
+            if t and t.r then
+                a = { id = fid, x = (t.r.x1 + t.r.x2) * 0.5, y = (t.r.y1 + t.r.y2) * 0.5 }
+                state.rank_anchor = a
+            end
+        end
+        if a and a.id == fid then
+            local cx, cy = cursor_xy()
+            if math.abs(cx - a.x) > 0.5 or math.abs(cy - a.y) > 0.5 then move_cursor(a.x, a.y) end
+        end
+        return false
+    end
+    if tab == "eptTasks" or tab == "eptLogs" then
+        return false
+    end
+    local ui = get_tab_ui(tab)
+    if tab == "eptTaskboard" then
+        return ui and ui.task_list and sv_scroll(ui.task_list, "tb_list", y, dt) or true
+    elseif tab == "eptRelations" then
+        return ui and ui.companion_listbox and sv_scroll(ui.companion_listbox, "rel_list", y, dt) or true
+    elseif tab == "eptContacts" then
+        return ui and ui.listbox and sv_scroll(ui.listbox, "con_list", y, dt) or true
+    elseif tab == "eptEncyclopedia" then
+        return ui and ui.scrollbar and sv_scroll(ui.scrollbar, "enc_desc", y, dt) or true
+    elseif tab == "eptRadio" or tab == "eptGlitched" then
+        return true
+    elseif tab == "eptNPC" then
+        if is_npc_interactive(ui) and ui.scrollbar then
+            return sv_scroll(ui.scrollbar, "npc_desc", y, dt)
+        end
+        return true
+    end
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- Действия вкладок и переключение LT / RT
+-- ---------------------------------------------------------------------------
+
+local function tabs_switching_blocked(w, tab)
+    if tab == "eptNPC" or tab == "eptGlitched" then return true end
+    local tc = tab_control(w)
+    if tc and not shown(tc) then return true end
+    return false
+end
+
+local function visible_tabs(w)
+    local tc = tab_control(w)
+    local out = {}
+    for i = 1, #TAB_ORDER do
+        local id = TAB_ORDER[i]
+        local ok = true
+        if tc and type(tc.GetButtonById) == "function" then
+            local ok_b, btn = pcall(tc.GetButtonById, tc, id)
+            if ok_b and btn ~= nil then
+                ok = shown(btn)
+            end
+        end
+        if ok then out[#out + 1] = id end
+    end
+    if #out == 0 then out[1] = "eptTasks" end
+    return out
+end
+
+local function switch_to_tab(w, next_id)
+    if not w then return end
+    if state.map_filters_mode then
+        state.map_filters_mode = false
+        pda_map("filters_mode:0")
+    end
+    local tc = tab_control(w)
+    if tc and type(tc.SetActiveTab) == "function" then
+        pcall(tc.SetActiveTab, tc, next_id)
+    elseif type(w.SetActiveSubdialog) == "function" then
+        pcall(w.SetActiveSubdialog, w, next_id)
+    end
+    reset_tab_focus(next_id)
+    sync_hints_hidden(get_tab_ui(next_id))
+    if next_id == "eptTasks" then
+        pda_map("eye_home")
+        move_cursor(MAP_EYE_X, MAP_EYE_Y)
+    else
+        ensure_initial_focus()
+    end
+    state.actions = state.actions + 1
+    last_action = "tab:" .. tostring(next_id)
+end
+
+local function cycle_tab(w, delta)
+    if tabs_switching_blocked(w, active_section(w)) then
+        return "used"
+    end
+    local tabs = visible_tabs(w)
+    local cur = active_section(w)
+    local cur_i = 1
+    for i = 1, #tabs do
+        if tabs[i] == cur then cur_i = i break end
+    end
+    local next_i = ((cur_i - 1 + delta) % #tabs) + 1
+    local next_id = tabs[next_i]
+    if next_id ~= cur then
+        defer(function() switch_to_tab(w, next_id) end)
+    end
+    return "used"
+end
+
+local function exit_filters_mode(restore_eye)
+    if not state.map_filters_mode then return end
+    state.map_filters_mode = false
+    pda_map("filters_mode:0")
+    if restore_eye then
+        move_cursor(state.saved_eye_x or MAP_EYE_X, state.saved_eye_y or MAP_EYE_Y)
+    end
+    state.actions = state.actions + 1
+    last_action = "map_filters:0"
+end
+
+local function rect_hold_reply(r)
+    if r and r.x1 and r.x2 and (r.x2 - r.x1) > 1 and (r.y2 - r.y1) > 1 then
+        return string.format("hold:%d:%d:%.1f,%.1f,%.1f,%.1f", HOLD_PAUSE, HOLD_FILL, r.x1, r.y1, r.x2, r.y2)
+    end
+    return string.format("hold:%d:%d", HOLD_PAUSE, HOLD_FILL)
+end
+
+local function view_hold_reply()
+    return rect_hold_reply(state.view_icon_rect)
+end
+
+local function hovered_paw_delete_menu_item()
+    local txt = state.map_menu.hover_text
+    local prop_box = state.map_menu.prop_box
+    if (not txt or txt == "") and prop_box and type(prop_box.GetSelectedItem) == "function" then
+        local ok_s, sel = pcall(prop_box.GetSelectedItem, prop_box)
+        if ok_s and sel and type(sel.GetText) == "function" then
+            local ok_t, stxt = pcall(sel.GetText, sel)
+            if ok_t and type(stxt) == "string" then txt = stxt end
+        end
+    end
+    if not txt or txt == "" then return nil, nil, nil end
+    local paw = gget("tasks_placeable_waypoints")
+    if type(paw) ~= "table" or type(paw.action) ~= "table" then return nil, nil, nil end
+    local ac = paw.action[txt]
+    if not ac then return nil, nil, nil end
+    local act_code = ac
+    if type(paw.action_codes) == "table" and type(paw.action_codes[ac]) == "table" and paw.action_codes[ac].act then
+        act_code = paw.action_codes[ac].act
+    end
+    if act_code == "pn_del" or act_code == "pn_clr" or act_code == "wp_del" then
+        return txt, act_code, state.map_menu.hover_rect
+    end
+    return nil, nil, nil
+end
+
+local function handle_paw_button(name, phase, dlg, kind)
+    if kind == "ind" then
+        if phase ~= "press" then return "used" end
+        local paw = gget("tasks_placeable_waypoints")
+        local pin_dlg = paw and paw.GUI_PinOpts
+        if name == "LB" then
+            if type(dlg.SetPrev) == "function" then
+                pcall(dlg.SetPrev, dlg)
+                state.paw_focus["ind"] = nil
+                state.actions = state.actions + 1
+                last_paw_action = "ind:set_prev"
+                last_action = "paw:" .. last_paw_action
+            end
+            return "used"
+        elseif name == "RB" then
+            if type(dlg.SetNext) == "function" then
+                pcall(dlg.SetNext, dlg)
+                state.paw_focus["ind"] = nil
+                state.actions = state.actions + 1
+                last_paw_action = "ind:set_next"
+                last_action = "paw:" .. last_paw_action
+            end
+            return "used"
+        elseif name == "A" then
+            if is_pin_locked(pin_dlg, "pin") then return deny() end
+            local cur = resolve_paw_target(dlg, "ind")
+            defer(function()
+                if cur and cur.ctrl and type(cur.ctrl.OnClick) == "function" then
+                    pcall(cur.ctrl.OnClick, cur.ctrl)
+                elseif cur and cur.icon_id and pin_dlg and type(pin_dlg.ApplyIconToPin) == "function" then
+                    pcall(pin_dlg.ApplyIconToPin, pin_dlg, cur.icon_id)
+                elseif type(dlg.ApplyIconToPin) == "function" then
+                    pcall(dlg.ApplyIconToPin, dlg)
+                elseif pin_dlg and type(pin_dlg.ApplyIconToPin) == "function" then
+                    pcall(pin_dlg.ApplyIconToPin, pin_dlg)
+                end
+                close_paw_sidebar()
+                if pin_dlg and shown(pin_dlg) then
+                    local plist = collect_paw_modal_targets(pin_dlg, "pin")
+                    local sb = by_id(plist, "paw_pin_sidebar") or by_id(plist, "paw_pin_ok") or plist[1]
+                    if sb then focus_paw("pin", sb, false) end
+                end
+                state.actions = state.actions + 1
+                last_paw_action = "ind:apply"
+                last_action = "paw:ind_apply"
+            end)
+            return "used"
+        elseif name == "B" then
+            defer(function()
+                close_paw_sidebar()
+                if pin_dlg and shown(pin_dlg) then
+                    local plist = collect_paw_modal_targets(pin_dlg, "pin")
+                    local sb = by_id(plist, "paw_pin_sidebar") or by_id(plist, "paw_pin_ok") or plist[1]
+                    if sb then focus_paw("pin", sb, false) end
+                end
+            end)
+            return "used"
+        end
+        return "used"
+    end
+
+    local cur, list = resolve_paw_target(dlg, kind)
+    local del_id = (kind == "wp") and "paw_wp_reset" or "paw_pin_delete"
+    local is_hold_del_btn = (name == "X") or (name == "A" and cur and cur.id == del_id)
+    if is_hold_del_btn then
+        if phase == "press" then
+            if is_pin_locked(dlg, kind) then return deny() end
+            local del_t = by_id(list, del_id)
+            if not del_t then return deny() end
+            focus_paw(kind, del_t, false)
+            return rect_hold_reply(del_t.r)
+        elseif phase == "release" or phase == "cancel" then
+            last_paw_action = (kind == "wp") and "wp_reset_cancel" or "pin_delete_cancel"
+            if name == "A" and phase == "release" then
+                return deny()
+            end
+            return "used"
+        elseif phase == "hold" then
+            if is_pin_locked(dlg, kind) then return deny() end
+            defer(function()
+                if kind == "wp" then
+                    if type(dlg.Reset) == "function" then pcall(dlg.Reset, dlg) end
+                    last_paw_action = "wp_reset"
+                else
+                    if type(dlg.DeletePin) == "function" then pcall(dlg.DeletePin, dlg) end
+                    last_paw_action = "pin_deleted"
+                end
+                state.actions = state.actions + 1
+                last_action = "paw:" .. last_paw_action
+            end)
+            return "used"
+        end
+        return "used"
+    end
+
+    if phase ~= "press" then return "used" end
+
+    local function open_osk_for_edit(ctrl)
+        if not ctrl or type(game) ~= "table" then return false end
+        local fn = (type(game.gamepad_open_osk) == "function" and game.gamepad_open_osk)
+            or (type(game.gamepad_new_game_keyboard) == "function" and game.gamepad_new_game_keyboard)
+        if not fn then return false end
+        local ok_o, opened = pcall(fn, ctrl)
+        return ok_o and opened == true
+    end
+
+    if name == "LB" or name == "RB" then
+        if kind == "pin" and cur and cur.argb_ch then
+            if is_pin_locked(dlg, kind) then return deny() end
+            adjust_paw_argb(dlg, cur.argb_ch, (name == "RB") and ARGB_COARSE_STEP or -ARGB_COARSE_STEP)
+        end
+        return "used"
+    elseif name == "Y" then
+        if is_pin_locked(dlg, kind) then return deny() end
+        local edit_t = (cur and (cur.kind == "edit" or cur.kind == "argb")) and cur
+            or by_id(list, (kind == "wp") and "paw_wp_name" or "paw_pin_input")
+        if edit_t then
+            focus_paw(kind, edit_t, false)
+            if open_osk_for_edit(edit_t.ctrl) then
+                state.actions = state.actions + 1
+                last_paw_action = "osk_y:" .. tostring(kind)
+                last_action = "paw:" .. last_paw_action
+                return "used"
+            end
+        end
+        state.actions = state.actions + 1
+        last_paw_action = "osk_y:" .. tostring(kind)
+        last_action = "paw:" .. last_paw_action
+        return ""
+    elseif name == "B" then
+        if kind == "pin" and cur and cur.argb_ch then
+            local chk_t = by_id(list, "paw_pin_argb")
+            if chk_t then focus_paw(kind, chk_t, false) end
+            last_paw_action = "argb_exit"
+            last_action = "paw:argb_exit"
+            return "used"
+        end
+        defer(function()
+            close_paw_modal_if_open()
+            state.actions = state.actions + 1
+        end)
+        return "used"
+    elseif name == "A" then
+        if not cur then return deny() end
+        if cur.kind == "edit" or cur.kind == "argb" then
+            if is_pin_locked(dlg, kind) then return deny() end
+            focus_paw(kind, cur, false)
+            if open_osk_for_edit(cur.ctrl) then
+                state.actions = state.actions + 1
+                last_paw_action = "osk:" .. cur.id
+                last_action = "paw:" .. last_paw_action
+                return "used"
+            end
+            if cur.ctrl and type(cur.ctrl.CaptureFocus) == "function" then
+                pcall(cur.ctrl.CaptureFocus, cur.ctrl, true)
+            end
+            state.actions = state.actions + 1
+            last_paw_action = "osk_click:" .. cur.id
+            last_action = "paw:" .. last_paw_action
+            return ""
+        elseif cur.kind == "check" then
+            if cur.id ~= "paw_pin_lock" and is_pin_locked(dlg, kind) then return deny() end
+            defer(function()
+                local chk = cur.ctrl
+                if chk and type(chk.GetCheck) == "function" and type(chk.SetCheck) == "function" then
+                    local nv = not chk:GetCheck()
+                    pcall(chk.SetCheck, chk, nv)
+                    if kind == "pin" then
+                        if cur.id == "paw_pin_lock" then
+                            dlg.locked = nv
+                        elseif cur.id == "paw_pin_argb" then
+                            dlg.cust_argb = nv
+                            if dlg.argb_controls and type(dlg.argb_controls.Show) == "function" then
+                                pcall(dlg.argb_controls.Show, dlg.argb_controls, nv)
+                            end
+                        end
+                        if type(dlg.Update) == "function" then pcall(dlg.Update, dlg) end
+                    end
+                    state.actions = state.actions + 1
+                    last_paw_action = "check:" .. cur.id
+                    last_action = "paw:" .. last_paw_action
+                end
+            end)
+            return "used"
+        elseif cur.id == "paw_pin_sidebar" then
+            defer(function()
+                if type(dlg.ToggleSidebar) == "function" then pcall(dlg.ToggleSidebar, dlg) end
+                local ind = get_open_paw_sidebar()
+                if ind then
+                    state.paw_kind = "ind"
+                    state.paw_focus["ind"] = nil
+                    local ilist = collect_paw_ind_targets(ind)
+                    if ilist[1] then focus_paw("ind", ilist[1], false) end
+                end
+                state.actions = state.actions + 1
+                last_paw_action = "toggle_sidebar"
+                last_action = "paw:toggle_sidebar"
+            end)
+            return "used"
+        elseif cur.id == "paw_pin_sound" then
+            defer(function()
+                if type(dlg.ToggleSound) == "function" then pcall(dlg.ToggleSound, dlg) end
+                state.actions = state.actions + 1
+                last_paw_action = "toggle_sound"
+                last_action = "paw:toggle_sound"
+            end)
+            return "used"
+        elseif cur.id == "paw_pin_ok" or cur.id == "paw_wp_ok" then
+            defer(function()
+                if type(dlg.OnAccept) == "function" then pcall(dlg.OnAccept, dlg) end
+                state.actions = state.actions + 1
+                last_paw_action = "accept_" .. tostring(kind)
+                last_action = "paw:" .. last_paw_action
+            end)
+            return "used"
+        elseif cur.id == "paw_pin_cancel" or cur.id == "paw_wp_cancel" then
+            defer(function()
+                close_paw_modal_if_open()
+                state.actions = state.actions + 1
+            end)
+            return "used"
+        end
+    end
+    return "used"
+end
+
+-- FIX-LIVE3 п.21: LB/RB листают фильтры карты (входят в режим фильтров, по кругу)
+local function step_filter(dir)
+    local filters = collect_filters()
+    if #filters == 0 then return deny() end
+    local t
+    if not state.map_filters_mode then
+        local ex, ey = cursor_xy()
+        state.saved_eye_x, state.saved_eye_y = ex, ey
+        state.map_filters_mode = true
+        pda_map("filters_mode:1")
+        t = (dir > 0) and filters[1] or filters[#filters]
+    else
+        local cur = by_id(filters, state.focus_id["eptTasks"])
+        if not cur then
+            t = (dir > 0) and filters[1] or filters[#filters]
+        else
+            local i = cur.idx + dir
+            if i < 1 then i = #filters elseif i > #filters then i = 1 end
+            t = filters[i]
+        end
+    end
+    focus("eptTasks", t, false)
+    state.actions = state.actions + 1
+    last_action = "map_filter_step:" .. tostring(t.id)
+    return "used"
+end
+
+local function handle_map_button(name, phase)
+    local ov = map_overlay()
+    if state.map_filters_mode then
+        if phase ~= "press" then return "used" end
+        if name == "LB" or name == "RB" then
+            return step_filter(name == "RB" and 1 or -1)
+        elseif name == "Y" or name == "B" then
+            exit_filters_mode(true)
+            return "used"
+        elseif name == "A" then
+            local filters = collect_filters()
+            local cur = by_id(filters, state.focus_id["eptTasks"]) or filters[1]
+            if cur then
+                focus("eptTasks", cur, false)
+                state.actions = state.actions + 1
+                last_action = "map_filter_click:" .. cur.id
+                return ""
+            end
+            return "used"
+        end
+        return "used"
+    end
+
+    if name == "View" then
+        if phase == "press" then return view_hold_reply() end
+        if phase == "release" then
+            defer(function() pda_map("tasks"); state.actions = state.actions + 1; last_action = "map:tasks" end)
+        elseif phase == "hold" then
+            defer(function() pda_map("legend"); state.actions = state.actions + 1; last_action = "map:legend" end)
+        end
+        return "used"
+    end
+
+    if ov == "menu" then
+        local del_txt, del_act, del_rect = hovered_paw_delete_menu_item()
+        if del_txt then
+            if name == "X" then
+                if phase == "press" then
+                    return rect_hold_reply(del_rect)
+                elseif phase == "release" or phase == "cancel" then
+                    last_paw_action = "menu_del_cancel"
+                    return "used"
+                elseif phase == "hold" then
+                    defer(function()
+                        local paw = gget("tasks_placeable_waypoints")
+                        local pbox = state.map_menu.prop_box
+                        if paw and type(paw.execute_context_menu_option) == "function" then
+                            pcall(paw.execute_context_menu_option, pbox, state.map_menu.id, state.map_menu.level_name, del_txt)
+                        elseif paw and type(paw.do_paw_action) == "function" then
+                            pcall(paw.do_paw_action, del_act, nil, nil, { syscall = true, id = state.map_menu.id })
+                        end
+                        if pbox and type(pbox.Hide) == "function" then
+                            pcall(pbox.Hide, pbox)
+                        end
+                        state.map_menu.hover_text = ""
+                        state.map_menu.hover_rect = nil
+                        state.actions = state.actions + 1
+                        last_paw_action = "menu_del:" .. tostring(del_act)
+                        last_action = "map:" .. last_paw_action
+                    end)
+                    return "used"
+                end
+                return "used"
+            elseif name == "A" then
+                if phase == "press" then return deny() end
+                return "used"
+            end
+        end
+    end
+
+    if phase ~= "press" then return "used" end
+    if ov == "legend" then
+        return (name == "B") and "" or "used"
+    elseif ov == "tasks" and name == "A" then
+        -- FIX-LIVE3 п.22: A по строке задания — сделать активным и сразу центрировать карту
+        if pda_map("task_pick") == "1" then
+            state.actions = state.actions + 1
+            last_action = "map:task_pick"
+            return "used"
+        end
+        return ""
+    elseif ov == "menu" or ov == "tasks" then
+        if name == "A" or name == "B" then return "" end
+        return "used"
+    end
+
+    if name == "LB" or name == "RB" then
+        return step_filter(name == "RB" and 1 or -1)
+    elseif name == "LS" then
+        pda_map("center")
+        state.actions = state.actions + 1
+        last_action = "map:center"
+        return "used"
+    elseif name == "X" then
+        defer(function()
+            if type(game) == "table" and type(game.gamepad_pda_map) == "function" then
+                local r = pda_map("menu")
+                if r == "" then
+                    deny()
+                    return
+                end
+            else
+                local cx, cy = cursor_xy()
+                if not on_map_context_menu_x(65535, 0, 0, 0, 0, 0, nil, nil, cx, cy) then
+                    deny()
+                    return
+                end
+            end
+            state.actions = state.actions + 1
+            last_action = "map:menu"
+        end)
+        return "used"
+    elseif name == "Y" then
+        local filters = collect_filters()
+        if #filters == 0 then return deny() end
+        local ex, ey = cursor_xy()
+        state.saved_eye_x, state.saved_eye_y = ex, ey
+        state.map_filters_mode = true
+        pda_map("filters_mode:1")
+        focus("eptTasks", filters[1], false)
+        state.actions = state.actions + 1
+        last_action = "map_filters:1"
+        return "used"
+    elseif name == "A" or name == "B" then
+        return ""
+    end
+    return "used"
+end
+
+local function drain_return(tab, w, ui)
+    local ret = state.ret
+    if not ret then return end
+    if tab ~= ret.tab then
+        state.ret = nil
+        return
+    end
+    local t = now_ms()
+    if ret.check_after and t < ret.check_after then return end
+    if ret.kind == "tb_refresh" then
+        local ff = state.tab_field["eptTaskboard"] or "cat"
+        local list = collect_taskboard(ui, ff)
+        if #list > 0 then
+            local pick = nil
+            if ff == "cat" then
+                if state.tb_cat_name and state.tb_cat_name ~= "" then
+                    for i = 1, #list do
+                        if list[i].cat_name == state.tb_cat_name then pick = list[i] break end
+                    end
+                end
+                pick = pick or by_id(list, "tb:cat:0") or list[1]
+            else
+                pick = list[1]
+            end
+            focus("eptTaskboard", pick, false)
+            state.ret = nil
+        elseif ff == "task" then
+            state.tab_field["eptTaskboard"] = "cat"
+            local cats = collect_taskboard(ui, "cat")
+            local pick = nil
+            if state.tb_cat_name and state.tb_cat_name ~= "" then
+                for i = 1, #cats do
+                    if cats[i].cat_name == state.tb_cat_name then pick = cats[i] break end
+                end
+            end
+            pick = pick or cats[1]
+            if pick then focus("eptTaskboard", pick, false) end
+            state.ret = nil
+        elseif t >= ret.until_ms then
+            state.ret = nil
+        end
+    else
+        state.ret = nil
+    end
+end
+
+local function handle_taskboard_button(name, phase, w, ui)
+    if phase ~= "press" then return "used" end
+    if name == "X" then
+        defer(function()
+            if ui and type(ui.OnBtnRefreshClicked) == "function" then
+                pcall(ui.OnBtnRefreshClicked, ui)
+                state.ret = { tab = "eptTaskboard", kind = "tb_refresh", check_after = now_ms() + 60, until_ms = now_ms() + 600 }
+                state.actions = state.actions + 1
+                last_action = "tb:refresh"
+            end
+        end)
+        return "used"
+    elseif name == "A" then
+        local t = resolve_current_target("eptTaskboard", w, ui)
+        if not t or not ui then return deny() end
+        if t.kind == "refresh" then
+            defer(function()
+                if type(ui.OnBtnRefreshClicked) == "function" then
+                    pcall(ui.OnBtnRefreshClicked, ui)
+                    state.ret = { tab = "eptTaskboard", kind = "tb_refresh", check_after = now_ms() + 60, until_ms = now_ms() + 600 }
+                    state.actions = state.actions + 1
+                    last_action = "tb:refresh"
+                end
+            end)
+            return "used"
+        elseif t.field == "cat" and t.cat_idx ~= nil then
+            defer(function()
+                if ui.category_list and type(ui.category_list.SetSelectedIndex) == "function" then
+                    pcall(ui.category_list.SetSelectedIndex, ui.category_list, t.cat_idx)
+                end
+                if type(ui.OnCategoryClicked) == "function" then
+                    pcall(ui.OnCategoryClicked, ui)
+                end
+                local tasks = collect_taskboard(ui, "task")
+                if #tasks > 0 then
+                    state.tab_field["eptTaskboard"] = "task"
+                    state.tb_cat_id = t.id
+                    state.tb_cat_name = (t.cat_name and t.cat_name ~= "") and t.cat_name or nil
+                    focus("eptTaskboard", tasks[1], false)
+                    state.actions = state.actions + 1
+                    last_action = "tb:open_cat:" .. t.cat_idx
+                else
+                    deny()
+                end
+            end)
+            return "used"
+        elseif t.field == "task" and t.task_idx ~= nil then
+            if t.is_blocked then return deny() end
+            local keep = (t.task_idx < (t.task_count or 1) - 1) and t.task_idx or (t.task_idx - 1)
+            defer(function()
+                stop_desc_scroll()
+                if ui.task_list and type(ui.task_list.SetSelectedIndex) == "function" then
+                    pcall(ui.task_list.SetSelectedIndex, ui.task_list, t.task_idx)
+                end
+                if type(ui.OnTaskClicked) == "function" then
+                    pcall(ui.OnTaskClicked, ui)
+                end
+                local tasks = collect_taskboard(ui, "task")
+                if #tasks > 0 then
+                    local next_i = math.max(1, math.min(#tasks, keep + 1))
+                    focus("eptTaskboard", tasks[next_i], false)
+                else
+                    state.tab_field["eptTaskboard"] = "cat"
+                    local cats = collect_taskboard(ui, "cat")
+                    local pick = nil
+                    if state.tb_cat_name and state.tb_cat_name ~= "" then
+                        for i = 1, #cats do
+                            if cats[i].cat_name == state.tb_cat_name then pick = cats[i] break end
+                        end
+                    end
+                    pick = pick or by_id(cats, state.tb_cat_id) or cats[1]
+                    if pick then focus("eptTaskboard", pick, false) end
+                end
+                state.actions = state.actions + 1
+                last_action = "tb:accept:" .. t.task_idx
+            end)
+            return "used"
+        end
+        return deny()
+    elseif name == "B" then
+        if (state.tab_field["eptTaskboard"] or "cat") == "task" then
+            stop_desc_scroll()
+            state.tab_field["eptTaskboard"] = "cat"
+            local cats = collect_taskboard(ui, "cat")
+            local pick = nil
+            if state.tb_cat_name and state.tb_cat_name ~= "" then
+                for i = 1, #cats do
+                    if cats[i].cat_name == state.tb_cat_name then pick = cats[i] break end
+                end
+            end
+            pick = pick or by_id(cats, state.tb_cat_id) or cats[1]
+            if pick then focus("eptTaskboard", pick, false) end
+            last_action = "tb:back_to_cat"
+            return "used"
+        end
+        defer(function() switch_to_tab(w, "eptTasks") end)
+        return "used"
+    end
+    return "used"
+end
+
+local function handle_relations_button(name, phase, ui)
+    if name == "View" then
+        if phase == "press" then return view_hold_reply() end
+        if phase == "release" then
+            defer(function()
+                if ui and type(ui.btn_to_text) == "function" then
+                    pcall(ui.btn_to_text, ui)
+                    state.actions = state.actions + 1
+                    last_action = "rel:btn_to_text"
+                end
+            end)
+        elseif phase == "hold" then
+            defer(function()
+                if ui and ui.auto_chk and ui.auto_chk.GetCheck and ui.auto_chk.SetCheck then
+                    pcall(function() ui.auto_chk:SetCheck(not ui.auto_chk:GetCheck()) end)
+                    state.actions = state.actions + 1
+                    last_action = "rel:auto_chk"
+                end
+            end)
+        end
+        return "used"
+    end
+    if phase ~= "press" then return "used" end
+    if name == "A" then
+        if #collect_relations(ui) > 0 then
+            local cx, cy = cursor_xy()
+            defer(function() on_pda_a_extra(cx, cy) end)
+        end
+        return "used"
+    elseif name == "Y" then
+        return toggle_hints(ui)
+    elseif name == "B" then
+        return ""
+    end
+    return "used"
+end
+
+local function handle_contacts_button(name, phase, ui)
+    if name == "View" then
+        if phase == "press" then return view_hold_reply() end
+        if phase == "release" then
+            defer(function()
+                if ui and ui.show_all and ui.show_all.GetCheck and ui.show_all.SetCheck then
+                    pcall(function()
+                        ui.show_all:SetCheck(not ui.show_all:GetCheck())
+                        if type(ui.SaveCheckBoxSettings) == "function" then ui:SaveCheckBoxSettings() end
+                        if type(ui.Reset) == "function" then ui:Reset() end
+                    end)
+                    state.actions = state.actions + 1
+                    last_action = "con:show_all"
+                end
+            end)
+        elseif phase == "hold" then
+            defer(function()
+                if ui and ui.auto_chk and ui.auto_chk.GetCheck and ui.auto_chk.SetCheck then
+                    pcall(function()
+                        ui.auto_chk:SetCheck(not ui.auto_chk:GetCheck())
+                        if type(ui.SaveCheckBoxSettings) == "function" then ui:SaveCheckBoxSettings() end
+                    end)
+                    state.actions = state.actions + 1
+                    last_action = "con:auto_chk"
+                end
+            end)
+        end
+        return "used"
+    end
+    if phase ~= "press" then return "used" end
+    if name == "Y" then return toggle_hints(ui) end
+    if name == "B" then return "" end
+    return "used"
+end
+
+local function handle_encyclopedia_button(name, phase, w, ui)
+    if name == "View" then
+        if phase == "press" then return view_hold_reply() end
+        if phase == "release" then
+            defer(function()
+                if ui and ui.image_checkbox and ui.image_checkbox.GetCheck and ui.image_checkbox.SetCheck then
+                    pcall(function()
+                        ui.image_checkbox:SetCheck(not ui.image_checkbox:GetCheck())
+                        if type(ui.SaveCheckBoxSettings) == "function" then ui:SaveCheckBoxSettings() end
+                        if ui.article_list and type(ui.article_list.GetSelectedItem) == "function" and ui.article_list:GetSelectedItem() and type(ui.SelectArticle) == "function" then
+                            ui:SelectArticle()
+                            reset_scrollview(ui.scrollbar, "enc_desc")
+                        end
+                    end)
+                    state.actions = state.actions + 1
+                    last_action = "enc:image_chk"
+                end
+            end)
+        elseif phase == "hold" then
+            defer(function()
+                if ui and ui.message_checkbox and ui.message_checkbox.GetCheck and ui.message_checkbox.SetCheck then
+                    pcall(function()
+                        ui.message_checkbox:SetCheck(not ui.message_checkbox:GetCheck())
+                        if type(ui.SaveCheckBoxSettings) == "function" then ui:SaveCheckBoxSettings() end
+                    end)
+                    state.actions = state.actions + 1
+                    last_action = "enc:msg_chk"
+                end
+            end)
+        end
+        return "used"
+    end
+    if phase ~= "press" then return "used" end
+    if name == "A" then
+        local t = resolve_current_target("eptEncyclopedia", w, ui)
+        if not (t and ui) then return deny() end
+        if t.field == "cat" then
+            defer(function()
+                if ui.category_list and type(ui.category_list.SetSelectedIndex) == "function" then
+                    pcall(ui.category_list.SetSelectedIndex, ui.category_list, t.idx)
+                end
+                if type(ui.SelectCategory) == "function" then
+                    pcall(ui.SelectCategory, ui)
+                end
+                reset_scrollview(ui.scrollbar, "enc_desc")
+                local arts = collect_encyclopedia(ui, "art")
+                if #arts > 0 then
+                    state.tab_field["eptEncyclopedia"] = "art"
+                    focus("eptEncyclopedia", arts[1], false)
+                    state.actions = state.actions + 1
+                    last_action = "enc:cat:" .. t.idx
+                else
+                    deny()
+                end
+            end)
+            return "used"
+        elseif t.field == "art" then
+            if t.locked then return deny() end
+            defer(function()
+                if ui.article_list and type(ui.article_list.SetSelectedIndex) == "function" then
+                    pcall(ui.article_list.SetSelectedIndex, ui.article_list, t.idx)
+                end
+                if type(ui.SelectArticle) == "function" then
+                    pcall(ui.SelectArticle, ui)
+                end
+                reset_scrollview(ui.scrollbar, "enc_desc")
+                focus("eptEncyclopedia", t, false)
+                state.actions = state.actions + 1
+                last_action = "enc:art:" .. t.idx
+            end)
+            return "used"
+        end
+        return "used"
+    elseif name == "B" then
+        if (state.tab_field["eptEncyclopedia"] or "cat") == "art" then
+            state.tab_field["eptEncyclopedia"] = "cat"
+            local cats = collect_encyclopedia(ui, "cat")
+            local cur_idx = ui and ui.category_list and type(ui.category_list.GetSelectedIndex) == "function" and tonumber(ui.category_list:GetSelectedIndex())
+            local pick = (cur_idx and cur_idx >= 0) and by_id(cats, "cat:" .. cur_idx) or by_id(cats, state.mem_id["eptEncyclopedia:cat"]) or cats[1]
+            if pick then focus("eptEncyclopedia", pick, false) end
+            last_action = "enc:back_to_cat"
+            return "used"
+        end
+        return ""
+    end
+    return "used"
+end
+
+local function is_radio_player_target(t)
+    if not t or type(t.id) ~= "string" then return false end
+    return t.id:find("^rad:p") ~= nil
+end
+
+local function get_plyr_playing()
+    local rmod = gget("ui_pda_radio_tab")
+    if type(rmod) == "table" and type(rmod.get_plyr_param) == "function" then
+        local ok_p, p = pcall(rmod.get_plyr_param)
+        if ok_p and type(p) == "table" and p.state == true then return true end
+    end
+    return false
+end
+
+local function get_radio_playing(ui)
+    if state.radio_playing == true then return true end
+    if ui then
+        if ui.radio_playing == true then return true end
+        if ui.interface_radio_ch1 and shown(ui.interface_radio_ch1) then return true end
+        if ui.interface_radio_ch2 and shown(ui.interface_radio_ch2) then return true end
+    end
+    return false
+end
+
+local function handle_radio_button(name, phase, w, ui)
+    if phase ~= "press" then return "used" end
+    if name == "A" or name == "X" or name == "Y" then
+        if not is_pda_charged_ok() then return deny() end
+    end
+    if name == "A" then
+        local t = resolve_current_target("eptRadio", w, ui)
+        if not (t and ui and t.cb and type(ui[t.cb]) == "function") then
+            return deny()
+        end
+        defer(function()
+            if t.ch_idx then
+                pcall(ui[t.cb], ui, t.ch_idx)
+                state.radio_ch = t.ch_idx
+                state.radio_last_mode = "radio"
+            else
+                pcall(ui[t.cb], ui)
+                if t.id == "rad:rstart" then
+                    state.radio_playing = true
+                    state.radio_last_mode = "radio"
+                elseif t.id == "rad:rstop" then
+                    state.radio_playing = false
+                    state.radio_last_mode = "radio"
+                elseif t.id == "rad:pstart" then
+                    state.radio_playing = false
+                    state.radio_last_mode = "player"
+                elseif t.id == "rad:pstop" then
+                    state.radio_last_mode = "player"
+                elseif is_radio_player_target(t) then
+                    state.radio_last_mode = "player"
+                else
+                    state.radio_last_mode = "radio"
+                end
+            end
+            state.actions = state.actions + 1
+            last_action = "radio:" .. t.id
+        end)
+        return "used"
+    elseif name == "X" then
+        -- В34 (= А, [без Миши]): старт / стоп радио или плеера на свободной кнопке X
+        if not ui then return deny() end
+        local t = resolve_current_target("eptRadio", w, ui)
+        local prefer_player = is_radio_player_target(t) or (not t and state.radio_last_mode == "player")
+        defer(function()
+            local p_on = get_plyr_playing()
+            local r_on = get_radio_playing(ui)
+            if p_on and type(ui.On_Player_Stop) == "function" then
+                pcall(ui.On_Player_Stop, ui)
+                state.radio_last_mode = "player"
+                last_action = "radio:x_pstop"
+            elseif r_on and type(ui.On_Radio_Stop) == "function" then
+                pcall(ui.On_Radio_Stop, ui)
+                state.radio_playing = false
+                state.radio_last_mode = "radio"
+                last_action = "radio:x_rstop"
+            elseif prefer_player and type(ui.On_Player_Start) == "function" then
+                pcall(ui.On_Player_Start, ui)
+                state.radio_playing = false
+                state.radio_last_mode = "player"
+                last_action = "radio:x_pstart"
+            elseif type(ui.On_Radio_Start) == "function" then
+                pcall(ui.On_Radio_Start, ui)
+                state.radio_playing = true
+                state.radio_last_mode = "radio"
+                last_action = "radio:x_rstart"
+            elseif type(ui.On_Player_Start) == "function" then
+                pcall(ui.On_Player_Start, ui)
+                state.radio_last_mode = "player"
+                last_action = "radio:x_pstart"
+            end
+            state.actions = state.actions + 1
+        end)
+        return "used"
+    elseif name == "Y" then
+        -- В34 (= А, [без Миши]): переключение плейлиста MP3-плеера или радиоканала на свободной кнопке Y
+        if not ui then return deny() end
+        local t = resolve_current_target("eptRadio", w, ui)
+        local use_radio_ch = (get_radio_playing(ui) or (t and not is_radio_player_target(t))) and not get_plyr_playing()
+        defer(function()
+            if use_radio_ch and type(ui.On_Radio_Channel) == "function" then
+                if not get_radio_playing(ui) and type(ui.On_Radio_Start) == "function" then
+                    pcall(ui.On_Radio_Start, ui)
+                    state.radio_playing = true
+                end
+                local next_ch = (state.radio_ch == 1) and 2 or 1
+                state.radio_ch = next_ch
+                state.radio_last_mode = "radio"
+                pcall(ui.On_Radio_Channel, ui, next_ch)
+                last_action = "radio:y_ch" .. tostring(next_ch)
+            elseif type(ui.On_Player_Playlist) == "function" then
+                if not get_plyr_playing() and type(ui.On_Player_Start) == "function" then
+                    pcall(ui.On_Player_Start, ui)
+                    state.radio_playing = false
+                end
+                state.radio_last_mode = "player"
+                pcall(ui.On_Player_Playlist, ui)
+                last_action = "radio:y_playlist"
+            end
+            state.actions = state.actions + 1
+        end)
+        return "used"
+    elseif name == "B" then
+        return ""
+    end
+    return "used"
+end
+
+local function handle_npc_button(name, phase, w, ui)
+    if phase ~= "press" then return "used" end
+    if name == "B" then return "" end
+    if name == "A" then
+        if not is_npc_interactive(ui) then return "used" end
+        local t = resolve_current_target("eptNPC", w, ui)
+        if t and ui then
+            defer(function()
+                if ui.message_list and type(ui.message_list.SetSelectedIndex) == "function" then
+                    pcall(ui.message_list.SetSelectedIndex, ui.message_list, t.idx)
+                end
+                if type(ui.OnSelectMessage) == "function" then
+                    pcall(ui.OnSelectMessage, ui)
+                end
+                reset_scrollview(ui.scrollbar, "npc_desc")
+                focus("eptNPC", t, false)
+                state.actions = state.actions + 1
+                last_action = "npc:msg:" .. t.idx
+            end)
+        end
+        return "used"
+    end
+    return "used"
+end
+
+-- Контракт §1: кнопки внутри интерактивного КПК (Phase: "press", "release", "hold")
+function pda_button(name, phase)
+    if not is_active() then return "" end
+    name = tostring(name or "")
+    phase = tostring(phase or "")
+    if name == "RS" then return "" end
+
+    local _, w, paw_dlg, paw_kind = is_pda_top_enabled()
+    if paw_dlg then
+        ensure_initial_focus()
+        if name == "LT" or name == "RT" or name == "View" or name == "LS" then
+            return "used"
+        end
+        return handle_paw_button(name, phase, paw_dlg, paw_kind)
+    end
+
+    local tab = active_section(w)
+    if tab ~= state.tab then
+        ensure_initial_focus()
+        tab = active_section(w)
+    end
+    local ui = get_tab_ui(tab)
+
+    if name == "LT" then
+        if tabs_switching_blocked(w, tab) then return "used" end
+        return (phase == "press") and cycle_tab(w, -1) or "used"
+    elseif name == "RT" then
+        if tabs_switching_blocked(w, tab) then return "used" end
+        return (phase == "press") and cycle_tab(w, 1) or "used"
+    end
+
+    if tab == "eptTasks" then
+        return handle_map_button(name, phase)
+    elseif tab == "eptTaskboard" then
+        return handle_taskboard_button(name, phase, w, ui)
+    elseif tab == "eptRanking" then
+        if phase ~= "press" then return "used" end
+        if name == "Y" then return toggle_hints(ui) end
+        if name == "B" then return "" end
+        return "used"
+    elseif tab == "eptRelations" then
+        return handle_relations_button(name, phase, ui)
+    elseif tab == "eptContacts" then
+        return handle_contacts_button(name, phase, ui)
+    elseif tab == "eptEncyclopedia" then
+        return handle_encyclopedia_button(name, phase, w, ui)
+    elseif tab == "eptRadio" then
+        return handle_radio_button(name, phase, w, ui)
+    elseif tab == "eptLogs" then
+        if phase ~= "press" then return "used" end
+        if name == "A" then
+            local t = resolve_current_target("eptLogs", w, ui)
+            if t then
+                focus("eptLogs", t, false)
+                state.actions = state.actions + 1
+                last_action = "logs:" .. t.id
+                return ""
+            end
+            return "used"
+        elseif name == "B" then
+            return ""
+        end
+        return "used"
+    elseif tab == "eptNPC" then
+        return handle_npc_button(name, phase, w, ui)
+    elseif tab == "eptGlitched" then
+        if phase ~= "press" then return "used" end
+        if name == "B" then return "" end
+        return "used"
+    end
+    return ""
+end
+
+-- ---------------------------------------------------------------------------
+-- Автопрокрутка описания карточки на Объявлениях (ТЗ §1.4)
+-- ---------------------------------------------------------------------------
+
+local function step_task_desc_scroll(tab, ui, dt)
+    if tab ~= "eptTaskboard" or (state.tab_field["eptTaskboard"] or "cat") ~= "task" then
+        stop_desc_scroll()
+        return
+    end
+    local t = ui and by_id(collect_taskboard(ui, "task"), state.focus_id["eptTaskboard"])
+    local item = t and t.item or nil
+    local sv = item and item.scrollbar_description or nil
+    if not sv or type(sv.GetMaxScrollPos) ~= "function" or type(sv.SetScrollPos) ~= "function" then
+        stop_desc_scroll()
+        return
+    end
+    local d = state.desc
+    local cur_t = now_ms()
+    -- FIX-LIVE2 11: never compare luabind userdata with ~= (task_list_element has no __eq,
+    -- gamepad_last_error 2026-11-16). Identity = focus id of the task row; wrapper refreshed every tick.
+    local key = t.id
+    if key == nil or d.key ~= key then
+        stop_desc_scroll()
+        d.key = key
+        d.item = item
+        d.phase = "top"
+        d.since = cur_t
+        local okn, mn = pcall(sv.GetMinScrollPos, sv)
+        d.pos = okn and tonumber(mn) or 0
+        pcall(sv.SetScrollPos, sv, math.floor(d.pos + 0.5))
+        return
+    end
+    d.item = item
+    local okn, mn = pcall(sv.GetMinScrollPos, sv)
+    local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+    mn = okn and tonumber(mn) or 0
+    mx = okx and tonumber(mx) or mn
+    if mx <= mn + 1 then return end
+
+    if d.phase == "top" then
+        if cur_t - d.since >= DESC_TOP_PAUSE_MS then
+            d.phase = "scroll"
+            d.pos = mn
+        end
+    elseif d.phase == "scroll" then
+        d.pos = d.pos + DESC_AUTO_SPEED * math.min(200, math.max(0, dt)) / 1000
+        if d.pos >= mx then
+            d.pos = mx
+            d.phase = "bottom"
+            d.since = cur_t
+        end
+        pcall(sv.SetScrollPos, sv, math.floor(d.pos + 0.5))
+    elseif d.phase == "bottom" then
+        if cur_t - d.since >= DESC_BOT_PAUSE_MS then
+            d.pos = mn
+            d.phase = "top"
+            d.since = cur_t
+            pcall(sv.SetScrollPos, sv, math.floor(mn + 0.5))
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Плоская нижняя плашка подсказок (§4.6) и значки LT/RT у вкладок (§7)
+-- ---------------------------------------------------------------------------
+
+local function xmlh()
+    if not XML_INIT and CScriptXmlInit then
+        local x = CScriptXmlInit()
+        if x and type(x.ParseFile) == "function" then
+            pcall(x.ParseFile, x, "ui_gp_workshop.xml")
+            XML_INIT = x
+        end
+    end
+    return XML_INIT
+end
+
+local function icons_mod()
+    local ic = gget("gp_icons")
+    return type(ic) == "table" and ic or nil
+end
+
+local function align_mod()
+    local al = gget("gp_hint_align")
+    return type(al) == "table" and al or nil
+end
+
+local function resolve_tex(slot)
+    local ic = icons_mod()
+    if ic and type(ic.tex) == "function" then return ic.tex(slot, "round") end
+    return FALLBACK_TEX[slot] or "ui_gp_xbox_south"
+end
+
+local function strip_px(h)
+    local _, sh = screen_wh()
+    return math.max(1, math.floor(h * sh / 768 + 0.5))
+end
+
+local function icon_tex_ratio(slot)
+    local ic = icons_mod()
+    if ic and type(ic.dims) == "function" then
+        local _, _, tw, th = ic.dims(slot, "round")
+        if tw and th and th > 0 then return tw / th end
+    end
+    return SHOULDER[slot] and SHOULDER_K or 1
+end
+
+local function strip_icon_box(h_ui, cy, tex, slot)
+    local ic = icons_mod()
+    local al = align_mod()
+    local h = h_ui * ((ic and type(ic.scale_k) == "function") and ic.scale_k() or 1)
+    if al and type(al.icon_scale) == "function" and tex then
+        h = h * al.icon_scale(tex)
+    end
+    local ratio = icon_tex_ratio(slot)
+    local sw, sh = screen_wh()
+    local px_h = math.max(8, math.floor(h * sh / 768 + 0.5))
+    local px_w = (math.abs(ratio - 1) < 0.01) and px_h or math.max(8, math.floor(px_h * ratio + 0.5))
+    local iw = (al and type(al.px_w) == "function") and al.px_w(px_w) or (px_w * 1024 / sw)
+    local ih = (al and type(al.px_h) == "function") and al.px_h(px_h) or (px_h * 768 / sh)
+    local iy = (al and type(al.snap_y) == "function") and al.snap_y(cy - ih * 0.5) or (cy - ih * 0.5)
+    return iw, ih, iy
+end
+
+local function place_strip_icon(st, slot, x, mid)
+    local tex = resolve_tex(slot)
+    if st._gp_tex ~= tex and type(st.InitTexture) == "function" then
+        pcall(st.InitTexture, st, tex)
+        st._gp_tex = tex
+    end
+    local iw, ih, iy = strip_icon_box(STRIP_ICON_H, mid, tex, slot)
+    local al = align_mod()
+    local ix = (al and type(al.snap_x) == "function") and al.snap_x(x) or x
+    if vector2 then
+        st:SetWndPos(vector2():set(ix, iy))
+        st:SetWndSize(vector2():set(iw, ih))
+    end
+    if GetARGB and st.SetTextureColor then pcall(st.SetTextureColor, st, GetARGB(255, 255, 255, 255)) end
+    st:Show(true)
+    return ix, iy, iw, ih
+end
+
+local function hud_hints_allowed()
+    local ic = icons_mod()
+    if ic and type(ic.hints_visible) == "function" then
+        return ic.hints_visible("menu") ~= false
+    end
+    return true
+end
+
+local function paint_paw_dialog_badges(dlg, kind, show_pad)
+    if type(dlg) ~= "table" and type(dlg) ~= "userdata" then return end
+    local holder = (type(dlg) == "table") and rawget(dlg, "_gp_paw_badges") or dlg._gp_paw_badges
+    local want = show_pad == true and shown(dlg) and hud_hints_allowed()
+    if not want then
+        if holder then
+            if holder.x_st and holder.x_st.Show then pcall(holder.x_st.Show, holder.x_st, false) end
+            if holder.b_st and holder.b_st.Show then pcall(holder.b_st.Show, holder.b_st, false) end
+        end
+        return
+    end
+    local parent = dlg.dialog or dlg
+    local xml = xmlh()
+    if not xml or not parent then return end
+    if not holder then
+        local ok_x, xs = pcall(xml.InitStatic, xml, "icon", parent)
+        local ok_b, bs = pcall(xml.InitStatic, xml, "icon", parent)
+        if not (ok_x and xs and ok_b and bs) then return end
+        if xs.Enable then pcall(xs.Enable, xs, false) end
+        if bs.Enable then pcall(bs.Enable, bs, false) end
+        holder = { x_st = xs, b_st = bs }
+        if type(dlg) == "table" then rawset(dlg, "_gp_paw_badges", holder) else dlg._gp_paw_badges = holder end
+    end
+    local function place_btn_badge(st, tex_key, btn, slot, allow)
+        if not (allow and btn and shown(btn) and btn.GetWndPos and btn.GetHeight) then
+            if st and st.Show then pcall(st.Show, st, false) end
+            return
+        end
+        local tex = resolve_tex(slot)
+        if holder[tex_key] ~= tex and type(st.InitTexture) == "function" then
+            pcall(st.InitTexture, st, tex)
+            holder[tex_key] = tex
+        end
+        local pos = btn:GetWndPos()
+        local bx = tonumber(pos and pos.x) or 0
+        local by = tonumber(pos and pos.y) or 0
+        local bh = tonumber(btn:GetHeight()) or 22
+        local iw, ih, iy = strip_icon_box(14, by + bh * 0.5, tex, slot)
+        local al = align_mod()
+        local pad_l = (al and type(al.px_w) == "function") and al.px_w(4) or 4
+        local ix = (al and type(al.snap_x) == "function") and al.snap_x(bx + pad_l) or (bx + pad_l)
+        if vector2 and st.SetWndPos and st.SetWndSize then
+            pcall(st.SetWndPos, st, vector2():set(ix, iy))
+            pcall(st.SetWndSize, st, vector2():set(iw, ih))
+        end
+        if GetARGB and st.SetTextureColor then
+            pcall(st.SetTextureColor, st, GetARGB(255, 255, 255, 255))
+        end
+        if st.Show then pcall(st.Show, st, true) end
+    end
+    local locked = false
+    if kind == "pin" then
+        if dlg.locked == true then locked = true end
+        if dlg.check_lock and type(dlg.check_lock.GetCheck) == "function" then
+            local ok_c, v = pcall(dlg.check_lock.GetCheck, dlg.check_lock)
+            if ok_c and v == true then locked = true end
+        end
+    end
+    local del_btn = (kind == "wp") and dlg.btn_wpreset or dlg.btn_delete
+    place_btn_badge(holder.x_st, "x_tex", del_btn, "X", not locked)
+    place_btn_badge(holder.b_st, "b_tex", dlg.btn_cancel, "B", true)
+end
+
+local function sync_paw_badges(show_pad)
+    local paw = gget("tasks_placeable_waypoints")
+    if type(paw) ~= "table" then return end
+    if paw.GUI_WP then
+        paint_paw_dialog_badges(paw.GUI_WP, "wp", show_pad and shown(paw.GUI_WP))
+    end
+    if paw.GUI_PinOpts then
+        paint_paw_dialog_badges(paw.GUI_PinOpts, "pin", show_pad and shown(paw.GUI_PinOpts))
+    end
+end
+
+local function paint_tabs(w, tab, pad)
+    local tc = tab_control(w)
+    if not tc then return end
+    tc._gp_pda = tc._gp_pda or {}
+    local holder = tc._gp_pda
+    local show_lr = pad and shown(tc) and not tabs_switching_blocked(w, tab) and not is_paw_modal_open() and hud_hints_allowed()
+    if not show_lr then
+        if holder.lt then holder.lt:Show(false) end
+        if holder.rt then holder.rt:Show(false) end
+        return
+    end
+    local xml = xmlh()
+    if not xml then return end
+    if not holder.lt then
+        holder.lt = xml:InitStatic("icon", tc)
+        holder.rt = xml:InitStatic("icon", tc)
+        if holder.lt.Enable then holder.lt:Enable(false) end
+        if holder.rt.Enable then holder.rt:Enable(false) end
+    end
+    local lt_tex, rt_tex = resolve_tex("LT"), resolve_tex("RT")
+    if holder.lt._gp_tex ~= lt_tex and holder.lt.InitTexture then
+        pcall(holder.lt.InitTexture, holder.lt, lt_tex)
+        holder.lt._gp_tex = lt_tex
+    end
+    if holder.rt._gp_tex ~= rt_tex and holder.rt.InitTexture then
+        pcall(holder.rt.InitTexture, holder.rt, rt_tex)
+        holder.rt._gp_tex = rt_tex
+    end
+    local left_x, right_x, bar_cy = 0, (tc.GetWidth and tonumber(tc:GetWidth()) or 550), (tc.GetHeight and tonumber(tc:GetHeight()) or 27) * 0.5
+    if type(tc.GetButtonById) == "function" then
+        local tabs = visible_tabs(w)
+        local min_x, max_x = nil, nil
+        for i = 1, #tabs do
+            local ok_b, b = pcall(tc.GetButtonById, tc, tabs[i])
+            if ok_b and b and shown(b) and b.GetWndPos and b.GetWidth then
+                local pos = b:GetWndPos()
+                local bx1 = tonumber(pos.x) or 0
+                local bx2 = bx1 + (tonumber(b:GetWidth()) or 79)
+                if not min_x or bx1 < min_x then
+                    min_x = bx1
+                    bar_cy = (tonumber(pos.y) or 0) + (tonumber(b.GetHeight and b:GetHeight() or 27)) * 0.5
+                end
+                if not max_x or bx2 > max_x then max_x = bx2 end
+            end
+        end
+        if min_x then left_x = min_x end
+        if max_x then right_x = max_x end
+    end
+    local ih = 18
+    local ws = gget("utils_xml")
+    local w_k = (ws and type(ws.is_widescreen) == "function" and ws.is_widescreen()) and 0.75 or 1.0
+    local iw = ih * icon_tex_ratio("LT") * w_k
+    local gap = 6 * w_k
+    if vector2 then
+        holder.lt:SetWndSize(vector2():set(iw, ih))
+        holder.lt:SetWndPos(vector2():set(left_x - gap - iw, bar_cy - ih * 0.5))
+        holder.rt:SetWndSize(vector2():set(iw, ih))
+        holder.rt:SetWndPos(vector2():set(right_x + gap, bar_cy - ih * 0.5))
+    end
+    holder.lt:Show(true)
+    holder.rt:Show(true)
+end
+
+local function build_strip_items(w, tab, ui)
+    if not w or tab == "eptGlitched" or is_paw_modal_open() then
+        return {}
+    end
+    if tab == "eptNPC" then
+        if is_npc_interactive(ui) then
+            return { { { "A" }, L("open") } }
+        end
+        return {}
+    end
+    local items = {}
+    if not tabs_switching_blocked(w, tab) then
+        items[#items + 1] = { { "LT", "RT" }, L("tabs") }
+    end
+    if tab == "eptTasks" then
+        if state.map_filters_mode then
+            items[#items + 1] = { { "A" }, L("toggle") }
+        else
+            items[#items + 1] = { { "View" }, L("tasks_legend") }
+            if map_overlay() == "" and pda_map("spot") ~= "" then
+                items[#items + 1] = { { "A" }, L("select") }
+            end
+        end
+    elseif tab == "eptTaskboard" then
+        local ff = state.tab_field["eptTaskboard"] or "cat"
+        local t = resolve_current_target(tab, w, ui)
+        if ff == "cat" then
+            items[#items + 1] = { { "A" }, (t and t.kind == "refresh") and L("refresh") or L("open") }
+        elseif #collect_taskboard(ui, "task") > 0 then
+            items[#items + 1] = { { "A" }, L("take") }
+        end
+    elseif tab == "eptRelations" then
+        items[#items + 1] = { { "View" }, L("text_refresh") }
+        if #collect_relations(ui) > 0 then
+            items[#items + 1] = { { "A" }, L("orders") }
+        end
+    elseif tab == "eptContacts" then
+        items[#items + 1] = { { "View" }, L("known_refresh") }
+    elseif tab == "eptEncyclopedia" then
+        items[#items + 1] = { { "View" }, L("img_msg") }
+        items[#items + 1] = { { "A" }, L("open") }
+    elseif tab == "eptRadio" or tab == "eptLogs" then
+        items[#items + 1] = { { "A" }, L("press") }
+    end
+    return items
+end
+
+local function paint_strip(hud, items, show_pad)
+    if not hud then return end
+    local s = hud._strip
+    if not show_pad or #items == 0 then
+        state.view_icon_rect = nil
+        if s then
+            s.bg:Show(false)
+            for i = 1, 4 do
+                s.items[i].icons[1]:Show(false)
+                s.items[i].icons[2]:Show(false)
+                s.items[i].label:Show(false)
+            end
+            s.key = nil
+        end
+        return
+    end
+    local x = xmlh()
+    if not x then return end
+    if not s then
+        s = { bg = x:InitStatic("strip", hud), items = {} }
+        if s.bg.Enable then s.bg:Enable(false) end
+        for i = 1, 4 do
+            local ic1, ic2 = x:InitStatic("icon", hud), x:InitStatic("icon", hud)
+            local lbl = x:InitTextWnd("label", hud)
+            if ic1.Enable then ic1:Enable(false) end
+            if ic2.Enable then ic2:Enable(false) end
+            if lbl.Enable then lbl:Enable(false) end
+            s.items[i] = { icons = { ic1, ic2 }, label = lbl }
+        end
+        hud._strip = s
+    end
+    local ic = icons_mod()
+    local rev = (ic and type(ic.revision) == "function") and ic.revision() or 0
+    local sw, sh = screen_wh()
+    local key = tostring(sw) .. "x" .. tostring(sh) .. "|r" .. tostring(rev)
+    for i = 1, #items do
+        key = key .. "|" .. table.concat(items[i][1], ",") .. ":" .. items[i][2]
+    end
+    if s.key == key then return end
+    s.key = key
+
+    local al = align_mod()
+    local pw = function(px) return (al and al.px_w) and al.px_w(px) or (px * 1024 / sw) end
+    local gap = pw(strip_px(STRIP_GAP_H))
+    local space = pw(strip_px(STRIP_SPACE_H))
+    local step = pw(math.floor(STRIP_STEP_PX * sh / 1080 + 0.5))
+    local pad_x = pw(strip_px(STRIP_PAD_X_H))
+
+    local total, widths = 0, {}
+    for i = 1, #items do
+        local it = items[i]
+        local w_sum = 0
+        for _, slot in ipairs(it[1]) do
+            local iw = strip_icon_box(STRIP_ICON_H, 0, resolve_tex(slot), slot)
+            w_sum = w_sum + iw + space
+        end
+        local lab = s.items[i].label
+        lab:SetText(it[2])
+        if lab.AdjustWidthToText then lab:AdjustWidthToText() end
+        local lw = tonumber(lab:GetWidth()) or 40
+        widths[i] = w_sum - space + gap + lw
+        total = total + widths[i] + (i > 1 and step or 0)
+    end
+
+    local bg_w = total + 2 * pad_x
+    local bg_x = (al and al.snap_x) and al.snap_x(STRIP_CX - bg_w * 0.5) or (STRIP_CX - bg_w * 0.5)
+    if vector2 then
+        s.bg:SetWndPos(vector2():set(bg_x, STRIP_Y1))
+        s.bg:SetWndSize(vector2():set(bg_w, STRIP_Y2 - STRIP_Y1))
+    end
+    s.bg:Show(true)
+
+    local cx = STRIP_CX - total * 0.5
+    local cy = (STRIP_Y1 + STRIP_Y2) * 0.5
+    local _, ih0, iy0 = strip_icon_box(STRIP_ICON_H, cy, resolve_tex("A"), "A")
+    local mid = iy0 + ih0 * 0.5
+    state.view_icon_rect = nil
+
+    for i = 1, 4 do
+        local it, si = items[i], s.items[i]
+        if it then
+            local xx = cx
+            for k = 1, 2 do
+                local slot = it[1][k]
+                if slot then
+                    local ix, iy, iw, ih = place_strip_icon(si.icons[k], slot, xx, mid)
+                    if slot == "View" then
+                        state.view_icon_rect = { x1 = ix, y1 = iy, x2 = ix + iw, y2 = iy + ih }
+                    end
+                    xx = xx + iw + space
+                else
+                    si.icons[k]:Show(false)
+                end
+            end
+            xx = xx - space + gap
+            local ly = (al and al.label_y) and al.label_y(mid, 24, "graffiti19") or (mid - 12)
+            if vector2 then
+                si.label:SetWndPos(vector2():set(xx, ly))
+                si.label:SetWndSize(vector2():set(si.label:GetWidth(), 24))
+            end
+            si.label:Show(true)
+            cx = cx + widths[i] + step
+        else
+            si.icons[1]:Show(false)
+            si.icons[2]:Show(false)
+            si.label:Show(false)
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Плоское 2D-HUD окно нижней плашки и тик каждого кадра
+-- ---------------------------------------------------------------------------
+
+class "UIGpPdaHud" (CUIScriptWnd)
+
+function UIGpPdaHud:__init() super()
+    if self.SetWndRect and Frect then self:SetWndRect(Frect():set(0, 0, 1024, 768)) end
+    if self.SetAutoDelete then self:SetAutoDelete(false) end
+    if self.AllowWorkInPause then self:AllowWorkInPause(true) end
+end
+
+function UIGpPdaHud:Update()
+    CUIScriptWnd.Update(self)
+    tick(true)
+end
+
+function hud_attach()
+    if hud_wnd then return hud_wnd end
+    if not (get_hud and UIGpPdaHud) then return nil end
+    local ok_h, h = pcall(get_hud)
+    if not (ok_h and h and type(h.AddDialogToRender) == "function") then return nil end
+    local ok_w, w = pcall(UIGpPdaHud)
+    if ok_w and w then
+        pcall(h.AddDialogToRender, h, w)
+        hud_wnd = w
+    end
+    return hud_wnd
+end
+
+function hud_detach()
+    if not hud_wnd then return end
+    if get_hud then
+        local ok_h, h = pcall(get_hud)
+        if ok_h and h and type(h.RemoveDialogToRender) == "function" then
+            pcall(h.RemoveDialogToRender, h, hud_wnd)
+        end
+    end
+    hud_wnd = nil
+end
+
+function tick(from_hud)
+    local cur_t = now_ms()
+    if from_hud then state.last_hud_tick = cur_t end
+    local dt = state.last_tick and (cur_t - state.last_tick) or 0
+    state.last_tick = cur_t
+
+    local ok_top, w, paw_dlg = is_pda_top_enabled()
+    local gp = is_gamepad()
+    local pad = ok_top and gp and hud_hints_allowed()
+    sync_paw_badges(pad and paw_dlg ~= nil)
+
+    if not (ok_top and gp) then
+        stop_desc_scroll()
+        state.map_filters_mode = false
+        local pw = pda_wnd()
+        if not (pw and shown(pw)) then
+            if state.tab ~= nil then reset_tab_focus(nil) end
+            state.hints_synced = nil
+            state.fallback_desc_hidden = false -- FIX-LIVE2 13b: new PDA opening shows descriptions again
+            state.ret = nil
+            if type(state.queue) == "table" then
+                for i = #state.queue, 1, -1 do state.queue[i] = nil end
+            end
+        end
+        if pw then paint_tabs(pw, active_section(pw), false) end
+        paint_strip(hud_wnd, nil, false)
+        return
+    end
+
+    drain_queue()
+    ensure_initial_focus()
+    if paw_dlg then
+        if w then paint_tabs(w, active_section(w), false) end
+        paint_strip(hud_wnd, nil, false)
+        return
+    end
+
+    local tab = active_section(w)
+    local ui = get_tab_ui(tab)
+    drain_return(tab, w, ui)
+    step_task_desc_scroll(tab, ui, dt)
+
+    paint_tabs(w, tab, pad)
+    paint_strip(hud_wnd or hud_attach(), build_strip_items(w, tab, ui), pad)
+end
+
+local function on_actor_update()
+    if hud_wnd and now_ms() == state.last_hud_tick then return end
+    tick(false)
+end
+
+function on_game_start()
+    install_hooks()
+    if not state.callbacks_registered and RegisterScriptCallback then
+        RegisterScriptCallback("actor_on_first_update", hud_attach)
+        RegisterScriptCallback("actor_on_update", on_actor_update)
+        RegisterScriptCallback("actor_on_net_destroy", hud_detach)
+        RegisterScriptCallback("main_menu_on_init", hud_detach)
+        RegisterScriptCallback("map_spot_menu_add_property", on_map_spot_menu_add_property)
+        state.callbacks_registered = true
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Совместимость со старыми точками входа (FG.6g, test_crash_resilience, C++)
+-- ---------------------------------------------------------------------------
+
+function get_last_action()
+    return last_action
+end
+
+function get_last_paw_action()
+    return last_paw_action
+end
+
+function is_npc_pda_active()
+    local w = pda_wnd()
+    if not (w and shown(w)) then return false end
+    return active_section(w) == "eptNPC"
+end
+
+function handle_npc_pda_back()
+    -- G12: плоский 2D-КПК удалён; кнопка B закрывает КПК через движок.
+    return false
+end
+
+function collect_active_pda_lua_targets()
+    if is_paw_modal_open() then
+        local dlg, kind = get_open_paw_modal()
+        return collect_paw_modal_targets(dlg, kind)
+    end
+    local w = pda_wnd()
+    if not (w and shown(w)) then return {} end
+    local tab = active_section(w)
+    local raw = collect_tab_targets(w, tab, get_tab_ui(tab))
+    local out = {}
+    for i = 1, #raw do
+        local t = raw[i]
+        local cx, cy = rect_center(t.r)
+        out[#out + 1] = {
+            x1 = t.r.x1, y1 = t.r.y1, x2 = t.r.x2, y2 = t.r.y2,
+            cx = cx, cy = cy, w = t.r.x2 - t.r.x1, h = t.r.y2 - t.r.y1,
+            tag = t.kind, extra = t,
+        }
+    end
+    return out
+end
+
+function on_pda_a_extra(cur_x, cur_y)
+    local w = pda_wnd()
+    if not (w and shown(w)) or active_section(w) ~= "eptRelations" then return false end
+    local ui = get_tab_ui("eptRelations")
+    if not ui then return false end
+    local comp_id = nil
+    local comp_idx = ui.mouse_over_id
+    if comp_idx and type(ui.companion_info) == "table" and ui.companion_info[comp_idx] then
+        comp_id = ui.companion_info[comp_idx].id
+    end
+    if not comp_id then
+        local cx, cy = tonumber(cur_x) or 0, tonumber(cur_y) or 0
+        local rels = collect_relations(ui)
+        for i = 1, #rels do
+            if rect_contains(rels[i].r, cx, cy) then
+                comp_id = rels[i].comp_id
+                break
+            end
+        end
+    end
+    if not comp_id then return false end
+    local axr = gget("axr_companions")
+    local level_mod = gget("level")
+    local npc = level_mod and type(level_mod.object_by_id) == "function" and level_mod.object_by_id(comp_id)
+    if axr and npc then
+        if type(axr.set_companion_squad_move_mode) == "function" and type(axr.get_companion_move_mode) == "function" then
+            pcall(function()
+                local cur_state = axr.get_companion_move_mode(npc)
+                axr.set_companion_squad_move_mode((cur_state == 2) and 1 or 2, npc)
+            end)
+            last_action = "companion_cmd:" .. tostring(comp_id)
+            return true
+        elseif type(axr.cycle_companions_move_mode) == "function" then
+            pcall(axr.cycle_companions_move_mode)
+            last_action = "companion_cmd:" .. tostring(comp_id)
+            return true
+        end
+    end
+    return false
+end
+
+function cursor_query_target(x, y)
+    if not is_paw_modal_open() then return "0" end
+    local cx, cy = tonumber(x) or 0, tonumber(y) or 0
+    local targets = collect_paw_modal_targets()
+    local best = nil
+    local best_dist_sq = 32 * 32
+    for i = 1, #targets do
+        local t = targets[i]
+        local inside = (cx >= t.x1 and cx <= t.x2 and cy >= t.y1 and cy <= t.y2)
+        local dx = cx - t.cx
+        local dy = cy - t.cy
+        local d2 = dx * dx + dy * dy
+        if inside then
+            d2 = d2 * 0.25
+        end
+        if d2 <= best_dist_sq then
+            best_dist_sq = d2
+            best = t
+        end
+    end
+    if not best then return "0" end
+    return string.format("1;%.1f;%.1f;%.1f;%.1f", best.cx, best.cy, best.w, best.h)
+end
+
+function cursor_dpad_snap(dir, x, y)
+    if not is_paw_modal_open() then return "0" end
+    local d = tonumber(dir) or 0
+    local cx, cy = tonumber(x) or 0, tonumber(y) or 0
+    if d < 1 or d > 4 then return "0" end
+    local targets = collect_paw_modal_targets()
+    local cur = nil
+    for i = 1, #targets do
+        local t = targets[i]
+        if cx >= t.x1 and cx <= t.x2 and cy >= t.y1 and cy <= t.y2 then cur = t break end
+    end
+    local wrapped = {}
+    for i = 1, #targets do
+        wrapped[i] = { id = "paw:" .. i, r = targets[i] }
+    end
+    local best = best_dir(wrapped, cur and { id = "cur", r = cur } or { id = "cur", r = { x1 = cx, y1 = cy, x2 = cx, y2 = cy } }, d)
+    if best then
+        local bx, by = rect_center(best.r)
+        return string.format("1;%.1f;%.1f", bx, by)
+    end
+    return "0"
+end
+
+function selftest()
+    if is_paw_modal_open() ~= false then
+        return "FAIL:paw_modal_initial"
+    end
+    if cursor_query_target(512, 384) ~= "0" then
+        return "FAIL:empty_query"
+    end
+    if cursor_dpad_snap(1, 512, 384) ~= "0" then
+        return "FAIL:empty_dpad"
+    end
+    local mt = normalize_empty_map_right_click_table(12.5, 1.0, -34.0, 100, 20, "l01_escape", 400, 300)
+    if not mt or mt.object_id ~= 65535 or mt.cursor_x ~= 400 or mt.cursor_y ~= 300 then
+        return "FAIL:empty_map_rc_table"
+    end
+    return "PASS"
+end

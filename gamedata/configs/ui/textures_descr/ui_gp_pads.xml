@@ -1,0 +1,111 @@
+<w>
+  <!-- K5c (D61): Gamepad schematic textures & button callout anchor coordinates -->
+  <!-- Source: '8th Gen Console Vector Gamepad Collection' by TheHoodieGuy02 (OpenGameArt, CC0 1.0) -->
+  <!-- Texture canvas: 1024x1024 BGRA DDS; active schematic sub-rect: x="0" y="0" width="854" height="1024" (aspect 300:360) -->
+  <!-- UI placement in ui_gp_controls.xml: <pad_image x="330" y="130" width="300" height="360" stretch="1"/> -->
+
+  <file name="ui\ui_gp_pad_xbox">
+    <texture id="ui_gp_pad_xbox" x="0" y="0" width="854" height="1024" />
+    <texture id="ui_gp_pad_xbox_series" x="0" y="0" width="854" height="1024" />
+
+    <!-- Button callout anchor points for XBOX (x,y = 4x4 region around anchor in 854x1024 texture; comment gives exact center tex_x,tex_y | pad_image 300x360 dx,dy | background 960x728 ax,ay) -->
+    <texture id="ui_gp_pad_xbox_pt_LT" x="206" y="266" width="4" height="4" /> <!-- center=(208,268) pad_300x360=(73,94) win_960x728=(403,224) L1 Left Trigger -->
+    <texture id="ui_gp_pad_xbox_pt_LB" x="253" y="280" width="4" height="4" /> <!-- center=(255,282) pad_300x360=(90,99) win_960x728=(420,229) L2 Left Bumper / Shoulder -->
+    <texture id="ui_gp_pad_xbox_pt_View" x="375" y="406" width="4" height="4" /> <!-- center=(377,408) pad_300x360=(132,143) win_960x728=(462,273) L3 View / Create / Select -->
+    <texture id="ui_gp_pad_xbox_pt_LS" x="240" y="407" width="4" height="4" /> <!-- center=(242,409) pad_300x360=(85,144) win_960x728=(415,274) L4 Left Stick (Move) -->
+    <texture id="ui_gp_pad_xbox_pt_L3" x="240" y="434" width="4" height="4" /> <!-- center=(242,436) pad_300x360=(85,153) win_960x728=(415,283) L5 L3 (Left Stick Press) -->
+    <texture id="ui_gp_pad_xbox_pt_DU" x="330" y="504" width="4" height="4" /> <!-- center=(332,506) pad_300x360=(117,178) win_960x728=(447,308) L6 D-Pad Up -->
+    <texture id="ui_gp_pad_xbox_pt_DL" x="289" y="545" width="4" height="4" /> <!-- center=(291,547) pad_300x360=(102,192) win_960x728=(432,322) L7 D-Pad Left -->
+    <texture id="ui_gp_pad_xbox_pt_DR" x="372" y="545" width="4" height="4" /> <!-- center=(374,547) pad_300x360=(131,192) win_960x728=(461,322) L8 D-Pad Right -->
+    <texture id="ui_gp_pad_xbox_pt_DD" x="330" y="586" width="4" height="4" /> <!-- center=(332,588) pad_300x360=(117,207) win_960x728=(447,337) L9 D-Pad Down -->
+    <texture id="ui_gp_pad_xbox_pt_RT" x="648" y="266" width="4" height="4" /> <!-- center=(650,268) pad_300x360=(228,94) win_960x728=(558,224) R1 Right Trigger -->
+    <texture id="ui_gp_pad_xbox_pt_RB" x="600" y="280" width="4" height="4" /> <!-- center=(602,282) pad_300x360=(212,99) win_960x728=(542,229) R2 Right Bumper / Shoulder -->
+    <texture id="ui_gp_pad_xbox_pt_Menu" x="482" y="407" width="4" height="4" /> <!-- center=(484,409) pad_300x360=(170,144) win_960x728=(500,274) R3 Menu / Options / Start -->
+    <texture id="ui_gp_pad_xbox_pt_Y" x="617" y="357" width="4" height="4" /> <!-- center=(619,359) pad_300x360=(218,126) win_960x728=(548,256) R4 North Face Button (Y / Triangle / 4) -->
+    <texture id="ui_gp_pad_xbox_pt_B" x="669" y="407" width="4" height="4" /> <!-- center=(671,409) pad_300x360=(236,144) win_960x728=(566,274) R5 East Face Button (B / Circle / 2) -->
+    <texture id="ui_gp_pad_xbox_pt_X" x="565" y="407" width="4" height="4" /> <!-- center=(567,409) pad_300x360=(199,144) win_960x728=(529,274) R6 West Face Button (X / Square / 3) -->
+    <texture id="ui_gp_pad_xbox_pt_A" x="617" y="458" width="4" height="4" /> <!-- center=(619,460) pad_300x360=(218,162) win_960x728=(548,292) R7 South Face Button (A / Cross / 1) -->
+    <texture id="ui_gp_pad_xbox_pt_RS" x="518" y="551" width="4" height="4" /> <!-- center=(520,553) pad_300x360=(183,194) win_960x728=(513,324) R8 Right Stick (Look) -->
+    <texture id="ui_gp_pad_xbox_pt_R3" x="518" y="578" width="4" height="4" /> <!-- center=(520,580) pad_300x360=(183,204) win_960x728=(513,334) R9 R3 (Right Stick Press) -->
+    <texture id="ui_gp_pad_xbox_pt_Share" x="428" y="446" width="4" height="4" /> <!-- center=(430,448) pad_300x360=(151,157) win_960x728=(481,287) Xbox Series Share button -->
+
+    <!-- Clean vector UI primitives in right strip x=860..1023 (XBOX) -->
+    <texture id="ui_gp_solid_white" x="880" y="16" width="16" height="16" />
+    <texture id="ui_gp_card_flat" x="864" y="48" width="152" height="54" />
+    <texture id="ui_gp_card_focus" x="864" y="112" width="152" height="54" />
+    <texture id="ui_gp_panel_flat" x="864" y="176" width="152" height="152" />
+    <texture id="ui_gp_circle_ring" x="864" y="340" width="128" height="128" />
+    <texture id="ui_gp_circle_disc" x="864" y="480" width="64" height="64" />
+    <texture id="ui_gp_badge_hold" x="864" y="560" width="64" height="20" />
+  </file>
+
+  <file name="ui\ui_gp_pad_ps">
+    <texture id="ui_gp_pad_ps" x="0" y="0" width="854" height="1024" />
+    <texture id="ui_gp_pad_playstation" x="0" y="0" width="854" height="1024" />
+    <texture id="ui_gp_pad_dualsense" x="0" y="0" width="854" height="1024" />
+
+    <!-- Button callout anchor points for PS (x,y = 4x4 region around anchor in 854x1024 texture; comment gives exact center tex_x,tex_y | pad_image 300x360 dx,dy | background 960x728 ax,ay) -->
+    <texture id="ui_gp_pad_ps_pt_LT" x="160" y="250" width="4" height="4" /> <!-- center=(162,252) pad_300x360=(57,89) win_960x728=(387,219) L1 Left Trigger -->
+    <texture id="ui_gp_pad_ps_pt_LB" x="167" y="279" width="4" height="4" /> <!-- center=(169,281) pad_300x360=(59,99) win_960x728=(389,229) L2 Left Bumper / Shoulder -->
+    <texture id="ui_gp_pad_ps_pt_View" x="257" y="359" width="4" height="4" /> <!-- center=(259,361) pad_300x360=(91,127) win_960x728=(421,257) L3 View / Create / Select -->
+    <texture id="ui_gp_pad_ps_pt_LS" x="290" y="557" width="4" height="4" /> <!-- center=(292,559) pad_300x360=(103,197) win_960x728=(433,327) L4 Left Stick (Move) -->
+    <texture id="ui_gp_pad_ps_pt_L3" x="290" y="584" width="4" height="4" /> <!-- center=(292,586) pad_300x360=(103,206) win_960x728=(433,336) L5 L3 (Left Stick Press) -->
+    <texture id="ui_gp_pad_ps_pt_DU" x="160" y="377" width="4" height="4" /> <!-- center=(162,379) pad_300x360=(57,133) win_960x728=(387,263) L6 D-Pad Up -->
+    <texture id="ui_gp_pad_ps_pt_DL" x="98" y="440" width="4" height="4" /> <!-- center=(100,442) pad_300x360=(35,155) win_960x728=(365,285) L7 D-Pad Left -->
+    <texture id="ui_gp_pad_ps_pt_DR" x="223" y="440" width="4" height="4" /> <!-- center=(225,442) pad_300x360=(79,155) win_960x728=(409,285) L8 D-Pad Right -->
+    <texture id="ui_gp_pad_ps_pt_DD" x="160" y="503" width="4" height="4" /> <!-- center=(162,505) pad_300x360=(57,178) win_960x728=(387,308) L9 D-Pad Down -->
+    <texture id="ui_gp_pad_ps_pt_RT" x="690" y="250" width="4" height="4" /> <!-- center=(692,252) pad_300x360=(243,89) win_960x728=(573,219) R1 Right Trigger -->
+    <texture id="ui_gp_pad_ps_pt_RB" x="683" y="279" width="4" height="4" /> <!-- center=(685,281) pad_300x360=(241,99) win_960x728=(571,229) R2 Right Bumper / Shoulder -->
+    <texture id="ui_gp_pad_ps_pt_Menu" x="594" y="359" width="4" height="4" /> <!-- center=(596,361) pad_300x360=(209,127) win_960x728=(539,257) R3 Menu / Options / Start -->
+    <texture id="ui_gp_pad_ps_pt_Y" x="690" y="377" width="4" height="4" /> <!-- center=(692,379) pad_300x360=(243,133) win_960x728=(573,263) R4 North Face Button (Y / Triangle / 4) -->
+    <texture id="ui_gp_pad_ps_pt_B" x="753" y="440" width="4" height="4" /> <!-- center=(755,442) pad_300x360=(265,155) win_960x728=(595,285) R5 East Face Button (B / Circle / 2) -->
+    <texture id="ui_gp_pad_ps_pt_X" x="629" y="440" width="4" height="4" /> <!-- center=(631,442) pad_300x360=(222,155) win_960x728=(552,285) R6 West Face Button (X / Square / 3) -->
+    <texture id="ui_gp_pad_ps_pt_A" x="690" y="502" width="4" height="4" /> <!-- center=(692,504) pad_300x360=(243,177) win_960x728=(573,307) R7 South Face Button (A / Cross / 1) -->
+    <texture id="ui_gp_pad_ps_pt_RS" x="560" y="557" width="4" height="4" /> <!-- center=(562,559) pad_300x360=(197,197) win_960x728=(527,327) R8 Right Stick (Look) -->
+    <texture id="ui_gp_pad_ps_pt_R3" x="560" y="584" width="4" height="4" /> <!-- center=(562,586) pad_300x360=(197,206) win_960x728=(527,336) R9 R3 (Right Stick Press) -->
+
+    <!-- Clean vector UI primitives in right strip x=860..1023 (PS) -->
+    <texture id="ui_gp_ps_solid_white" x="880" y="16" width="16" height="16" />
+    <texture id="ui_gp_ps_card_flat" x="864" y="48" width="152" height="54" />
+    <texture id="ui_gp_ps_card_focus" x="864" y="112" width="152" height="54" />
+    <texture id="ui_gp_ps_panel_flat" x="864" y="176" width="152" height="152" />
+    <texture id="ui_gp_ps_circle_ring" x="864" y="340" width="128" height="128" />
+    <texture id="ui_gp_ps_circle_disc" x="864" y="480" width="64" height="64" />
+    <texture id="ui_gp_ps_badge_hold" x="864" y="560" width="64" height="20" />
+  </file>
+
+  <file name="ui\ui_gp_pad_generic">
+    <texture id="ui_gp_pad_generic" x="0" y="0" width="854" height="1024" />
+    <texture id="ui_gp_pad_dinput" x="0" y="0" width="854" height="1024" />
+
+    <!-- Button callout anchor points for GENERIC (x,y = 4x4 region around anchor in 854x1024 texture; comment gives exact center tex_x,tex_y | pad_image 300x360 dx,dy | background 960x728 ax,ay) -->
+    <texture id="ui_gp_pad_generic_pt_LT" x="206" y="266" width="4" height="4" /> <!-- center=(208,268) pad_300x360=(73,94) win_960x728=(403,224) L1 Left Trigger -->
+    <texture id="ui_gp_pad_generic_pt_LB" x="253" y="280" width="4" height="4" /> <!-- center=(255,282) pad_300x360=(90,99) win_960x728=(420,229) L2 Left Bumper / Shoulder -->
+    <texture id="ui_gp_pad_generic_pt_View" x="375" y="406" width="4" height="4" /> <!-- center=(377,408) pad_300x360=(132,143) win_960x728=(462,273) L3 View / Create / Select -->
+    <texture id="ui_gp_pad_generic_pt_LS" x="240" y="407" width="4" height="4" /> <!-- center=(242,409) pad_300x360=(85,144) win_960x728=(415,274) L4 Left Stick (Move) -->
+    <texture id="ui_gp_pad_generic_pt_L3" x="240" y="434" width="4" height="4" /> <!-- center=(242,436) pad_300x360=(85,153) win_960x728=(415,283) L5 L3 (Left Stick Press) -->
+    <texture id="ui_gp_pad_generic_pt_DU" x="330" y="504" width="4" height="4" /> <!-- center=(332,506) pad_300x360=(117,178) win_960x728=(447,308) L6 D-Pad Up -->
+    <texture id="ui_gp_pad_generic_pt_DL" x="289" y="545" width="4" height="4" /> <!-- center=(291,547) pad_300x360=(102,192) win_960x728=(432,322) L7 D-Pad Left -->
+    <texture id="ui_gp_pad_generic_pt_DR" x="372" y="545" width="4" height="4" /> <!-- center=(374,547) pad_300x360=(131,192) win_960x728=(461,322) L8 D-Pad Right -->
+    <texture id="ui_gp_pad_generic_pt_DD" x="330" y="586" width="4" height="4" /> <!-- center=(332,588) pad_300x360=(117,207) win_960x728=(447,337) L9 D-Pad Down -->
+    <texture id="ui_gp_pad_generic_pt_RT" x="648" y="266" width="4" height="4" /> <!-- center=(650,268) pad_300x360=(228,94) win_960x728=(558,224) R1 Right Trigger -->
+    <texture id="ui_gp_pad_generic_pt_RB" x="600" y="280" width="4" height="4" /> <!-- center=(602,282) pad_300x360=(212,99) win_960x728=(542,229) R2 Right Bumper / Shoulder -->
+    <texture id="ui_gp_pad_generic_pt_Menu" x="482" y="407" width="4" height="4" /> <!-- center=(484,409) pad_300x360=(170,144) win_960x728=(500,274) R3 Menu / Options / Start -->
+    <texture id="ui_gp_pad_generic_pt_Y" x="617" y="357" width="4" height="4" /> <!-- center=(619,359) pad_300x360=(218,126) win_960x728=(548,256) R4 North Face Button (Y / Triangle / 4) -->
+    <texture id="ui_gp_pad_generic_pt_B" x="669" y="407" width="4" height="4" /> <!-- center=(671,409) pad_300x360=(236,144) win_960x728=(566,274) R5 East Face Button (B / Circle / 2) -->
+    <texture id="ui_gp_pad_generic_pt_X" x="565" y="407" width="4" height="4" /> <!-- center=(567,409) pad_300x360=(199,144) win_960x728=(529,274) R6 West Face Button (X / Square / 3) -->
+    <texture id="ui_gp_pad_generic_pt_A" x="617" y="458" width="4" height="4" /> <!-- center=(619,460) pad_300x360=(218,162) win_960x728=(548,292) R7 South Face Button (A / Cross / 1) -->
+    <texture id="ui_gp_pad_generic_pt_RS" x="518" y="551" width="4" height="4" /> <!-- center=(520,553) pad_300x360=(183,194) win_960x728=(513,324) R8 Right Stick (Look) -->
+    <texture id="ui_gp_pad_generic_pt_R3" x="518" y="578" width="4" height="4" /> <!-- center=(520,580) pad_300x360=(183,204) win_960x728=(513,334) R9 R3 (Right Stick Press) -->
+
+    <!-- Clean vector UI primitives in right strip x=860..1023 (GENERIC) -->
+    <texture id="ui_gp_generic_solid_white" x="880" y="16" width="16" height="16" />
+    <texture id="ui_gp_generic_card_flat" x="864" y="48" width="152" height="54" />
+    <texture id="ui_gp_generic_card_focus" x="864" y="112" width="152" height="54" />
+    <texture id="ui_gp_generic_panel_flat" x="864" y="176" width="152" height="152" />
+    <texture id="ui_gp_generic_circle_ring" x="864" y="340" width="128" height="128" />
+    <texture id="ui_gp_generic_circle_disc" x="864" y="480" width="64" height="64" />
+    <texture id="ui_gp_generic_badge_hold" x="864" y="560" width="64" height="20" />
+  </file>
+
+</w>

@@ -1,0 +1,68 @@
+<w>
+	<bg x="0" y="0" width="426" height="426" stretch="1">
+		<texture>ui_gp_qaw_graphite_bg</texture>
+	</bg>
+	<tab_category x="149" y="149" width="128" height="128" stretch="1"></tab_category>
+	<title x="153" y="183" width="120" height="20" stretch="1">
+		<text complex_mode="1" r="240" g="240" b="240" align="c" vert_align="t" font="letterica25"/>
+	</title>
+	<tab_icon x="320" y="410" width="24" height="24" stretch="1">
+		<texture>ui_gp_qaw_tab_1</texture>
+	</tab_icon>
+	<container x="0" y="-160" width="50" height="50" stretch="1"></container>
+	<wheel x="0" y="0" width="1024" height="768" stretch="1">
+		<cursor x="0" y="0" width="426" height="213" stretch="1">
+			<texture>ui_gp_qaw_graphite_cursor</texture>
+		</cursor>
+		<cell x="0" y="0" width="100" height="100" stretch="1">
+			<texture>ui_gp_qaw_graphite_hover</texture>
+		</cell>
+		<selected_bg x="0" y="0" width="100" height="100" stretch="1">
+			<texture>ui_gp_qaw_graphite_selected</texture>
+		</selected_bg>
+		<icon x="0" y="0" width="50" height="50" stretch="1"></icon>
+		<counter x="54" y="64" width="28" height="14" stretch="1">
+			<texture a="200">ui_item_count_back</texture>
+			<text font="arial_14" r="240" g="240" b="240" align="c" vert_align="c"/>
+		</counter>
+	</wheel>
+	<cursor_text x="0" y="0" width="120" height="20" stretch="1">
+		<text complex_mode="1" r="240" g="240" b="240" align="c" vert_align="t" font="letterica25"/>
+	</cursor_text>
+
+	<cont_item x="0" y="0" width="1024" height="768" stretch="1">
+		<st width="1024" height="768" stretch="1"></st>
+		<scroll width="1024" height="768" stretch="1" right_ident="0" left_ident="0" top_indent="0" bottom_indent="0" vert_interval="0" always_show_scroll="0"></scroll>
+		<cell stretch="1">
+			<upgrade x="0" y="0" width="10" height="12" stretch="1">
+				<texture a="180">ui_upgrade_arrow2</texture>
+			</upgrade>
+			<cnt x="-2" y="-1" width="21" height="11" stretch="1">
+				<texture a="200">ui_item_count_back</texture>
+				<text x="0" y="0" width="21" height="11" font="arial_14" color="ui_2" align="c" vert_align="c"/>
+			</cnt>
+			<highlight stretch="1">
+				<texture>ui_button_inv_h</texture>
+			</highlight>
+			<pic stretch="1" align="c" alignment="c"></pic>
+		</cell>
+		<cell_1 x="0" y="0" width="41" height="41" stretch="1">
+			<pic stretch="1" align="c" alignment="c"></pic>
+			<highlight stretch="1">
+				<texture>ui_inGame2_detector_highlighter</texture>
+			</highlight>
+			<bar x="0" y="0" width="25" height="3" horz="1" min="0" max="1" pos="1" stretch="1">
+				<background width="27" height="3" stretch="1">
+					<texture r="62" g="74" b="74">ui_inGame2_inventory_item_status_bar</texture>
+				</background>
+				<progress stretch="1">
+					<texture r="142" g="149" b="149">ui_inGame2_inventory_item_status_bar</texture>
+				</progress>
+			</bar>
+		</cell_1>
+	</cont_item>
+
+	<hover_bg x="0" y="0" width="100" height="100" stretch="1">
+		<texture>ui_gp_qaw_graphite_hover</texture>
+	</hover_bg>
+</w>

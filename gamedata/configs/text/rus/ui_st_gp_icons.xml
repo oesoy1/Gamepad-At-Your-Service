@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<string_table>
+	<string id="ui_gp_icons_group">
+		<text>Значки и подсказки</text>
+	</string>
+	<string id="ui_gp_icons_pad_type">
+		<text>Тип геймпада</text>
+	</string>
+	<string id="ui_gp_icons_pad_type_desc">
+		<text>Какие кнопки рисовать на подсказках. В режиме «Авто» марка определяется сама; если обычный геймпад подписан буквами A/B/X/Y, можно вручную выбрать Xbox.</text>
+	</string>
+	<string id="ui_gp_icons_pad_auto">
+		<text>Авто</text>
+	</string>
+	<string id="ui_gp_icons_pad_xbox">
+		<text>Xbox</text>
+	</string>
+	<string id="ui_gp_icons_pad_ps">
+		<text>PlayStation</text>
+	</string>
+	<string id="ui_gp_icons_pad_nintendo">
+		<text>Nintendo</text>
+	</string>
+	<string id="ui_gp_icons_pad_generic">
+		<text>Обычный</text>
+	</string>
+	<string id="ui_gp_icons_style">
+		<text>Вид значков</text>
+	</string>
+	<string id="ui_gp_icons_style_desc">
+		<text>Оформление кнопок геймпада в стиле клавиш игры: светлые, тёмные потёртые или светлые с цветными буквами и фигурами.</text>
+	</string>
+	<string id="ui_gp_icons_style_white">
+		<text>Светлые</text>
+	</string>
+	<string id="ui_gp_icons_style_dark">
+		<text>Тёмные</text>
+	</string>
+	<string id="ui_gp_icons_style_color">
+		<text>Цветные</text>
+	</string>
+	<string id="ui_gp_icons_scale">
+		<text>Размер значков</text>
+	</string>
+	<string id="ui_gp_icons_scale_desc">
+		<text>Масштаб значков кнопок геймпада на экране и в окнах (от 50 до 150 процентов).</text>
+	</string>
+	<string id="ui_gp_icons_hints">
+		<text>Подсказки кнопок на экране</text>
+	</string>
+	<string id="ui_gp_icons_hints_desc">
+		<text>Показывать ли значки кнопок геймпада: везде, только в меню и инвентаре (без подсказок у предметов в мире) или полностью скрыть значки, оставив работу кнопок.</text>
+	</string>
+	<string id="ui_gp_icons_hints_always">
+		<text>Всегда</text>
+	</string>
+	<string id="ui_gp_icons_hints_menu">
+		<text>Только в меню</text>
+	</string>
+	<string id="ui_gp_icons_hints_off">
+		<text>Скрыть</text>
+	</string>
+</string_table>

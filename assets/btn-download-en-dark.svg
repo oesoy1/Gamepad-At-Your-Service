@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="202" height="36" viewBox="0 0 202 36" role="img" aria-label="Download release (.zip)">
+  <rect x="0.5" y="0.5" width="201" height="35" rx="6" fill="#1D6B62" stroke="#33998D" stroke-width="1"/>
+  <path d="M18,10.5 v9.5 m0,0 l-3.5,-3.5 m3.5,3.5 l3.5,-3.5 M13,23.5 h10" fill="none" stroke="#F2FBF9" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="32" y="22.5" fill="#F2FBF9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="13.5" font-weight="600">Download release (.zip)</text>
+</svg>

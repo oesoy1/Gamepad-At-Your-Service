@@ -1,0 +1,1396 @@
+--[[
+    gp_toasts.script  --  F2.2 (D09, D10, D24, D50, D53; docs/kb/16-stage-f-anchors.md sec.6)
+
+    1. Adaptive layouts for 16:9 (1920x1080) and 21:9 (2560x1080):
+       - Safe areas, centered 16:9-18:9 working grid on ultrawide 21:9 (docs/12-ui-wireframes.md),
+       - Font scale per D53: 100%-140% in 10% steps (default 100%, quick TV preset 125%),
+       - Wrapping and truncation of long Russian strings while strictly preserving trailing numeric stats/prices/weights/conditions (never clipping numbers).
+    2. Toast interceptor & overlay per D50:
+       - Wraps actor_menu.set_msg and news_manager.send_tip (always calling the original),
+       - Renders in the top-right corner of the working area on top of open modal dialogs (attaching to the active modal dialog or HUD),
+       - TTL 3000 ms on non-freezing Device.dwTimeContinual (time_continual() / game.get_time_continual()),
+       - Coalesces identical messages with a repeat counter ("... (xN)", up to 3 lines simultaneously).
+    3. Explicit Russian failure reasons on silent precondition rejections (D50):
+       - Wraps UIInventory:Cond_Equip, UIInventory:Cond_Move (including stash_capacities.script:89-111 weight limit via ActorMenu_on_item_before_move), and UIInventory:On_CC_Mouse1_DB / On_CC_DragDrop without breaking originals.
+    4. Layout diagnostics (`gp_ui_layout_dump`) and built-in self-test (`gp_toasts.selftest()`).
+
+    Encoding: Windows-1251 without BOM.
+--]]
+
+local TOAST_TTL_MS = 3000
+local MAX_VISIBLE_TOASTS = 3
+local DEFAULT_FONT_SCALE_PCT = 100
+local TV_PRESET_FONT_SCALE_PCT = 125
+
+-- Valid font scales per D53: 100%..140% step 10% + 125% quick TV preset
+local VALID_FONT_SCALES = {
+    [100] = true,
+    [110] = true,
+    [120] = true,
+    [125] = true,
+    [130] = true,
+    [140] = true,
+}
+
+local ORDERED_FONT_STEP_SCALES = { 100, 110, 120, 130, 140 }
+
+-- Russian strings constructed via CP1251 byte codes so source file is 100% immune to editor re-encoding
+-- and produces exact single-byte Windows-1251 strings in X-Ray.
+local RU = {
+    -- " (\215%d)" -> " (xN)" with multiplication sign 0xD7 or Cyrillic 'x'
+    COUNTER_FMT        = " (\245%d)",
+    -- "Нельзя экипировать: предмет не в рюкзаке"
+    EQUIP_NOT_IN_BAG   = "\205\229\235\252\231\255 \253\234\232\239\232\240\238\226\224\242\252: \239\240\229\228\236\229\242 \237\229 \226 \240\254\234\231\224\234\229",
+    -- "Нельзя надеть артефакт: нет костюма с контейнерами"
+    ARTY_NO_OUTFIT     = "\205\229\235\252\231\255 \237\224\228\229\242\252 \224\240\242\229\244\224\234\242: \237\229\242 \234\238\241\242\254\236\224 \241 \234\238\237\242\229\233\237\229\240\224\236\232",
+    -- "Нельзя надеть артефакт: на костюме нет слотов пояса"
+    ARTY_NO_SLOTS      = "\205\229\235\252\231\255 \237\224\228\229\242\252 \224\240\242\229\244\224\234\242: \237\224 \234\238\241\242\254\236\229 \237\229\242 \241\235\238\242\238\226 \239\238\255\241\224",
+    -- "Нельзя надеть артефакт: пояс полон (%d/%d)"
+    ARTY_BELT_FULL_FMT = "\205\229\235\252\231\255 \237\224\228\229\242\252 \224\240\242\229\244\224\234\242: \239\238\255\241 \239\238\235\238\237 (%d/%d)",
+    -- "Нельзя надеть шлем: текущий костюм блокирует слот шлема"
+    HELMET_BLOCKED     = "\205\229\235\252\231\255 \237\224\228\229\242\252 \248\235\229\236: \242\229\234\243\249\232\233 \234\238\241\242\254\236 \225\235\238\234\232\240\243\229\242 \241\235\238\242 \248\235\229\236\224",
+    -- "Нельзя надеть рюкзак: текущий костюм со встроенным рюкзаком"
+    BACKPACK_BLOCKED   = "\205\229\235\252\231\255 \237\224\228\229\242\252 \240\254\234\231\224\234: \242\229\234\243\249\232\233 \234\238\241\242\254\236 \241\238 \226\241\242\240\238\229\237\237\251\236 \240\254\234\231\224\234\238\236",
+    -- "Этот предмет нельзя поместить в слот снаряжения"
+    NOT_EQUIPPABLE     = "\221\242\238\242 \239\240\229\228\236\229\242 \237\229\235\252\231\255 \239\238\236\229\241\242\232\242\252 \226 \241\235\238\242 \241\237\224\240\255\230\229\237\232\255",
+    -- "Тайник переполнен: %.1f + %.1f > %.1f кг"
+    STASH_FULL_FMT     = "\210\224\233\237\232\234 \239\229\240\229\239\238\235\237\229\237: %.1f + %.1f > %.1f \234\227",
+    -- "Нельзя переложить квестовый предмет"
+    QUEST_ITEM_LOCKED  = "\205\229\235\252\231\255 \239\229\240\229\235\238\230\232\242\252 \234\226\229\241\242\238\226\251\233 \239\240\229\228\236\229\242",
+    -- "Торговец не покупает и не продаёт этот предмет"
+    NOT_TRADABLE       = "\210\238\240\227\238\226\229\246 \237\229 \239\238\234\243\239\224\229\242 \232 \237\229 \239\240\238\228\224\184\242 \253\242\238\242 \239\240\229\228\236\229\242",
+    -- "Перемещение заблокировано"
+    MOVE_BLOCKED       = "\207\229\240\229\236\229\249\229\237\232\229 \231\224\225\235\238\234\232\240\238\226\224\237\238",
+    -- "Нельзя использовать этот предмет"
+    USE_BLOCKED        = "\205\229\235\252\231\255 \232\241\239\238\235\252\231\238\226\224\242\252 \253\242\238\242 \239\240\229\228\236\229\242",
+}
+
+local state = {
+    font_scale_pct = DEFAULT_FONT_SCALE_PCT,
+    safe_margin_pct = 0.03,
+    screen_w = 1920,
+    screen_h = 1080,
+    toasts = {},
+    actor_menu_hooked = false,
+    news_manager_hooked = false,
+    ui_inventory_hooked = false,
+    orig_set_msg = nil,
+    orig_send_tip = nil,
+    orig_cond_equip = nil,
+    orig_cond_move = nil,
+    orig_mouse1_db = nil,
+    orig_drag_drop = nil,
+    orig_inv_update = nil,
+    emit_rejection_on_direct_cond = false,
+    intercepted_set_msg_count = 0,
+    intercepted_send_tip_count = 0,
+    rejection_toasts_count = 0,
+    coalesced_count = 0,
+    last_rejection_reason = "",
+    last_rejection_code = "",
+    overlay_wnd = nil,
+    overlay_rows = {},
+    overlay_parent = nil,
+    layout_checks = {},
+}
+
+local function mod(name)
+    local ok, m = pcall(function() return _G[name] end)
+    if ok and type(m) == "table" then
+        return m
+    end
+    return nil
+end
+
+function get_state()
+    return state
+end
+
+--===========================================================================
+-- 1. Non-freezing continual clock (D50)
+--===========================================================================
+
+function now_continual_ms()
+    if game and type(game.get_time_continual) == "function" then
+        local ok, v = pcall(game.get_time_continual)
+        if ok and type(v) == "number" then
+            return v
+        end
+    end
+    if type(time_continual) == "function" then
+        local ok, v = pcall(time_continual)
+        if ok and type(v) == "number" then
+            return v
+        end
+    end
+    if device then
+        local ok, dev = pcall(device)
+        if ok and dev and type(dev.time_continual) == "function" then
+            local ok_tc, tc = pcall(dev.time_continual, dev)
+            if ok_tc and type(tc) == "number" then
+                return tc
+            end
+        end
+    end
+    if type(time_global) == "function" then
+        return time_global()
+    end
+    return 0
+end
+
+--===========================================================================
+-- 2. Font Scale (D53: 100%-140% step 10%, default 100%, TV preset 125%)
+--===========================================================================
+
+function normalize_font_scale(pct)
+    local n = tonumber(pct)
+    if not n then
+        return DEFAULT_FONT_SCALE_PCT
+    end
+    n = math.floor(n + 0.5)
+    if VALID_FONT_SCALES[n] then
+        return n
+    end
+    if n < 100 then
+        return 100
+    end
+    if n > 140 then
+        return 140
+    end
+    if n == 125 then
+        return 125
+    end
+    return math.floor((n + 5) / 10) * 10
+end
+
+function set_font_scale(pct)
+    state.font_scale_pct = normalize_font_scale(pct)
+    return state.font_scale_pct
+end
+
+function get_font_scale()
+    return state.font_scale_pct
+end
+
+function get_font_scale_factor()
+    return state.font_scale_pct / 100.0
+end
+
+function apply_tv_font_preset()
+    state.font_scale_pct = TV_PRESET_FONT_SCALE_PCT
+    return state.font_scale_pct
+end
+
+function step_font_scale(delta_steps)
+    local step = (tonumber(delta_steps) or 1) >= 0 and 1 or -1
+    local cur = state.font_scale_pct
+    local best_idx = 1
+    local best_dist = 999
+    for i, val in ipairs(ORDERED_FONT_STEP_SCALES) do
+        local d = math.abs(val - cur)
+        if d < best_dist then
+            best_dist = d
+            best_idx = i
+        end
+    end
+    local next_idx = math.max(1, math.min(#ORDERED_FONT_STEP_SCALES, best_idx + step))
+    state.font_scale_pct = ORDERED_FONT_STEP_SCALES[next_idx]
+    return state.font_scale_pct
+end
+
+function select_font_for_scale(scale_pct)
+    local sc = normalize_font_scale(scale_pct or state.font_scale_pct)
+    if sc >= 130 and type(GetFontGraffiti22Russian) == "function" then
+        return GetFontGraffiti22Russian()
+    elseif sc >= 120 and type(GetFontGraffiti19Russian) == "function" then
+        return GetFontGraffiti19Russian()
+    elseif sc >= 110 and type(GetFontLetterica18Russian) == "function" then
+        return GetFontLetterica18Russian()
+    elseif type(GetFontLetterica16Russian) == "function" then
+        return GetFontLetterica16Russian()
+    elseif type(GetFontMedium) == "function" then
+        return GetFontMedium()
+    end
+    return nil
+end
+
+--===========================================================================
+-- 3. Adaptive 16:9 (1920x1080) & 21:9 (2560x1080) Layout Metrics
+--===========================================================================
+
+function get_screen_resolution()
+    if device then
+        local ok, dev = pcall(device)
+        if ok and dev then
+            local w = tonumber(dev.width)
+            local h = tonumber(dev.height)
+            if w and h and w > 0 and h > 0 then
+                state.screen_w = w
+                state.screen_h = h
+                return w, h
+            end
+        end
+    end
+    return state.screen_w, state.screen_h
+end
+
+function set_screen_resolution(w, h)
+    state.screen_w = math.max(640, math.floor(tonumber(w) or 1920))
+    state.screen_h = math.max(480, math.floor(tonumber(h) or 1080))
+    return state.screen_w, state.screen_h
+end
+
+function compute_layout(screen_w, screen_h, font_scale_pct, safe_margin_pct)
+    local w = math.max(640, math.floor(tonumber(screen_w) or state.screen_w or 1920))
+    local h = math.max(480, math.floor(tonumber(screen_h) or state.screen_h or 1080))
+    local scale_pct = normalize_font_scale(font_scale_pct or state.font_scale_pct)
+    local scale = scale_pct / 100.0
+    local margin_pct = tonumber(safe_margin_pct) or state.safe_margin_pct or 0.03
+    if margin_pct < 0.0 then margin_pct = 0.0 end
+    if margin_pct > 0.10 then margin_pct = 0.10 end
+
+    local aspect = w / h
+    local is_ultrawide_21_9 = (aspect >= 2.10)
+    local aspect_tag = is_ultrawide_21_9 and "21:9" or "16:9"
+
+    local safe_x = math.floor(w * margin_pct + 0.5)
+    local safe_y = math.floor(h * margin_pct + 0.5)
+    local safe_w = w - 2 * safe_x
+    local safe_h = h - 2 * safe_y
+
+    -- Per docs/12-ui-wireframes.md: on 21:9 ultrawide (e.g. 2560x1080), the modular working grid
+    -- is centered within a 16:9..18:9 column so the player's eyes don't jump to ultrawide edges,
+    -- while background dimmer and PDA map span full screen width.
+    local max_work_w = math.floor(h * 1.7777778 + 0.5) -- 16:9 reference width (1920 at h=1080)
+    local work_w = math.min(safe_w, max_work_w)
+    local work_x = math.floor((w - work_w) * 0.5 + 0.5)
+    local work_y = safe_y
+    local work_h = safe_h
+
+    -- Vertical bands per docs/12-ui-wireframes.md sec.1:
+    -- Header Bar (~6%), Filter Strip (~4.5%), Body (~79%), Queue Bar (~4.5%), Footer Legend (~6%)
+    local header_h = math.max(36, math.floor(work_h * 0.06 * math.min(1.15, scale) + 0.5))
+    local filter_h = math.max(28, math.floor(work_h * 0.045 * math.min(1.15, scale) + 0.5))
+    local footer_h = math.max(36, math.floor(work_h * 0.06 * math.min(1.15, scale) + 0.5))
+    local queue_h  = math.max(28, math.floor(work_h * 0.045 + 0.5))
+
+    local header_y = work_y
+    local filter_y = header_y + header_h
+    local body_y   = filter_y + filter_h
+    local footer_y = work_y + work_h - footer_h
+    local queue_y  = footer_y - queue_h
+    local body_h   = math.max(120, queue_y - body_y)
+
+    -- Left catalog panel (54% of working width) and Right comparison card panel (44% of working width, 2% gap)
+    local gap_x   = math.max(12, math.floor(work_w * 0.02 + 0.5))
+    local left_w  = math.floor((work_w - gap_x) * 0.55 + 0.5)
+    local right_w = work_w - left_w - gap_x
+    local left_x  = work_x
+    local right_x = left_x + left_w + gap_x
+
+    -- Toast overlay in top-right third of the working area (D50, docs/12-ui-wireframes.md sec.1 item 3)
+    local toast_w = math.max(320, math.floor(work_w * 0.36 + 0.5))
+    local toast_line_h = math.max(22, math.floor(24 * scale + 0.5))
+    local toast_h = toast_line_h * MAX_VISIBLE_TOASTS + 12
+    local toast_x = work_x + work_w - toast_w
+    local toast_y = body_y + 8
+
+    -- Character budget per line as a function of panel width and font scale (D53)
+    local avg_char_px = 8.5 * scale
+    local list_row_char_budget = math.max(24, math.floor((left_w - 24) / avg_char_px))
+    local card_row_char_budget = math.max(22, math.floor((right_w - 24) / avg_char_px))
+    local toast_char_budget    = math.max(26, math.floor((toast_w - 20) / avg_char_px))
+
+    -- X-Ray 1024x768 virtual UI coordinates (for CUIWindow/CUITextWnd placement)
+    local ui_toast_w = math.floor((toast_w / w) * 1024.0 + 0.5)
+    local ui_toast_h = math.floor((toast_h / h) * 768.0 + 0.5)
+    local ui_toast_x = math.floor((toast_x / w) * 1024.0 + 0.5)
+    local ui_toast_y = math.floor((toast_y / h) * 768.0 + 0.5)
+    local ui_row_h   = math.max(16, math.floor((toast_line_h / h) * 768.0 + 0.5))
+
+    -- FG.6k: Inline button hints inside UIInventory (replaces overlapping bottom bar at y=744).
+    -- Coordinates in 1024x768 virtual UI space mapped into screen_w x screen_h pixels:
+    local function ui_rect_to_px(ux, uy, uw, uh)
+        return {
+            x = math.floor((ux / 1024.0) * w + 0.5),
+            y = math.floor((uy / 768.0) * h + 0.5),
+            w = math.max(1, math.floor((uw / 1024.0) * w + 0.5)),
+            h = math.max(1, math.floor((uh / 768.0) * h + 0.5)),
+            ux = ux, uy = uy, uw = uw, uh = uh,
+        }
+    end
+    local inline_hints = {
+        lt_filter_rect   = ui_rect_to_px(376, 740, 18, 18),
+        rt_filter_rect   = ui_rect_to_px(626, 740, 18, 18),
+        rb_med_rect      = ui_rect_to_px(551, 718, 32, 16),
+        view_panel_rect  = ui_rect_to_px(635, 375, 26, 18),
+        b_close_rect     = ui_rect_to_px(806, 741, 34, 18),
+        item_strip_rect  = ui_rect_to_px(437, 414, 148, 16),
+        cross_y_rect     = ui_rect_to_px(784, 227, 32, 14),
+        cross_x_rect     = ui_rect_to_px(754, 253, 32, 14),
+        cross_b_rect     = ui_rect_to_px(814, 253, 32, 14),
+        cross_a_rect     = ui_rect_to_px(784, 279, 32, 14),
+        cross_lb_rect    = ui_rect_to_px(752, 217, 20, 14),
+        cross_edge_rect  = ui_rect_to_px(662, 119, 92, 66),
+        -- Protected vanilla bottom UI rects in 1024x768 that must NEVER be overlapped by hints:
+        sorter_tabs_rect = ui_rect_to_px(395, 735, 230, 29),
+        putall_btn_rect  = ui_rect_to_px(658, 736, 140, 24),
+        weight_bar_rect  = ui_rect_to_px(848, 742, 170, 16),
+        cont_quick_rect  = ui_rect_to_px(385, 430, 253, 54),
+        cont_bag_rect    = ui_rect_to_px(662, 119, 346, 610),
+    }
+
+    return {
+        screen_w = w,
+        screen_h = h,
+        aspect = aspect,
+        aspect_tag = aspect_tag,
+        is_ultrawide_21_9 = is_ultrawide_21_9,
+        font_scale_pct = scale_pct,
+        font_scale = scale,
+        safe_rect = { x = safe_x, y = safe_y, w = safe_w, h = safe_h },
+        work_rect = { x = work_x, y = work_y, w = work_w, h = work_h },
+        full_bg_rect = { x = 0, y = 0, w = w, h = h },
+        header_rect = { x = work_x, y = header_y, w = work_w, h = header_h },
+        filter_rect = { x = work_x, y = filter_y, w = work_w, h = filter_h },
+        body_rect = { x = work_x, y = body_y, w = work_w, h = body_h },
+        left_panel_rect = { x = left_x, y = body_y, w = left_w, h = body_h },
+        right_panel_rect = { x = right_x, y = body_y, w = right_w, h = body_h },
+        queue_rect = { x = work_x, y = queue_y, w = work_w, h = queue_h },
+        footer_rect = { x = work_x, y = footer_y, w = work_w, h = footer_h },
+        toast_rect = { x = toast_x, y = toast_y, w = toast_w, h = toast_h, line_h = toast_line_h },
+        ui_1024_toast = { x = ui_toast_x, y = ui_toast_y, w = ui_toast_w, h = ui_toast_h, row_h = ui_row_h },
+        inline_hints = inline_hints,
+        char_budgets = {
+            list_row = list_row_char_budget,
+            card_row = card_row_char_budget,
+            toast_line = toast_char_budget,
+        },
+    }
+end
+
+--===========================================================================
+-- 4. String Wrapping & Truncation Without Clipping Numbers (D53)
+--===========================================================================
+
+-- Splits a label+value or item line into (head_text, protected_numeric_tail).
+-- Any trailing segment containing digits (damage, weight, condition %, caliber, price RU, stack xN)
+-- is placed into `protected_tail` so truncation only shortens `head_text` and NEVER clips digits.
+function split_preserving_numeric_tail(text)
+    local s = tostring(text or "")
+    if s == "" then
+        return "", ""
+    end
+
+    -- Case 1: explicit bracketed/parenthesized or separated suffix containing digits at the end
+    -- e.g. "АК-74М (Тактический) [5.45x39: 30+1] 3.6кг" or "Урон .... 39 (+0)"
+    local head, tail = string.match(s, "^(.-)(%s+%[[^%]]*%d[^%]]*%].*)$")
+    if head and tail and #head >= 4 then
+        return head, tail
+    end
+
+    head, tail = string.match(s, "^(.-)(%s+%.%.+%s*[%+%-%d].*)$")
+    if not head then
+        head, tail = string.match(s, "^(.-)(:%s*[%+%-%d].*)$")
+    end
+    if not head then
+        head, tail = string.match(s, "^(.-)(%s+[%+%-%(]?%d[%d%.%/%%,%+%-%s%a\192-\255%(%)]*)$")
+    end
+    if head and tail and #head >= 3 then
+        return head, tail
+    end
+
+    return s, ""
+end
+
+function format_text_preserve_numbers(text, max_chars, scale_pct)
+    local s = tostring(text or "")
+    local sc = normalize_font_scale(scale_pct or state.font_scale_pct) / 100.0
+    local raw_budget = tonumber(max_chars) or 48
+    -- If caller passes base budget at 100%, scale it down proportionally when font is larger
+    local effective_budget = math.max(12, math.floor(raw_budget / sc + 0.5))
+
+    if #s <= effective_budget then
+        return s, false
+    end
+
+    local head, tail = split_preserving_numeric_tail(s)
+    if tail ~= "" then
+        local dots = "..."
+        local avail_head = effective_budget - #tail - #dots
+        if avail_head >= 4 then
+            local trimmed_head = string.sub(head, 1, avail_head)
+            trimmed_head = string.gsub(trimmed_head, "%s+$", "")
+            return trimmed_head .. dots .. tail, true
+        else
+            -- Even if budget is extreme, never clip the numeric tail
+            local min_head = string.sub(head, 1, math.max(1, math.min(4, #head)))
+            return min_head .. dots .. tail, true
+        end
+    end
+
+    local cut = math.max(1, effective_budget - 3)
+    local trimmed = string.gsub(string.sub(s, 1, cut), "%s+$", "")
+    return trimmed .. "...", true
+end
+
+function wrap_russian_text(text, max_chars_per_line, max_lines, scale_pct)
+    local s = tostring(text or "")
+    local sc = normalize_font_scale(scale_pct or state.font_scale_pct) / 100.0
+    local line_budget = math.max(14, math.floor((tonumber(max_chars_per_line) or 44) / sc + 0.5))
+    local limit_lines = math.max(1, math.floor(tonumber(max_lines) or 2))
+
+    if s == "" then
+        return { "" }, false
+    end
+
+    if #s <= line_budget then
+        return { s }, false
+    end
+
+    local words = {}
+    for w in string.gmatch(s, "%S+") do
+        table.insert(words, w)
+    end
+
+    local lines = {}
+    local cur = ""
+    local word_idx = 1
+    while word_idx <= #words do
+        local w = words[word_idx]
+        local candidate = (cur == "") and w or (cur .. " " .. w)
+        if #candidate <= line_budget then
+            cur = candidate
+            word_idx = word_idx + 1
+        elseif cur == "" then
+            -- Single word longer than line_budget
+            if #lines + 1 == limit_lines then
+                local rest = table.concat(words, " ", word_idx)
+                local fitted = format_text_preserve_numbers(rest, line_budget, 100)
+                table.insert(lines, fitted)
+                return lines, true
+            else
+                table.insert(lines, string.sub(w, 1, line_budget))
+                words[word_idx] = string.sub(w, line_budget + 1)
+            end
+        else
+            if #lines + 1 == limit_lines then
+                local rest = cur .. " " .. table.concat(words, " ", word_idx)
+                local fitted = format_text_preserve_numbers(rest, line_budget, 100)
+                table.insert(lines, fitted)
+                return lines, true
+            end
+            table.insert(lines, cur)
+            cur = ""
+        end
+    end
+
+    if cur ~= "" then
+        table.insert(lines, cur)
+    end
+
+    return lines, false
+end
+
+--===========================================================================
+-- 5. Toast Queue, Coalescing & Overlay Above Modal Dialogs (D50)
+--===========================================================================
+
+local function format_toast_entry(entry)
+    if entry.count and entry.count > 1 then
+        return entry.base_text .. string.format(RU.COUNTER_FMT, entry.count)
+    end
+    return entry.base_text
+end
+
+function clear_toasts()
+    state.toasts = {}
+    sync_overlay_widgets()
+    return true
+end
+
+function prune_expired_toasts(now_ms)
+    local now = tonumber(now_ms) or now_continual_ms()
+    local kept = {}
+    for i = 1, #state.toasts do
+        local t = state.toasts[i]
+        if t and now < t.expire_ms then
+            table.insert(kept, t)
+        end
+    end
+    state.toasts = kept
+    return #state.toasts
+end
+
+function push_toast(msg, ttl_ms_opt, category_opt, now_ms_opt)
+    local raw_text = tostring(msg or "")
+    raw_text = string.gsub(raw_text, "^%s+", "")
+    raw_text = string.gsub(raw_text, "%s+$", "")
+    if raw_text == "" then
+        return false, nil
+    end
+
+    local now = tonumber(now_ms_opt) or now_continual_ms()
+    local ttl = tonumber(ttl_ms_opt) or TOAST_TTL_MS
+    if ttl <= 0 then
+        ttl = TOAST_TTL_MS
+    end
+    prune_expired_toasts(now)
+
+    -- Coalesce identical message if already active in the visible queue (D50: "... (xN)")
+    for i = #state.toasts, 1, -1 do
+        local existing = state.toasts[i]
+        if existing.base_text == raw_text then
+            existing.count = (existing.count or 1) + 1
+            existing.updated_ms = now
+            existing.expire_ms = now + ttl
+            existing.display_text = format_toast_entry(existing)
+            state.coalesced_count = state.coalesced_count + 1
+            -- Move coalesced toast to the newest slot
+            table.remove(state.toasts, i)
+            table.insert(state.toasts, existing)
+            sync_overlay_widgets()
+            return true, existing
+        end
+    end
+
+    local entry = {
+        base_text = raw_text,
+        count = 1,
+        category = tostring(category_opt or "info"),
+        created_ms = now,
+        updated_ms = now,
+        expire_ms = now + ttl,
+        display_text = raw_text,
+    }
+    table.insert(state.toasts, entry)
+
+    -- Cap visible queue at MAX_VISIBLE_TOASTS (3 lines max per D50)
+    while #state.toasts > MAX_VISIBLE_TOASTS do
+        table.remove(state.toasts, 1)
+    end
+
+    sync_overlay_widgets()
+    return true, entry
+end
+
+function get_visible_toasts(now_ms_opt)
+    prune_expired_toasts(now_ms_opt)
+    local res = {}
+    local layout = compute_layout()
+    local budget = layout.char_budgets.toast_line
+    for i = 1, #state.toasts do
+        local t = state.toasts[i]
+        local raw_disp = format_toast_entry(t)
+        local fitted = format_text_preserve_numbers(raw_disp, budget, 100)
+        table.insert(res, {
+            base_text = t.base_text,
+            count = t.count,
+            category = t.category,
+            expire_ms = t.expire_ms,
+            display_text = fitted,
+        })
+    end
+    return res
+end
+
+-- Finds the topmost open modal dialog (e.g. UIInventory, UISaveDialog, UIWorkshop, CUIPdaWnd)
+-- so attaching our overlay to it guarantees rendering during DoRenderDialogs() ABOVE its background (D50).
+function find_active_modal_dialog()
+    if type(_G._UI_stack) == "table" and type(_G._GUIs) == "table" then
+        for i = #_G._UI_stack, 1, -1 do
+            local name = _G._UI_stack[i]
+            local wnd = name and _G._GUIs[name]
+            if wnd and type(wnd.AttachChild) == "function" then
+                local ok_s, shown = pcall(function() return wnd:IsShown() end)
+                if not ok_s or shown ~= false then
+                    return wnd, tostring(name)
+                end
+            end
+        end
+    end
+    local inv = mod("ui_inventory")
+    if inv and inv.GUI and type(inv.GUI.AttachChild) == "function" then
+        local ok_s, shown = pcall(function() return inv.GUI:IsShown() end)
+        if ok_s and shown == true then
+            return inv.GUI, "UIInventory"
+        end
+    end
+    return nil, nil
+end
+
+function ensure_overlay_widgets(target_parent)
+    if not CUITextWnd or not CUIWindow or not vector2 then
+        return nil
+    end
+    local parent = target_parent or find_active_modal_dialog()
+    if state.overlay_wnd and state.overlay_parent == parent then
+        return state.overlay_wnd
+    end
+
+    local ok, container = pcall(function()
+        if state.overlay_wnd and state.overlay_parent and type(state.overlay_parent.DetachChild) == "function" then
+            pcall(function() state.overlay_parent:DetachChild(state.overlay_wnd) end)
+        end
+        local wnd = CUIWindow()
+        wnd:SetAutoDelete(true)
+        local layout = compute_layout()
+        local u = layout.ui_1024_toast
+        wnd:SetWndPos(vector2():set(u.x, u.y))
+        wnd:SetWndSize(vector2():set(u.w, u.h))
+
+        local rows = {}
+        local font = select_font_for_scale(state.font_scale_pct)
+        for i = 1, MAX_VISIBLE_TOASTS do
+            local r = CUITextWnd()
+            r:SetAutoDelete(true)
+            r:SetWndPos(vector2():set(0, (i - 1) * u.row_h))
+            r:SetWndSize(vector2():set(u.w, u.row_h))
+            if font and type(r.SetFont) == "function" then
+                r:SetFont(font)
+            end
+            if GetARGB and type(r.SetTextColor) == "function" then
+                r:SetTextColor(GetARGB(255, 240, 225, 170))
+            end
+            if type(r.SetTextAlignment) == "function" then
+                r:SetTextAlignment(2)
+            end
+            r:Show(false)
+            wnd:AttachChild(r)
+            rows[i] = r
+        end
+
+        if parent and type(parent.AttachChild) == "function" then
+            parent:AttachChild(wnd)
+        end
+        state.overlay_wnd = wnd
+        state.overlay_rows = rows
+        state.overlay_parent = parent
+        return wnd
+    end)
+
+    if ok then
+        return container
+    end
+    return nil
+end
+
+-- INV-REWORK-17 п.5 (Миша 2026-11-12, скриншот 14): в инвентаре справа сверху у портрета строка
+-- «Срочно нужен толковый сталкер…» — это наш оверлей тостов, продублировавший новость мира
+-- (news_manager.send_tip) и сообщения actor_menu.set_msg, которые игра и так показывает сама.
+-- В UIInventory эти две категории не выводим; свои объяснения отказа («rejection») остаются.
+INV_HIDDEN_CATEGORIES = { send_tip = true, set_msg = true }
+
+function filter_for_parent(visible, parent, name)
+    local inv = mod("ui_inventory")
+    local in_inv = name == "UIInventory" or (parent ~= nil and inv ~= nil and rawequal(parent, inv.GUI))
+    if not in_inv then return visible end
+    local out = {}
+    for _, e in ipairs(visible) do
+        if not INV_HIDDEN_CATEGORIES[e.category] then out[#out + 1] = e end
+    end
+    return out
+end
+
+function sync_overlay_widgets(now_ms_opt)
+    local visible = get_visible_toasts(now_ms_opt)
+    local parent, parent_name = find_active_modal_dialog()
+    visible = filter_for_parent(visible, parent, parent_name)
+    local wnd = ensure_overlay_widgets(parent)
+    if not wnd then
+        return #visible
+    end
+
+    local layout = compute_layout()
+    local u = layout.ui_1024_toast
+    pcall(function()
+        wnd:SetWndPos(vector2():set(u.x, u.y))
+        wnd:SetWndSize(vector2():set(u.w, u.h))
+        wnd:Show(#visible > 0)
+    end)
+
+    local font = select_font_for_scale(state.font_scale_pct)
+    for i = 1, MAX_VISIBLE_TOASTS do
+        local row = state.overlay_rows[i]
+        local entry = visible[i]
+        if row then
+            if entry then
+                pcall(function()
+                    row:SetWndPos(vector2():set(0, (i - 1) * u.row_h))
+                    row:SetWndSize(vector2():set(u.w, u.row_h))
+                    if font and type(row.SetFont) == "function" then
+                        row:SetFont(font)
+                    end
+                    row:SetText(entry.display_text)
+                    row:Show(true)
+                end)
+            else
+                pcall(function()
+                    row:SetText("")
+                    row:Show(false)
+                end)
+            end
+        end
+    end
+    return #visible
+end
+
+--===========================================================================
+-- 6. Interceptors for actor_menu.set_msg & news_manager.send_tip (D50)
+--===========================================================================
+
+function install_toast_interceptors()
+    local am = mod("actor_menu")
+    if am and type(am.set_msg) == "function" and not state.actor_menu_hooked then
+        local orig_set_msg = am.set_msg
+        state.orig_set_msg = orig_set_msg
+        am.set_msg = function(typ, msg, tm, clr, ...)
+            -- Always invoke the original actor_menu.set_msg first (F2.2 contract)
+            local r1, r2, r3 = orig_set_msg(typ, msg, tm, clr, ...)
+            state.intercepted_set_msg_count = state.intercepted_set_msg_count + 1
+            local text = msg
+            if text == nil and type(typ) == "string" then
+                text = typ
+            end
+            if text ~= nil and tostring(text) ~= "" then
+                push_toast(tostring(text), TOAST_TTL_MS, "set_msg")
+            end
+            return r1, r2, r3
+        end
+        state.actor_menu_hooked = true
+    end
+
+    local nm = mod("news_manager")
+    if nm and type(nm.send_tip) == "function" and not state.news_manager_hooked then
+        local orig_send_tip = nm.send_tip
+        state.orig_send_tip = orig_send_tip
+        nm.send_tip = function(actor, news_id, timeout, sender, showtime, sender_id, ...)
+            -- Always invoke the original news_manager.send_tip first (F2.2 contract)
+            local res = orig_send_tip(actor, news_id, timeout, sender, showtime, sender_id, ...)
+            state.intercepted_send_tip_count = state.intercepted_send_tip_count + 1
+            if news_id ~= nil and tostring(news_id) ~= "" then
+                local translated = tostring(news_id)
+                if game and type(game.translate_string) == "function" then
+                    local ok_tr, tr_s = pcall(game.translate_string, translated)
+                    if ok_tr and type(tr_s) == "string" and tr_s ~= "" then
+                        translated = tr_s
+                    end
+                end
+                push_toast(translated, TOAST_TTL_MS, "send_tip")
+            end
+            return res
+        end
+        state.news_manager_hooked = true
+    end
+
+    return state.actor_menu_hooked or state.news_manager_hooked
+end
+
+function uninstall_toast_interceptors()
+    local am = mod("actor_menu")
+    if state.actor_menu_hooked and am and state.orig_set_msg then
+        am.set_msg = state.orig_set_msg
+    end
+    local nm = mod("news_manager")
+    if state.news_manager_hooked and nm and state.orig_send_tip then
+        nm.send_tip = state.orig_send_tip
+    end
+    state.actor_menu_hooked = false
+    state.news_manager_hooked = false
+    state.orig_set_msg = nil
+    state.orig_send_tip = nil
+    return true
+end
+
+--===========================================================================
+-- 7. Precondition Failure Diagnostics (Cond_Equip, Cond_Move, Stash Capacity)
+--===========================================================================
+
+local function resolve_item_obj(gui, obj)
+    if not obj then return nil end
+    if type(obj) == "table" or type(obj) == "userdata" then
+        if type(obj.section) == "function" then
+            return obj
+        end
+    end
+    if gui and type(gui.CheckItem) == "function" then
+        local ok, resolved = pcall(gui.CheckItem, gui, obj, "gp_toasts")
+        if ok and resolved and type(resolved.section) == "function" then
+            return resolved
+        end
+    end
+    if type(obj) == "number" and level and type(level.object_by_id) == "function" then
+        local ok, resolved = pcall(level.object_by_id, obj)
+        if ok and resolved then return resolved end
+    end
+    return nil
+end
+
+local function is_artefact_safe(obj, sec)
+    if type(IsArtefact) == "function" then
+        local ok, res = pcall(IsArtefact, obj)
+        if ok and res == true then return true end
+    end
+    local kind = sec and SYS_GetParam and SYS_GetParam(0, sec, "kind", "") or ""
+    return kind == "i_arty" or kind == "i_arty_junk" or kind == "i_arty_cont"
+end
+
+-- Computes human-readable Russian reason when UIInventory:Cond_Equip(obj, bag) returns false
+function diagnose_equip_rejection(gui, obj, bag)
+    local item = resolve_item_obj(gui, obj)
+    if not item then
+        return nil, nil
+    end
+    if bag and bag ~= "actor_bag" then
+        return RU.EQUIP_NOT_IN_BAG, "equip_not_in_actor_bag"
+    end
+
+    local sec = item:section()
+    local arty = is_artefact_safe(item, sec)
+    local slot = ((SYS_GetParam and SYS_GetParam(2, sec, "slot")) or -1) + 1
+
+    if arty or slot == 12 or slot == 13 then
+        local outfit = db and db.actor and type(db.actor.item_in_slot) == "function" and db.actor:item_in_slot(7) or nil
+        if not outfit then
+            if arty then
+                return RU.ARTY_NO_OUTFIT, "arty_no_outfit"
+            end
+        else
+            local c_outfit = type(outfit.cast_CustomOutfit) == "function" and outfit:cast_CustomOutfit() or nil
+            if arty then
+                local rooms = (c_outfit and type(c_outfit.get_artefact_count) == "function" and c_outfit:get_artefact_count())
+                    or (SYS_GetParam and SYS_GetParam(2, outfit:section(), "artefact_count"))
+                    or 0
+                local belt_cnt = (db and db.actor and type(db.actor.belt_count) == "function" and db.actor:belt_count()) or 0
+                if rooms <= 0 then
+                    return RU.ARTY_NO_SLOTS, "arty_zero_belt_slots"
+                elseif belt_cnt >= rooms then
+                    return string.format(RU.ARTY_BELT_FULL_FMT, belt_cnt, rooms), "arty_belt_full"
+                end
+            elseif slot == 12 then
+                local helm_ok = true
+                if c_outfit and c_outfit.bIsHelmetAvaliable ~= nil then
+                    helm_ok = (c_outfit.bIsHelmetAvaliable == true)
+                elseif SYS_GetParam then
+                    helm_ok = (SYS_GetParam(1, outfit:section(), "helmet_avaliable", true) ~= false)
+                end
+                if not helm_ok then
+                    return RU.HELMET_BLOCKED, "helmet_blocked_by_outfit"
+                end
+            elseif slot == 13 then
+                local bp_ok = true
+                if c_outfit and c_outfit.bIsBackpackAvaliable ~= nil then
+                    bp_ok = (c_outfit.bIsBackpackAvaliable == true)
+                elseif SYS_GetParam then
+                    bp_ok = (SYS_GetParam(1, outfit:section(), "backpack_avaliable", true) ~= false)
+                end
+                if not bp_ok then
+                    return RU.BACKPACK_BLOCKED, "backpack_blocked_by_outfit"
+                end
+            end
+        end
+    end
+
+    return RU.NOT_EQUIPPABLE, "not_equippable_slot"
+end
+
+-- Checks stash_capacities.script:89-111 weight limit on moving an item into a stash
+function check_stash_capacity_rejection(gui, item, bag_from)
+    if not gui or not item then return nil, nil end
+    local from_ok = (bag_from == "actor_bag" or bag_from == "actor_equ" or bag_from == nil)
+    if not from_ok then return nil, nil end
+
+    local npc_id = gui.npc_id
+    local partner = nil
+    if type(gui.GetPartner) == "function" then
+        local ok_p, p = pcall(gui.GetPartner, gui)
+        if ok_p and p then partner = p end
+    end
+    if not partner and npc_id then
+        if type(get_object_by_id) == "function" then
+            local ok_o, o = pcall(get_object_by_id, npc_id)
+            if ok_o and o then partner = o end
+        elseif level and type(level.object_by_id) == "function" then
+            local ok_o, o = pcall(level.object_by_id, npc_id)
+            if ok_o and o then partner = o end
+        end
+    end
+    if not partner or type(partner.section) ~= "function" then
+        return nil, nil
+    end
+
+    local stash_sec = partner:section()
+    local is_stash = (stash_sec == "inv_backpack" or stash_sec == "inventory_box")
+    if not is_stash and ini_sys and type(ini_sys.r_string_ex) == "function" then
+        local ptype = ini_sys:r_string_ex(stash_sec, "placeable_type")
+        if ptype == "stash" then
+            is_stash = true
+        end
+    end
+    if not is_stash then
+        return nil, nil
+    end
+
+    local capacity = (ini_sys and type(ini_sys.r_float_ex) == "function" and ini_sys:r_float_ex(stash_sec, "capacity"))
+        or (SYS_GetParam and SYS_GetParam(2, stash_sec, "capacity"))
+        or 60
+    local cur_weight = 0
+    if type(partner.iterate_inventory_box) == "function" then
+        pcall(function()
+            partner:iterate_inventory_box(function(_, itm)
+                if itm and type(itm.weight) == "function" then
+                    cur_weight = cur_weight + (tonumber(itm:weight()) or 0)
+                end
+            end)
+        end)
+    elseif type(partner._stash_weight) == "number" then
+        cur_weight = partner._stash_weight
+    end
+
+    local itm_w = (type(item.weight) == "function" and tonumber(item:weight())) or 0
+    if cur_weight + itm_w > capacity then
+        return string.format(RU.STASH_FULL_FMT, cur_weight, itm_w, capacity), "stash_capacity_exceeded"
+    end
+    return nil, nil
+end
+
+-- Computes human-readable Russian reason when UIInventory:Cond_Move(obj, bag, temp, bag_to) returns false
+function diagnose_move_rejection(gui, obj, bag, bag_to)
+    local item = resolve_item_obj(gui, obj)
+    if not item then
+        return nil, nil
+    end
+
+    -- 1. Check stash capacity limit (stash_capacities.script:89-111)
+    local stash_reason, stash_code = check_stash_capacity_rejection(gui, item, bag)
+    if stash_reason then
+        return stash_reason, stash_code
+    end
+
+    -- 2. Check quest item lock (ui_inventory.script:1029-1031)
+    local sec = item:section()
+    local is_quest = false
+    if gui and type(gui.Cond_Quest) == "function" then
+        local ok_q, q = pcall(gui.Cond_Quest, gui, item, bag)
+        if ok_q and q == true then is_quest = true end
+    elseif SYS_GetParam then
+        is_quest = (SYS_GetParam(1, sec, "quest_item", false) == true)
+    end
+    if (bag == "actor_bag" or bag == nil) and is_quest then
+        return RU.QUEST_ITEM_LOCKED, "quest_item_locked"
+    end
+
+    -- 3. Check trade mode tradability (ui_inventory.script:1037-1044)
+    if gui and gui.mode == "trade" and (bag == "actor_trade_bag" or bag == "npc_trade_bag") then
+        local cc = type(gui.CC) == "table" and gui.CC[bag] or nil
+        if cc and type(cc.IsTradable) == "function" then
+            local ok_t, tradable = pcall(cc.IsTradable, cc, item)
+            if ok_t and not tradable then
+                return RU.NOT_TRADABLE, "item_not_tradable"
+            end
+        end
+    end
+
+    -- 4. Check ActorMenu_on_item_before_move callback rejection (flags.ret_value == false)
+    if gui and type(gui.flags) == "table" and gui.flags.ret_value == false then
+        return RU.MOVE_BLOCKED, "before_move_callback_blocked"
+    end
+
+    return RU.MOVE_BLOCKED, "move_precondition_false"
+end
+
+function emit_rejection_toast(reason_text, reason_code)
+    if not reason_text or reason_text == "" then
+        return false
+    end
+    state.rejection_toasts_count = state.rejection_toasts_count + 1
+    state.last_rejection_reason = tostring(reason_text)
+    state.last_rejection_code = tostring(reason_code or "rejected")
+
+    -- Route through actor_menu.set_msg if available so both vanilla HUD and our interceptor stay in sync,
+    -- otherwise push directly to toast queue.
+    local am = mod("actor_menu")
+    if am and type(am.set_msg) == "function" and state.actor_menu_hooked then
+        am.set_msg(1, reason_text, 3)
+    else
+        push_toast(reason_text, TOAST_TTL_MS, "rejection")
+    end
+    return true
+end
+
+function install_inventory_rejection_hooks()
+    local inv = mod("ui_inventory")
+    local cls = inv and inv.UIInventory
+    if type(cls) ~= "table" or state.ui_inventory_hooked then
+        return false
+    end
+
+    state.orig_cond_equip = cls.Cond_Equip
+    state.orig_cond_move  = cls.Cond_Move
+    state.orig_mouse1_db  = cls.On_CC_Mouse1_DB
+    state.orig_drag_drop  = cls.On_CC_DragDrop
+    state.orig_inv_update = cls.Update
+
+    if type(cls.Cond_Equip) == "function" then
+        local orig_ce = cls.Cond_Equip
+        cls.Cond_Equip = function(self, obj, bag, ...)
+            local ok = orig_ce(self, obj, bag, ...)
+            if not ok then
+                local reason, code = diagnose_equip_rejection(self, obj, bag)
+                state.last_rejection_reason = reason or ""
+                state.last_rejection_code = code or ""
+                if state.emit_rejection_on_direct_cond and reason then
+                    emit_rejection_toast(reason, code)
+                end
+            end
+            return ok
+        end
+    end
+
+    if type(cls.Cond_Move) == "function" then
+        local orig_cm = cls.Cond_Move
+        cls.Cond_Move = function(self, obj, bag, temp, bag_to, ...)
+            local ok = orig_cm(self, obj, bag, temp, bag_to, ...)
+            if not ok then
+                local reason, code = diagnose_move_rejection(self, obj, bag, bag_to)
+                state.last_rejection_reason = reason or ""
+                state.last_rejection_code = code or ""
+                if state.emit_rejection_on_direct_cond and reason then
+                    emit_rejection_toast(reason, code)
+                end
+            end
+            return ok
+        end
+    end
+
+    if type(cls.On_CC_Mouse1_DB) == "function" then
+        local orig_db = cls.On_CC_Mouse1_DB
+        cls.On_CC_Mouse1_DB = function(self, bag, idx, ...)
+            local prev_emit = state.emit_rejection_on_direct_cond
+            state.emit_rejection_on_direct_cond = true
+            local res = orig_db(self, bag, idx, ...)
+            state.emit_rejection_on_direct_cond = prev_emit
+            return res
+        end
+    end
+
+    if type(cls.On_CC_DragDrop) == "function" then
+        local orig_dd = cls.On_CC_DragDrop
+        cls.On_CC_DragDrop = function(self, bag_from, idx_from, ...)
+            local prev_emit = state.emit_rejection_on_direct_cond
+            state.emit_rejection_on_direct_cond = true
+            local res = orig_dd(self, bag_from, idx_from, ...)
+            state.emit_rejection_on_direct_cond = prev_emit
+            return res
+        end
+    end
+
+    if type(cls.Update) == "function" then
+        local orig_upd = cls.Update
+        cls.Update = function(self, ...)
+            local res = orig_upd(self, ...)
+            sync_overlay_widgets()
+            return res
+        end
+    end
+
+    state.ui_inventory_hooked = true
+    return true
+end
+
+function uninstall_inventory_rejection_hooks()
+    local inv = mod("ui_inventory")
+    local cls = inv and inv.UIInventory
+    if state.ui_inventory_hooked and type(cls) == "table" then
+        if state.orig_cond_equip then cls.Cond_Equip = state.orig_cond_equip end
+        if state.orig_cond_move  then cls.Cond_Move  = state.orig_cond_move end
+        if state.orig_mouse1_db  then cls.On_CC_Mouse1_DB = state.orig_mouse1_db end
+        if state.orig_drag_drop  then cls.On_CC_DragDrop  = state.orig_drag_drop end
+        if state.orig_inv_update then cls.Update = state.orig_inv_update end
+    end
+    state.ui_inventory_hooked = false
+    return true
+end
+
+--===========================================================================
+-- 8. Layout Diagnostics (`gp_ui_layout_dump` for F2.2 & F2.3 T12)
+--===========================================================================
+
+local function rects_overlap(a, b)
+    if not a or not b then return false end
+    return (a.x < b.x + b.w) and (a.x + a.w > b.x) and (a.y < b.y + b.h) and (a.y + a.h > b.y)
+end
+
+local function rect_inside(inner, outer)
+    if not inner or not outer then return false end
+    return (inner.x >= outer.x)
+        and (inner.y >= outer.y)
+        and (inner.x + inner.w <= outer.x + outer.w)
+        and (inner.y + inner.h <= outer.y + outer.h)
+end
+
+-- Verifies layout geometry and sample Russian item/stat strings at the given resolution and font scale.
+-- Returns a structured report with `clipped = {}` and `overlapped = {}` (empty when layout is clean, per F2.3).
+function inspect_layout(screen_w, screen_h, font_scale_pct, custom_strings)
+    local lay = compute_layout(screen_w, screen_h, font_scale_pct)
+    local clipped = {}
+    local overlapped = {}
+
+    -- 1. Check all primary panels stay inside safe area
+    local panels = {
+        { name = "header", rect = lay.header_rect },
+        { name = "filter", rect = lay.filter_rect },
+        { name = "left_panel", rect = lay.left_panel_rect },
+        { name = "right_panel", rect = lay.right_panel_rect },
+        { name = "queue", rect = lay.queue_rect },
+        { name = "footer", rect = lay.footer_rect },
+        { name = "toast", rect = lay.toast_rect },
+    }
+    for i = 1, #panels do
+        local p = panels[i]
+        if not rect_inside(p.rect, lay.safe_rect) then
+            table.insert(clipped, string.format("panel_outside_safe_area:%s", p.name))
+        end
+    end
+
+    -- 2. Check non-overlapping structural bands (toast is an intentional overlay above body)
+    local structural = {
+        { name = "header", rect = lay.header_rect },
+        { name = "filter", rect = lay.filter_rect },
+        { name = "left_panel", rect = lay.left_panel_rect },
+        { name = "right_panel", rect = lay.right_panel_rect },
+        { name = "queue", rect = lay.queue_rect },
+        { name = "footer", rect = lay.footer_rect },
+    }
+    for i = 1, #structural do
+        for j = i + 1, #structural do
+            if rects_overlap(structural[i].rect, structural[j].rect) then
+                table.insert(overlapped, string.format("%s_overlaps_%s", structural[i].name, structural[j].name))
+            end
+        end
+    end
+
+    -- 2b. FG.6k: Verify inline button hints stay within screen bounds and never overlap bottom UI controls
+    local ih = lay.inline_hints
+    if ih then
+        local hint_elems = {
+            { name = "inline_lt_filter",  rect = ih.lt_filter_rect },
+            { name = "inline_rt_filter",  rect = ih.rt_filter_rect },
+            { name = "inline_rb_med",     rect = ih.rb_med_rect },
+            { name = "inline_view_panel", rect = ih.view_panel_rect },
+            { name = "inline_b_close",    rect = ih.b_close_rect },
+            { name = "inline_item_strip", rect = ih.item_strip_rect },
+        }
+        local bottom_controls = {
+            { name = "sorter_tabs", rect = ih.sorter_tabs_rect },
+            { name = "putall_btn",  rect = ih.putall_btn_rect },
+            { name = "weight_bar",  rect = ih.weight_bar_rect },
+            { name = "cont_quick",  rect = ih.cont_quick_rect },
+            { name = "cont_bag",    rect = ih.cont_bag_rect },
+        }
+        for i = 1, #hint_elems do
+            local he = hint_elems[i]
+            if not rect_inside(he.rect, lay.full_bg_rect) then
+                table.insert(clipped, string.format("inline_hint_outside_screen:%s", he.name))
+            end
+            for j = 1, #bottom_controls do
+                local bc = bottom_controls[j]
+                if rects_overlap(he.rect, bc.rect) then
+                    table.insert(overlapped, string.format("%s_overlaps_%s", he.name, bc.name))
+                end
+            end
+            for k = i + 1, #hint_elems do
+                if rects_overlap(he.rect, hint_elems[k].rect) then
+                    table.insert(overlapped, string.format("%s_overlaps_%s", he.name, hint_elems[k].name))
+                end
+            end
+        end
+        if ih.cross_y_rect and ih.cross_x_rect and ih.cross_b_rect and ih.cross_a_rect and ih.cross_lb_rect then
+            local cross_elems = {
+                { name = "cross_y",  rect = ih.cross_y_rect },
+                { name = "cross_x",  rect = ih.cross_x_rect },
+                { name = "cross_b",  rect = ih.cross_b_rect },
+                { name = "cross_a",  rect = ih.cross_a_rect },
+                { name = "cross_lb", rect = ih.cross_lb_rect },
+            }
+            local bottom_only = {
+                { name = "sorter_tabs", rect = ih.sorter_tabs_rect },
+                { name = "putall_btn",  rect = ih.putall_btn_rect },
+                { name = "weight_bar",  rect = ih.weight_bar_rect },
+                { name = "cont_quick",  rect = ih.cont_quick_rect },
+            }
+            for i = 1, #cross_elems do
+                local ce = cross_elems[i]
+                if not rect_inside(ce.rect, lay.full_bg_rect) or not rect_inside(ce.rect, ih.cont_bag_rect) then
+                    table.insert(clipped, string.format("item_cross_outside_bounds:%s", ce.name))
+                end
+                for j = 1, #bottom_only do
+                    if rects_overlap(ce.rect, bottom_only[j].rect) then
+                        table.insert(overlapped, string.format("%s_overlaps_%s", ce.name, bottom_only[j].name))
+                    end
+                end
+                for k = i + 1, #cross_elems do
+                    if rects_overlap(ce.rect, cross_elems[k].rect) then
+                        table.insert(overlapped, string.format("%s_overlaps_%s", ce.name, cross_elems[k].name))
+                    end
+                end
+            end
+            if ih.cross_edge_rect and not rect_inside(ih.cross_edge_rect, ih.cont_bag_rect) then
+                table.insert(clipped, "item_cross_edge_outside_cont_bag")
+            end
+        end
+    end
+
+    local function tr_toast(id, fb)
+        if game and type(game.translate_string) == "function" then
+            local ok, s = pcall(game.translate_string, id)
+            if ok and type(s) == "string" and s ~= "" and s ~= id then return s end
+        end
+        return fb
+    end
+    -- 3. Check long strings with numeric stats/weights/prices (must not clip numbers)
+    local samples = custom_strings or {
+        tr_toast("ui_gp_toast_sample_1", "Modified Duty \"Nosorog\" Exosuit M2 [Cond: 84%] 14.5 kg"),
+        tr_toast("ui_gp_toast_sample_2", "Tactical AN-94 \"Abakan\" Assault Rifle [5.45x39: 30+1] 3.9 kg"),
+        tr_toast("ui_gp_toast_sample_3", "Armor-piercing bullet resistance (BR Class 4) .. 78% (+12%)"),
+        tr_toast("ui_gp_toast_sample_4", "Technician repair kit service cost ............. 48 650 RU"),
+    }
+
+    local formatted_samples = {}
+    for i = 1, #samples do
+        local raw = samples[i]
+        local fitted = format_text_preserve_numbers(raw, lay.char_budgets.list_row, 100)
+        table.insert(formatted_samples, fitted)
+        -- Verify every number token from the tail of `raw` is preserved intact in `fitted`
+        local _, raw_tail = split_preserving_numeric_tail(raw)
+        if raw_tail ~= "" then
+            for num_tok in string.gmatch(raw_tail, "%d+[%.%/]?%d*") do
+                if not string.find(fitted, num_tok, 1, true) then
+                    table.insert(clipped, string.format("number_clipped:%s_in_%d", num_tok, i))
+                end
+            end
+        end
+        if #fitted > lay.char_budgets.list_row then
+            table.insert(clipped, string.format("line_exceeds_budget:%d>%d", #fitted, lay.char_budgets.list_row))
+        end
+    end
+
+    return {
+        layout = lay,
+        clipped = clipped,
+        overlapped = overlapped,
+        clean = (#clipped == 0 and #overlapped == 0),
+        formatted_samples = formatted_samples,
+    }
+end
+
+function gp_ui_layout_dump(screen_w, screen_h, font_scale_pct)
+    local rep = inspect_layout(screen_w, screen_h, font_scale_pct)
+    local lay = rep.layout
+    local clip_str = (#rep.clipped == 0) and "none" or table.concat(rep.clipped, ",")
+    local over_str = (#rep.overlapped == 0) and "none" or table.concat(rep.overlapped, ",")
+    local line = string.format(
+        "[gp_ui_layout_dump] res=%dx%d (%s) font=%d%% work=%d,%d,%dx%d toast=%d,%d,%dx%d clipped=%s overlapped=%s",
+        lay.screen_w, lay.screen_h, lay.aspect_tag, lay.font_scale_pct,
+        lay.work_rect.x, lay.work_rect.y, lay.work_rect.w, lay.work_rect.h,
+        lay.toast_rect.x, lay.toast_rect.y, lay.toast_rect.w, lay.toast_rect.h,
+        clip_str, over_str
+    )
+    if printf then
+        pcall(printf, "%s", line)
+    end
+    return line, rep
+end
+
+--===========================================================================
+-- 9. Self-test (`gp_toasts.selftest()`)
+--===========================================================================
+
+function selftest()
+    local checks = {}
+    local all_ok = true
+    local function check(name, cond)
+        local ok = (cond == true)
+        checks[#checks + 1] = string.format("%s=%s", name, ok and "pass" or "fail")
+        if not ok then all_ok = false end
+    end
+
+    local saved_scale = state.font_scale_pct
+    local saved_w, saved_h = state.screen_w, state.screen_h
+
+    -- 1. Check 4 target resolutions (1280x720, 1920x1080, 2560x1440, 3840x2160) + ultrawide (2560x1080, 3440x1440) at 100%, 125% (TV), and 140% font scales
+    local r_720p   = inspect_layout(1280, 720, 100)
+    local r_16_100 = inspect_layout(1920, 1080, 100)
+    local r_16_140 = inspect_layout(1920, 1080, 140)
+    local r_1440p  = inspect_layout(2560, 1440, 100)
+    local r_4k     = inspect_layout(3840, 2160, 125)
+    local r_21_100 = inspect_layout(2560, 1080, 100)
+    local r_21_125 = inspect_layout(2560, 1080, 125)
+    local r_21_140 = inspect_layout(2560, 1080, 140)
+
+    check("layout_720p_clean", r_720p.clean and r_720p.layout.aspect_tag == "16:9")
+    check("layout_16x9_100_clean", r_16_100.clean and r_16_100.layout.aspect_tag == "16:9")
+    check("layout_16x9_140_clean", r_16_140.clean)
+    check("layout_1440p_clean", r_1440p.clean and r_1440p.layout.aspect_tag == "16:9")
+    check("layout_4k_clean", r_4k.clean and r_4k.layout.aspect_tag == "16:9")
+    check("layout_21x9_100_centered", r_21_100.clean and r_21_100.layout.is_ultrawide_21_9 and r_21_100.layout.work_rect.x > r_21_100.layout.safe_rect.x)
+    check("layout_21x9_125_tv_clean", r_21_125.clean and r_21_125.layout.font_scale_pct == 125)
+    check("layout_21x9_140_clean", r_21_140.clean and r_21_140.layout.font_scale_pct == 140)
+
+    -- 2. Check toast coalescing & 3000 ms TTL on continual clock
+    clear_toasts()
+    local no_ammo = (game and type(game.translate_string) == "function") and game.translate_string("ui_gp_toast_test_no_ammo") or ""
+    if type(no_ammo) ~= "string" or no_ammo == "" or no_ammo == "ui_gp_toast_test_no_ammo" then
+        no_ammo = "No suitable ammo"
+    end
+    push_toast(no_ammo, 3000, "test", 1000)
+    push_toast(no_ammo, 3000, "test", 1500)
+    push_toast(no_ammo, 3000, "test", 2000)
+    local vis_2000 = get_visible_toasts(2000)
+    check("toast_coalesce_x3", #vis_2000 == 1 and vis_2000[1].count == 3 and string.find(vis_2000[1].display_text, "3)", 1, true) ~= nil)
+    local vis_4600 = get_visible_toasts(4600)
+    check("toast_alive_before_ttl", #vis_4600 == 1)
+    local vis_5100 = get_visible_toasts(5100)
+    check("toast_expired_after_3s", #vis_5100 == 0)
+
+    clear_toasts()
+    state.font_scale_pct = saved_scale
+    state.screen_w, state.screen_h = saved_w, saved_h
+
+    local summary = string.format("[gp_toasts] selftest %s | %s", all_ok and "PASS" or "FAIL", table.concat(checks, ";"))
+    if printf then
+        pcall(printf, "%s", summary)
+    end
+    return all_ok, summary
+end
+
+--===========================================================================
+-- 10. Lifecycle Registration
+--===========================================================================
+
+function on_gui_show(_)
+    install_toast_interceptors()
+    install_inventory_rejection_hooks()
+    sync_overlay_widgets()
+    return true
+end
+
+function on_gui_hide(_)
+    sync_overlay_widgets()
+    return true
+end
+
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_game_start()
+    if _G.gp_compat and _G.gp_compat.is_engine_compatible and not _G.gp_compat.is_engine_compatible() then return end
+    install_toast_interceptors()
+    install_inventory_rejection_hooks()
+    _G.gp_ui_layout_dump = gp_ui_layout_dump
+    if RegisterScriptCallback then
+        RegisterScriptCallback("GUI_on_show", on_gui_show)
+        RegisterScriptCallback("GUI_on_hide", on_gui_hide)
+    end
+end
+
+_G.gp_ui_layout_dump = gp_ui_layout_dump

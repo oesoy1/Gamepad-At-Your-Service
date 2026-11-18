@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+	<string id="ui_gp_n_tab_world">
+		<text>World</text>
+	</string>
+	<string id="ui_gp_n_tab_menu">
+		<text>Inventory &amp; Menus</text>
+	</string>
+	<string id="ui_gp_n_tab_aim">
+		<text>Aiming</text>
+	</string>
+	<string id="ui_gp_n_tab_other">
+		<text>Other Settings</text>
+	</string>
+	<string id="ui_gp_n_cap">
+		<text>Gamepad Settings</text>
+	</string>
+	<string id="ui_gp_n_col_btn">
+		<text>Button</text>
+	</string>
+	<string id="ui_gp_n_col_tap">
+		<text>Tap</text>
+	</string>
+	<string id="ui_gp_n_col_hold">
+		<text>Hold</text>
+	</string>
+	<string id="ui_gp_n_col_param">
+		<text>Setting</text>
+	</string>
+	<string id="ui_gp_n_col_value">
+		<text>Value</text>
+	</string>
+	<string id="ui_gp_n_grp_move">
+		<text>Movement</text>
+	</string>
+	<string id="ui_gp_n_grp_weapon">
+		<text>Weapons</text>
+	</string>
+	<string id="ui_gp_n_grp_inv">
+		<text>Inventory</text>
+	</string>
+	<string id="ui_gp_n_grp_pda">
+		<text>PDA</text>
+	</string>
+	<string id="ui_gp_n_grp_common">
+		<text>Common</text>
+	</string>
+	<string id="ui_gp_n_grp_nav">
+		<text>Navigation</text>
+	</string>
+	<string id="ui_gp_n_grp_act">
+		<text>Actions</text>
+	</string>
+	<string id="ui_gp_n_grp_tabs">
+		<text>Tabs &amp; Categories</text>
+	</string>
+	<string id="ui_gp_n_grp_aim_look">
+		<text>Look</text>
+	</string>
+	<string id="ui_gp_n_grp_aim_ads">
+		<text>Aiming</text>
+	</string>
+	<string id="ui_gp_n_grp_aim_stick">
+		<text>Right Stick</text>
+	</string>
+	<string id="ui_gp_n_grp_aim_assist">
+		<text>Assist</text>
+	</string>
+	<string id="ui_gp_n_none">
+		<text>---</text>
+	</string>
+	<string id="ui_gp_n_fixed">
+		<text>Locked</text>
+	</string>
+	<string id="ui_gp_n_dpad">
+		<text>D-pad</text>
+	</string>
+	<string id="ui_gp_n_tap">
+		<text>Tap</text>
+	</string>
+	<string id="ui_gp_n_hold">
+		<text>Hold</text>
+	</string>
+	<string id="ui_gp_n_locked_why">
+		<text>This stick controls movement and look directly, so it cannot be rebound.</text>
+	</string>
+	<string id="ui_gp_n_help_slot">
+		<text>A - assign another button. Left and right or X - choose tap or hold. Press two buttons together for a chord. View - restore the default layout for this tab.</text>
+	</string>
+	<string id="ui_gp_n_help_aim">
+		<text>Left and right - change the value. New values take effect after pressing Apply. View - default values.</text>
+	</string>
+	<string id="ui_gp_n_f_change">
+		<text>Change</text>
+	</string>
+	<string id="ui_gp_n_f_help">
+		<text>Help</text>
+	</string>
+	<string id="ui_gp_n_f_hold">
+		<text>Hold</text>
+	</string>
+	<string id="ui_gp_n_f_tab">
+		<text>Tab</text>
+	</string>
+	<string id="ui_gp_n_f_close">
+		<text>Close</text>
+	</string>
+	<string id="ui_gp_n_aim_sx">
+		<text>Horizontal sensitivity</text>
+	</string>
+	<string id="ui_gp_n_aim_sy">
+		<text>Vertical sensitivity</text>
+	</string>
+	<string id="ui_gp_n_aim_inv">
+		<text>Invert Y-axis</text>
+	</string>
+	<string id="ui_gp_n_aim_acc">
+		<text>Edge acceleration</text>
+	</string>
+	<string id="ui_gp_n_aim_ads">
+		<text>ADS sensitivity</text>
+	</string>
+	<string id="ui_gp_n_aim_dzi">
+		<text>Deadzone</text>
+	</string>
+	<string id="ui_gp_n_aim_dzo">
+		<text>Outer threshold</text>
+	</string>
+	<string id="ui_gp_n_aim_curve">
+		<text>Response curve</text>
+	</string>
+	<string id="ui_gp_n_aim_assist">
+		<text>Assist mode</text>
+	</string>
+	<string id="ui_gp_n_aim_fric">
+		<text>Target slowdown</text>
+	</string>
+	<string id="ui_gp_n_aim_mag">
+		<text>ADS magnetism</text>
+	</string>
+	<string id="ui_gp_n_aim_scope">
+		<text>Disable in scopes</text>
+	</string>
+	<string id="ui_gp_n_graph_title">
+		<text>Right stick response</text>
+	</string>
+	<string id="ui_gp_n_graph_x">
+		<text>Stick tilt</text>
+	</string>
+	<string id="ui_gp_n_graph_y">
+		<text>Turn speed</text>
+	</string>
+	<!-- CURSOR1_START -->
+	<string id="ui_gp_oth_cursor_size">
+		<text>Cursor size</text>
+	</string>
+	<string id="ui_gp_oth_cursor_size_desc">
+		<text>Gamepad cursor scale in menus and mouse-cursor mode (50-200%, default 100%).</text>
+	</string>
+	<string id="ui_gp_oth_cursor_speed">
+		<text>Cursor speed</text>
+	</string>
+	<string id="ui_gp_oth_cursor_speed_desc">
+		<text>Left-stick cursor speed inside third-party windows without gamepad support.</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn">
+		<text>Mouse-cursor button</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_desc">
+		<text>Button to toggle mouse mode in other mods' windows (synced with the Controls tab).</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_r3">
+		<text>Press R3</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_hold_l3">
+		<text>Hold L3</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_lb_l3">
+		<text>LB + L3</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_hold_view">
+		<text>Hold View</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_custom">
+		<text>Custom (Controls)</text>
+	</string>
+	<!-- CURSOR1_END -->
+</string_table>

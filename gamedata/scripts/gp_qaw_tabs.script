@@ -1,0 +1,408 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- Actions for Haru dynamic tabs.
+local gc = game.translate_string
+local function tr(key, fallback)
+    if not key then return fallback end
+    local value = gc(key)
+    return value and value ~= key and value or fallback
+end
+local function safe_foreign_call(key, fn, ...)
+    return gp_compat.safe_call(key, fn, ...)
+end
+local ActionWheelOption, CompanionWheelOption = {}, {}
+function ActionWheelOption:new(action_id, label_id, fallback_label, icon_sec, fn_exec, fn_enabled, fn_dynamic_label)
+    self = setmetatable({}, {__index = self})
+    self.action_id = action_id
+    self.label_id = label_id
+    self.fallback_label = fallback_label or action_id
+    self.section = icon_sec or "device_pda_1"
+    self.fn_exec = fn_exec
+    self.fn_enabled = fn_enabled
+    self.fn_dynamic_label = fn_dynamic_label
+    self:update()
+    return self
+end
+
+function ActionWheelOption:update()
+end
+
+function ActionWheelOption:is_enabled()
+    if self.fn_enabled then
+        return self.fn_enabled() == true
+    end
+    return true
+end
+
+function ActionWheelOption:get_text()
+    local base = tr(self.label_id, self.fallback_label)
+    if self.fn_dynamic_label then
+        local extra = self.fn_dynamic_label()
+        if extra and extra ~= "" then
+            return base .. " (" .. extra .. ")"
+        end
+    end
+    return base
+end
+
+function ActionWheelOption:execute()
+    if not self:is_enabled() then return end
+    if self.fn_exec then
+        self.fn_exec()
+    end
+end
+
+local companion_commands = {
+    {
+        id = "move",
+        text = { "ui_gp_comp_follow_me", "ui_gp_comp_wait_here" },
+        legacy_text = { "st_haru_follow_me", "st_haru_wait_here" },
+        fallback_text = { "Follow me", "Wait here" },
+        callback_name = "cycle_companions_move_mode",
+        idiots = { "movement", "wait", "follow" }, -- FIX-LIVE6: группа Useful Idiots, действие «вкл», действие «выкл»
+        texture = {
+            "ui_Loadouts_Wrapper_Selected",
+            "ui_icons_newPDA_SmallBlueSchedule"
+        },
+        state = function(companion)
+            return companion:has_info("npcx_beh_wait") and 2 or 1
+        end
+    },
+    {
+        id = "combat",
+        text = { "ui_gp_comp_attack_all", "ui_gp_comp_ignore_combat" },
+        legacy_text = { "st_haru_attack_all", "st_haru_ignore_combat" },
+        fallback_text = { "Attack all", "Ignore combat" },
+        callback_name = "cycle_companions_combat_mode",
+        idiots = { "readiness", "ignore", "attack" }, -- FIX-LIVE6: группа Useful Idiots, действие «вкл», действие «выкл»
+        texture = {
+            "ui_inGame2_PD_Ohotnik_na_mutantov",
+            "ui_inGame2_PD_Diplomat"
+        },
+        state = function(companion)
+            return companion:has_info("npcx_beh_ignore_combat") and 2 or 1
+        end
+    },
+    {
+        id = "stealth",
+        text = { "ui_gp_comp_stop_stealth", "ui_gp_comp_start_stealth" },
+        legacy_text = { "st_haru_stop_stealth", "st_haru_start_stealth" },
+        fallback_text = { "Stop stealth", "Stealth mode" },
+        callback_name = "cycle_companions_stealth_mode",
+        idiots = { "stance", "sneak", "stand" }, -- FIX-LIVE6: группа Useful Idiots, действие «вкл», действие «выкл»
+        texture = {
+            "ui_inGame2_PD_Svoy_paren",
+            "ui_inGame2_PD_Master_boevih_sistem"
+        },
+        state = function(companion)
+            return companion:has_info("npcx_beh_substate_stealth") and 1 or 2
+        end
+    },
+    {
+        id = "distance",
+        text = { "ui_gp_comp_dist_far", "ui_gp_comp_dist_near" },
+        legacy_text = { "st_haru_Keep_distance_far", "st_haru_keep_distance_near" },
+        fallback_text = { "Keep distance: far", "Keep distance: near" },
+        callback_name = "cycle_companions_distance_mode",
+        idiots = { "distance", "far", "normal" }, -- FIX-LIVE6: группа Useful Idiots, действие «вкл», действие «выкл»
+        texture = {
+            "ui_inGame2_PD_Voroshilovskiy_strelok",
+            "ui_inGame2_PD_Lider"
+        },
+        state = function(companion)
+            return companion:has_info("npcx_beh_distance_far") and 1 or 2
+        end
+    },
+    {
+        id = "loot",
+        text = { "ui_gp_comp_stop_looting", "ui_gp_comp_start_looting" },
+        legacy_text = { "st_haru_stop_looting", "st_haru_start_looting" },
+        fallback_text = { "Do not loot", "Loot corpses" },
+        callback_name = "cycle_companions_loot_mode",
+        idiots = { "jobs", "loot_corpses" }, -- FIX-LIVE6: группа Useful Idiots, действие «вкл», действие «выкл»
+        texture = {
+            "ui_inGame2_PD_Sostoyatelniy_klient",
+            "ui_inGame2_PD_Avtoritet"
+        },
+        state = function(companion)
+            return companion:has_info("npcx_beh_loot_corpses") and 1 or 2
+        end
+    }
+}
+
+function CompanionWheelOption:new(command)
+    self = setmetatable({}, {__index = self})
+    self.command = command
+    self.cmd = companion_commands[command]
+    self.state = 1
+    self.section = "device_pda_1"
+    self:update()
+    return self
+end
+
+function CompanionWheelOption:update()
+    if not axr_companions or type(axr_companions.non_task_companions) ~= "table" then
+        self.enabled = false
+        return
+    end
+    for id, _ in pairs(axr_companions.non_task_companions) do
+        local companion = level.object_by_id(id)
+        if companion and self.cmd and type(self.cmd.state) == "function" then
+            local ok_st, st_val = safe_foreign_call("axr_companions", self.cmd.state, companion)
+            if ok_st and (st_val == 1 or st_val == 2) then
+                self.enabled = true
+                self.state = st_val
+                return
+            end
+        end
+    end
+    self.enabled = false
+end
+
+-- FIX-LIVE6 (Миша 2026-11-16: «не работают команды для напарника»): в G.A.M.M.A. отрядом управляет
+-- 450- Useful Idiots (illish.lib.npc, NPC.GLOBAL_STATE). axr_companions.cycle_* меняли только info-порции
+-- в обход его учёта, и Useful Idiots возвращал свои приказы. Если библиотека загружена — приказ идёт через неё.
+function idiots_npc()
+    local loaded = package and package.loaded
+    local NPC = loaded and loaded["illish.lib.npc"]
+    if type(NPC) == "table" and type(NPC.getState) == "function" and type(NPC.setState) == "function" then
+        return NPC
+    end
+end
+
+function CompanionWheelOption:execute()
+    if not self.enabled or not self.cmd then return end
+    local NPC = idiots_npc()
+    local idi = self.cmd.idiots
+    if NPC and idi then
+        local group, on_act, off_act = idi[1], idi[2], idi[3]
+        safe_foreign_call("idiots_npc", function()
+            local is_on = NPC.getState(nil, group, on_act)
+            local act, enabled = on_act, true
+            if is_on then
+                if off_act then act = off_act else enabled = false end
+            end
+            NPC.setState(nil, group, act, enabled)
+            local kb = rawget(_G, "idiots_keybinds")
+            if kb and type(kb.showStateMessage) == "function" then
+                kb.showStateMessage(group, act, enabled, off_act == nil)
+            end
+        end)
+        return
+    end
+    local fn = self.cmd.callback or (axr_companions and self.cmd.callback_name and axr_companions[self.cmd.callback_name])
+    if type(fn) == "function" then
+        safe_foreign_call("axr_companions", fn)
+    end
+end
+
+function CompanionWheelOption:is_enabled()
+    return self.enabled == true
+end
+
+function CompanionWheelOption:get_text()
+    if not self.cmd then return "" end
+    local st = self.state or 1
+    local own_id = self.cmd.text and self.cmd.text[st]
+    if own_id and gc then
+        local ok, s = pcall(gc, own_id)
+        if ok and s and s ~= "" and s ~= own_id then
+            return s
+        end
+    end
+    local leg_id = self.cmd.legacy_text and self.cmd.legacy_text[st]
+    if leg_id and gc then
+        local ok, s = pcall(gc, leg_id)
+        if ok and s and s ~= "" and s ~= leg_id then
+            return s
+        end
+    end
+    return (self.cmd.fallback_text and self.cmd.fallback_text[st]) or own_id or ""
+end
+
+local function has_any_companion()
+    if not axr_companions or not axr_companions.non_task_companions then
+        return false
+    end
+    for id, _ in pairs(axr_companions.non_task_companions) do
+        if level.object_by_id(id) then
+            return true
+        end
+    end
+    return false
+end
+
+local ACTION_FACTORIES = {}
+ACTION_FACTORIES["qdet"] = function()
+    local qdet_sec = "detector_simple"
+    if db.actor and db.actor:item_in_slot(9) then
+        qdet_sec = db.actor:item_in_slot(9):section()
+    end
+    return ActionWheelOption:new("qdet", "ui_gp_wheel_act_detector", "Detector", qdet_sec,
+        function() gp_field.on_detector_tap() end,
+        function() return db.actor and db.actor:item_in_slot(9) ~= nil end)
+end
+ACTION_FACTORIES["torch"] = function()
+    return ActionWheelOption:new("torch", "ui_gp_wheel_act_torch", "Headlamp", "device_torch",
+        function()
+            if gp_field and gp_field.toggle_torch then
+                gp_field.toggle_torch()
+            elseif item_device and item_device.toggle_torch then
+                safe_foreign_call("item_device", item_device.toggle_torch)
+            end
+        end,
+        function() return db.actor and db.actor:item_in_slot(10) ~= nil end)
+end
+ACTION_FACTORIES["nvg_toggle"] = function()
+    return ActionWheelOption:new("nvg_toggle", "ui_gp_wheel_act_nvg", "NVG On/Off", "device_torch_nv_2",
+        function()
+            if gp_field and gp_field.toggle_nvg then gp_field.toggle_nvg() end
+        end)
+end
+ACTION_FACTORIES["nvg_brightness"] = function()
+    -- NVG brightness lives in the Devices tab (D25, P07)
+    return ActionWheelOption:new("nvg_brightness", "ui_gp_wheel_act_nvg_bright", "NVG Brightness", "device_torch_nv_3",
+        function()
+            if gp_field and gp_field.nvg_brightness_step then gp_field.nvg_brightness_step() end
+        end,
+        function() return item_device ~= nil and ((item_device.is_nv_active and item_device.is_nv_active() == true) or item_device.nv_state == true) end)
+end
+ACTION_FACTORIES["mask_wipe"] = function()
+    return ActionWheelOption:new("mask_wipe", "ui_gp_wheel_act_mask", "Wipe Mask", "helm_respirator",
+        function()
+            if gp_field and gp_field.clean_mask then gp_field.clean_mask() end
+        end)
+end
+ACTION_FACTORIES["pda_3d"] = function()
+    return ActionWheelOption:new("pda_3d", "ui_gp_wheel_act_pda", "3D PDA", "device_pda_1",
+        function()
+            if gp_field and gp_field.on_3d_pda_tap then gp_field.on_3d_pda_tap(true) end
+        end,
+        function() return db.actor and db.actor:item_in_slot(8) ~= nil end)
+end
+ACTION_FACTORIES["fast_reload"] = function()
+    -- GAYS v0.2: tactical fast reload moved from LT + X into the wheel
+    return ActionWheelOption:new("fast_reload", "ui_gp_wheel_act_fast_reload", "Fast Reload", "ammo_9x19_fmj",
+        function()
+            if gp_weapon and gp_weapon.x_fast_reload then gp_weapon.x_fast_reload() end
+        end,
+        function() return db.actor ~= nil and db.actor:active_item() ~= nil end)
+end
+ACTION_FACTORIES["comp_move_to_point"] = function()
+    return ActionWheelOption:new("comp_move_to_point", "ui_gp_wheel_comp_point", "Move to Point", "device_pda_2",
+        function()
+            if axr_companions and type(axr_companions.move_to_point) == "function" then
+                safe_foreign_call("axr_companions", axr_companions.move_to_point)
+            end
+        end,
+        has_any_companion)
+end
+ACTION_FACTORIES["comp_idiots_ui"] = function()
+    -- Full IDIOTS menu entry (D46); disabled (not hidden) when the mod is absent or broken
+    local function idiots_present()
+        if gp_compat and gp_compat.is_broken and gp_compat.is_broken("idiots") then
+            return false
+        end
+        return _G.idiots_keybinds ~= nil and _G.idiots_keybinds.UI ~= nil and type(_G.idiots_keybinds.UI.openUI) == "function"
+    end
+    return ActionWheelOption:new("comp_idiots_ui", "ui_gp_wheel_comp_idiots", "Companion Tactical Menu (IDIOTS)", "device_pda_3",
+        function()
+            CreateTimeEvent("gp_wheel", "open_idiots_ui", 0.05, function()
+                if idiots_present() then
+                    local ik = idiots_keybinds
+                    if ik and ik.UI and type(ik.UI.openUI) == "function" then
+                        safe_foreign_call("idiots", ik.UI.openUI)
+                    end
+                end
+                return true
+            end)
+        end,
+        function() return idiots_present() and has_any_companion() end)
+end
+
+
+local function laser_weapon()
+    local actor = db.actor
+    local weapon = actor and actor:active_item()
+    local laser = zzz_bas_laser_control
+    if weapon and laser and type(laser.has_laser) == "function" then
+        local ok, res = pcall(laser.has_laser, weapon:section())
+        if ok and res then return weapon end
+    end
+end
+
+ACTION_FACTORIES.laser = function()
+    return ActionWheelOption:new("laser", "st_gp_qaw_laser", "Laser", "device_torch",
+        function()
+            local weapon = laser_weapon()
+            local laser = zzz_bas_laser_control
+            if weapon and laser and type(laser.toggle_laser) == "function" then
+                safe_foreign_call("qaw_laser", laser.toggle_laser, weapon:id())
+            end
+        end, function() return laser_weapon() ~= nil end)
+end
+
+local function is_binocular(section)
+    return section == "wpn_binoc_inv" or section == "wpn_binoc"
+end
+
+ACTION_FACTORIES.binocular = function()
+    return ActionWheelOption:new("binocular", "st_gp_qaw_binocular", "Binoculars", "wpn_binoc_inv",
+        function() if db.actor then db.actor:activate_slot(5) end end,
+        function()
+            local item = db.actor and db.actor:item_in_slot(5)
+            return item ~= nil and is_binocular(item:section())
+        end)
+end
+
+function device_slot(section)
+    if type(section) ~= "string" then return nil end
+    if is_binocular(section) then return 5 end
+    if not ini_sys or not ini_sys:section_exist(section) then return nil end
+    local class = ini_sys:r_string_ex(section, "class")
+    local slot = tonumber(ini_sys:r_string_ex(section, "slot"))
+    if slot == 8 and class and class:match("^D_") then return 9 end
+    if slot == 7 and class == "D_PDA" then return 8 end
+end
+
+local function equipped_device(actor, slot, section)
+    local item = actor:item_in_slot(slot)
+    return item and item:section() == section
+end
+
+local function make_device(section)
+    local slot = device_slot(section)
+    if not slot then return nil end
+    return ActionWheelOption:new(section, nil, ui_item.get_sec_name(section), section,
+        function()
+            local actor = db.actor
+            local item = actor and actor:object(section)
+            if not item then return end
+            if slot == 9 then
+                local qaw = rawget(_G, "haru_quick_action_wheel_mcm") or rawget(_G, "gp_qaw_fallback") -- ANOM-COMPAT: fallback copy on clean Anomaly
+                local det_opt = qaw and qaw.GUI and (qaw.QDetectorWheelOption or (qaw.TAB_MANAGER and qaw.TAB_MANAGER.classes and qaw.TAB_MANAGER.classes.QDetectorWheelOption))
+                if det_opt and type(det_opt.OnClick) == "function" then
+                    safe_foreign_call("qaw_detector", det_opt.OnClick, { section = section, slot = 9 })
+                    return
+                end
+            end
+            if not equipped_device(actor, slot, section) then actor:move_to_slot(item, slot, true) end
+            local actor_id = actor:id()
+            CreateTimeEvent("gp_qaw_tabs", "equip_device", .1, function()
+                local current = db.actor
+                if current and current:id() == actor_id and equipped_device(current, slot, section) then
+                    if slot == 9 then current:show_detector(true)
+                    elseif slot == 8 then gp_field.on_3d_pda_tap(true)
+                    else current:activate_slot(slot) end
+                end
+                return true
+            end)
+        end, function() return db.actor ~= nil and db.actor:object(section) ~= nil end)
+end
+
+function make(spec)
+    if type(spec) ~= "string" then return nil end
+    local kind, id = spec:match("^(%a+):(.+)$")
+    if kind == "device" then return make_device(id) end
+    if kind == "act" and ACTION_FACTORIES[id] then return ACTION_FACTORIES[id]() end
+    if kind == "comp" and companion_commands[tonumber(id)] then return CompanionWheelOption:new(tonumber(id)) end
+end

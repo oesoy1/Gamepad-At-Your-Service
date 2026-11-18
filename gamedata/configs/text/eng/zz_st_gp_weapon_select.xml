@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="st_gp_weapon_select_release"><text>Y release</text></string>
+    <string id="st_gp_weapon_select_holster"><text>Y + Down  holster</text></string>
+    <string id="st_gp_weapon_select_empty"><text>No weapon</text></string>
+</string_table>

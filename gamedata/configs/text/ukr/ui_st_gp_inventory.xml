@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<string_table>
+	<string id="ui_mm_desc_gamepad_inventory">
+		<text>Інвентар G.A.M.M.A.: пауза, поки відкритий інвентар, і вибір вигляду інвентарю.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_gp_inventory_pause">
+		<text>Пауза в інвентарі</text>
+	</string>
+	<string id="ui_mm_control_gamepad_gp_inventory_pause_desc">
+		<text>Поки відкритий інвентар, обшук, торгівля або ремонт, світ стоїть. Підказки, порівняння та вага продовжують оновлюватися. Анімації (їжа, лікування, переодягання) програються одразу після закриття вікна.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_gp_inventory_mode">
+		<text>Вигляд інвентарю</text>
+	</string>
+	<string id="ui_mm_control_gamepad_gp_inventory_mode_desc">
+		<text>Класичний інвентар G.A.M.M.A. з курсором геймпада (за замовчуванням) або новий повноекранний (за бажанням, запрацює, коли буде готовий).</text>
+	</string>
+	<string id="ui_mm_lst_gp_inv_mode_gamma">
+		<text>Класичний G.A.M.M.A. (курсор)</text>
+	</string>
+	<string id="ui_mm_lst_gp_inv_mode_full">
+		<text>Новий повноекранний (за бажанням)</text>
+	</string>
+	<string id="ui_gp_inv_hint_select">
+		<text>Узяти</text>
+	</string>
+	<string id="ui_gp_inv_hint_use">
+		<text>Вик.</text>
+	</string>
+	<string id="ui_gp_inv_hint_menu">
+		<text>Меню</text>
+	</string>
+	<string id="ui_gp_inv_hint_filter">
+		<text>Фільтр</text>
+	</string>
+	<string id="ui_gp_inv_hint_panel">
+		<text>Панель</text>
+	</string>
+	<string id="ui_gp_inv_hint_close">
+		<text>Закрити</text>
+	</string>
+	<string id="ui_gp_inv_hint_panel_bag">
+		<text>Рюкзак / Спорядження</text>
+	</string>
+	<string id="ui_gp_inv_hint_item_actions">
+		<text>Узяти / Надіти / Меню</text>
+	</string>
+
+	<string id="ui_gp_inv_hint_unequip">
+		<text>Зняти</text>
+	</string>
+	<string id="ui_gp_inv_hint_desc">
+		<text>Опис</text>
+	</string>
+</string_table>

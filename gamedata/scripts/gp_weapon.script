@@ -1,0 +1,583 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- E2.2 (D15, D57): direct semantic adapters for the gamepad context button X.
+-- Called from C++ CGamepadContextDispatcher::RunXAdapter (src/xrGame/GamepadContextDispatcher.cpp).
+-- No key emulation: neither kWPN_RELOAD nor DIK_F (the AmmoCheck key) is injected for these actions
+-- (kb/05 par. 8 item 7, D57). Every adapter returns a short "<choice>:<why>" string that the engine writes
+-- to the gamepad telemetry, so the chosen action and the reason are always visible.
+--
+-- D57 contract:
+--   1. Magazines (GAMMA Mags Reloaded 1.05) are OPTIONAL. Without Mags (or if Mags throws an error),
+--      reload MUST fall back to standard engine reload (db.actor:reload_weapon()) with NO key emulation.
+--   2. Every call to a foreign mod (arti_jamming, animation_common, magazine_binder, magazines,
+--      ammo_check_onekey_mcm, ammo_check_mcm, ammo_check_fastreload_mcm, script_use_targets)
+--      is wrapped in pcall via gp_compat (or safe_call).
+--   3. If a foreign mod throws a runtime error, it is marked "broken for the rest of the session"
+--      in gp_compat and bypassed in favor of the default fallback.
+
+local FAST_IDLE_WAIT_MS = 1500   -- LT+X: wait for the ADS-exit animation to reach state 0
+local STATE_IDLE   = 0
+local STATE_RELOAD = 7
+
+local last = { op = "none", result = "none", time = 0 }
+
+local function remember(op, result)
+    last.op = op
+    last.result = result
+    last.time = time_global()
+    return result
+end
+
+-- for gp_weapon_state / tests
+function get_last()
+    return last.op, last.result, last.time
+end
+
+local function dbg(fmt, ...)
+    printf("[gp_weapon] " .. fmt, ...)
+end
+
+-- Local fallback if gp_compat is not yet loaded in a standalone test
+local local_broken = {}
+local function compat_call(provider_key, fn, ...)
+    if gp_compat and type(gp_compat.safe_call) == "function" then
+        return gp_compat.safe_call(provider_key, fn, ...)
+    end
+    if local_broken[provider_key] or type(fn) ~= "function" then
+        return false, nil
+    end
+    local ok, res = pcall(fn, ...)
+    if not ok then
+        local_broken[provider_key] = true
+        dbg("provider %s marked broken: %s", tostring(provider_key), tostring(res))
+        return false, nil
+    end
+    return true, res
+end
+
+local function compat_is_broken(provider_key)
+    if gp_compat and type(gp_compat.is_broken) == "function" then
+        return gp_compat.is_broken(provider_key)
+    end
+    return local_broken[provider_key] == true
+end
+
+-- weapon in hands; during the draw animation active_item() is still nil, so fall back to the slot item
+local function slot_weapon()
+    local actor = db.actor
+    if not actor then return nil, false end
+    local ok_w, wpn, in_hands = pcall(function()
+        local w = actor:active_item()
+        local ih = true
+        if not (w and IsWeapon(w)) then
+            w = actor:item_in_slot(actor:active_slot())
+            ih = false
+        end
+        if w and IsWeapon(w) and not IsItem("fake_ammo_wpn", nil, w) then
+            return w, ih
+        end
+        return nil, false
+    end)
+    if ok_w and wpn then
+        return wpn, in_hands
+    end
+    return nil, false
+end
+
+local function is_jammed(wpn)
+    if gp_compat and type(gp_compat.is_weapon_jammed) == "function" then
+        return gp_compat.is_weapon_jammed(wpn)
+    end
+    if compat_is_broken("jamming") or not (arti_jamming and type(arti_jamming.get_jammed) == "function") then
+        return false
+    end
+    local ok_id, wpn_id = pcall(function() return wpn:id() end)
+    if not ok_id or not wpn_id then
+        return false
+    end
+    local ok, res = compat_call("jamming", arti_jamming.get_jammed, wpn_id)
+    return (ok and res) and true or false
+end
+
+-- shotgun_unjam_fix blocks the reload bind while its unjam animation plays (anti-spam)
+local function shotgun_unjam_busy()
+    if gp_compat and type(gp_compat.is_shotgun_unjam_busy) == "function" then
+        return gp_compat.is_shotgun_unjam_busy()
+    end
+    if compat_is_broken("shotgun_unjam") then return false end
+    if not (shotgun_unjam_fix and animation_common and type(animation_common.get_flag) == "function") then return false end
+    local ok, res = compat_call("shotgun_unjam", animation_common.get_flag, "SHOTGUN_UNJAM")
+    return (ok and res) and true or false
+end
+
+local function mags_supported(wpn)
+    if gp_compat and type(gp_compat.mags_supported_weapon) == "function" then
+        return gp_compat.mags_supported_weapon(wpn)
+    end
+    if compat_is_broken("mags") or not (magazines and magazine_binder and type(magazine_binder.is_supported_weapon) == "function") then
+        return false
+    end
+    local ok, res = compat_call("mags", magazine_binder.is_supported_weapon, wpn)
+    return (ok and res) and true or false
+end
+
+local function reload_blocked_by_ammo_check()
+    if gp_compat and type(gp_compat.is_reload_blocked_by_ammo_check) == "function" then
+        return gp_compat.is_reload_blocked_by_ammo_check()
+    end
+    if compat_is_broken("ammo_check") or not (ammo_check_mcm and type(ammo_check_mcm.ac_reload_blocked) == "function") then
+        return false
+    end
+    local ok, res = compat_call("ammo_check", ammo_check_mcm.ac_reload_blocked)
+    return (ok and res) and true or false
+end
+
+-- core of the short press without HUD target: unjam if jammed, else Mags reload or standard engine reload (D57)
+local function do_reload(wpn)
+    if is_jammed(wpn) then
+        if not compat_is_broken("jamming") and arti_jamming and type(arti_jamming.unjam) == "function" then
+            local ok = compat_call("jamming", arti_jamming.unjam, wpn)
+            if ok then
+                return "unjam:arti_jamming_jammed"
+            end
+            -- If unjam threw an error, jamming is marked broken; fall through to standard reload so weapon isn't stuck!
+        else
+            return "blocked:jammed_no_unjam_fn"
+        end
+    end
+    if shotgun_unjam_busy() then
+        return "blocked:shotgun_unjam_anim"
+    end
+    local ok_st, st = pcall(function() return wpn:get_state() end)
+    if not ok_st then st = nil end
+    if st == STATE_RELOAD then
+        return "blocked:already_reloading"
+    end
+
+    local path
+    if gp_compat and type(gp_compat.reload_weapon) == "function" then
+        path = gp_compat.reload_weapon(wpn)
+        if string.find(path, "^blocked:") or string.find(path, "^error:") then
+            return path
+        end
+    else
+        -- Standalone fallback when gp_compat module is not loaded
+        if reload_blocked_by_ammo_check() then
+            return "blocked:ammo_check_anim"
+        end
+        local ok_gl, in_gl = pcall(function() return wpn:weapon_in_grenade_mode() end)
+        in_gl = (ok_gl and in_gl) and true or false
+        local use_mags = (not in_gl) and mags_supported(wpn)
+        if use_mags then
+            local used_onekey = false
+            if not compat_is_broken("onekey") and ammo_check_onekey_mcm and type(ammo_check_onekey_mcm.try_reload_weapon) == "function" then
+                local ok = compat_call("onekey", ammo_check_onekey_mcm.try_reload_weapon)
+                if ok and not compat_is_broken("mags") then
+                    path = "onekey_try_reload"
+                    used_onekey = true
+                end
+            end
+            if not used_onekey then
+                local ok_ih, is_ih = pcall(function()
+                    local act = db.actor:active_item()
+                    return act ~= nil and act:id() == wpn:id()
+                end)
+                if not (ok_ih and is_ih) then
+                    return "blocked:weapon_not_in_hands"
+                end
+                if not compat_is_broken("mags") and magazines and type(magazines.actor_on_weapon_reload) == "function" then
+                    local ok = compat_call("mags", magazines.actor_on_weapon_reload, db.actor, wpn)
+                    if ok then
+                        path = "mags_actor_on_weapon_reload"
+                    end
+                end
+                if not path then
+                    pcall(function() db.actor:reload_weapon() end)
+                    path = "engine_reload_mags_broken_fallback"
+                end
+            end
+        else
+            local ok_ih, is_ih = pcall(function()
+                local act = db.actor:active_item()
+                return act ~= nil and act:id() == wpn:id()
+            end)
+            if not (ok_ih and is_ih) then
+                return "blocked:weapon_not_in_hands"
+            end
+            pcall(function() db.actor:reload_weapon() end)
+            path = "engine_reload_no_mags"
+        end
+    end
+
+    local ok_st2, st_after = pcall(function() return wpn:get_state() end)
+    if not ok_st2 then st_after = nil end
+    if st_after == STATE_RELOAD then
+        return "reload_started:" .. path
+    end
+    return "reload_noop:" .. path .. "_state" .. tostring(st_after)
+end
+
+-- FIX-LIVE2 24: "protection from accidental reload" (gamepad options, default ON).
+-- Missing key -> ON.
+function reload_guard_enabled()
+    if ui_options and type(ui_options.get) == "function" then
+        local ok, v = pcall(ui_options.get, "control/gamepad/gp_reload_guard")
+        if ok and v ~= nil then return v == true or v == 1 or v == "true" or v == "1" end
+    end
+    local cfg = axr_main and axr_main.config
+    if cfg and cfg.r_value then
+        local ok, v = pcall(cfg.r_value, cfg, "options", "control_gamepad_gp_reload_guard", 1)
+        if ok and v ~= nil then return v == true or v == 1 or v == "true" or v == "1" end
+    end
+    return true
+end
+
+local function guard_blocks_reload()
+    if not reload_guard_enabled() then return false end
+    local dm = _G.gp_dotmarks
+    if not (dm and type(dm.aimed_mark_visible) == "function") then return false end
+    local ok, vis = pcall(dm.aimed_mark_visible)
+    return ok and vis == true
+end
+
+-- X short press, no interactive HUD target
+function x_reload()
+    local wpn = slot_weapon()
+    if not wpn then
+        return remember("reload", "blocked:no_weapon")
+    end
+    if guard_blocks_reload() then
+        -- 24a: light pulse, no text
+        if game and type(game.trigger_gamepad_haptics) == "function" then
+            pcall(game.trigger_gamepad_haptics, "deny", 0.20)
+        end
+        return remember("reload", "blocked:dotmark_guard")
+    end
+    return remember("reload", do_reload(wpn))
+end
+
+-- GAYS v0.2: LT + X -- reload or unjam even when a usable object is under the crosshair
+-- (the engine skips the use target for this chord and exits LT ADS first)
+function x_force_reload()
+    local wpn = slot_weapon()
+    if not wpn then
+        return remember("force_reload", "blocked:no_weapon")
+    end
+    return remember("force_reload", do_reload(wpn))
+end
+
+-- X hold >= 350 ms
+function x_ammo_check()
+    if compat_is_broken("ammo_check") then
+        return remember("ammo_check", "broken:ammo_check_mcm")
+    end
+    if not (ammo_check_mcm and type(ammo_check_mcm.check_Ammo) == "function") then
+        return remember("ammo_check", "unavailable:ammo_check_mcm_missing")
+    end
+    local wpn, in_hands = slot_weapon()
+    if wpn and not in_hands then
+        -- mid-draw: check_Ammo resolves the weapon through active_item(); run it once settled
+        local deadline = time_global() + 3000
+        RemoveTimeEvent("gp_weapon", "ammo_check")
+        CreateTimeEvent("gp_weapon", "ammo_check", 0, function()
+            local ok_te, res_te = pcall(function()
+                if time_global() > deadline then return true end
+                local w = db.actor and db.actor:active_item()
+                if not (w and IsWeapon(w)) or w:get_state() ~= STATE_IDLE then return false end
+                if not compat_is_broken("ammo_check") and ammo_check_mcm and type(ammo_check_mcm.check_Ammo) == "function" then
+                    local ok = compat_call("ammo_check", ammo_check_mcm.check_Ammo)
+                    if ok then
+                        remember("ammo_check", "ammo_check:deferred_after_draw")
+                    else
+                        remember("ammo_check", "error:ammo_check_marked_broken")
+                    end
+                end
+                return true
+            end)
+            if not ok_te then return true end
+            return res_te
+        end)
+        return remember("ammo_check", "ammo_check_deferred:weapon_drawing")
+    end
+    local ok = compat_call("ammo_check", ammo_check_mcm.check_Ammo)
+    if not ok then
+        return remember("ammo_check", "error:ammo_check_marked_broken")
+    end
+    return remember("ammo_check", "ammo_check:check_Ammo")
+end
+
+local function fast_now(wpn)
+    if is_jammed(wpn) then
+        -- do_fast_reload bails on a jammed weapon; the jam is cleared first, as a short press would
+        return do_reload(wpn)
+    end
+    -- do not arm when the reload is certain to be refused: an armed fast reload stays latched for
+    -- FR_FLAG_MS and could turn the next ordinary reload into a fast one
+    if shotgun_unjam_busy() then
+        return "fast_not_armed+blocked:shotgun_unjam_anim"
+    end
+    if reload_blocked_by_ammo_check() then
+        return "fast_not_armed+blocked:ammo_check_anim"
+    end
+    local armed = false
+    if gp_compat and type(gp_compat.try_arm_fast_reload) == "function" then
+        armed = gp_compat.try_arm_fast_reload(wpn)
+    elseif not compat_is_broken("fast_reload") and ammo_check_fastreload_mcm and type(ammo_check_fastreload_mcm.do_fast_reload) == "function" then
+        local ok, res = compat_call("fast_reload", ammo_check_fastreload_mcm.do_fast_reload, wpn)
+        armed = (ok and res) and true or false
+    end
+    -- not armed: no Dynamic Reload Speeds, no Mags, no mag to drop, unsupported weapon, or "keep last mag"
+    return (armed and "fast_armed+" or "fast_not_armed+") .. do_reload(wpn)
+end
+
+-- LT + X: drop the magazine fast. The engine has already released ADS; do_fast_reload needs state 0,
+-- so wait for the ADS-exit animation (bounded by FAST_IDLE_WAIT_MS) before arming.
+function x_fast_reload()
+    local wpn, in_hands = slot_weapon()
+    if not wpn then
+        return remember("fast_reload", "blocked:no_weapon")
+    end
+    local ok_st, st = pcall(function() return wpn:get_state() end)
+    if not ok_st then st = nil end
+    if st == STATE_RELOAD then
+        return remember("fast_reload", "blocked:already_reloading")
+    end
+    if in_hands and st == STATE_IDLE then
+        return remember("fast_reload", fast_now(wpn))
+    end
+
+    local ok_id, id = pcall(function() return wpn:id() end)
+    if not ok_id or not id then
+        return remember("fast_reload", "blocked:no_weapon")
+    end
+    local deadline = time_global() + FAST_IDLE_WAIT_MS
+    RemoveTimeEvent("gp_weapon", "fast_reload")
+    CreateTimeEvent("gp_weapon", "fast_reload", 0, function()
+        local ok_te, res_te = pcall(function()
+            local w = db.actor and db.actor:active_item()
+            if not (w and IsWeapon(w) and w:id() == id) then
+                if time_global() > deadline then
+                    dbg("deferred fast reload dropped: weapon changed or not in hands")
+                    remember("fast_reload", "dropped:weapon_changed")
+                    return true
+                end
+                return false
+            end
+            local s = w:get_state()
+            if s == STATE_RELOAD then
+                remember("fast_reload", "dropped:reload_started_elsewhere")
+                return true
+            end
+            if s ~= STATE_IDLE then
+                if time_global() > deadline then
+                    dbg("deferred fast reload dropped: weapon busy, state=%s", tostring(s))
+                    remember("fast_reload", "dropped:busy_state" .. tostring(s))
+                    return true
+                end
+                return false
+            end
+            local r = fast_now(w)
+            dbg("deferred fast reload: %s", r)
+            remember("fast_reload", "deferred:" .. r)
+            return true
+        end)
+        if not ok_te then return true end
+        return res_te
+    end)
+    return remember("fast_reload", "fast_deferred_until_idle:state" .. tostring(st))
+end
+
+-- second X within 250 ms of a reload started by the previous X tap.
+-- ammo_check_fastreload_mcm.do_fast_reload refuses a weapon that is not in state 0 and its arming
+-- function is local, so an already running reload cannot be upgraded without editing G.A.M.M.A.
+-- scripts. If the reload did not actually start (state 0), run the fast reload now.
+function x_fast_upgrade()
+    local wpn = slot_weapon()
+    if not wpn then
+        return remember("fast_upgrade", "blocked:no_weapon")
+    end
+    local ok_st, st = pcall(function() return wpn:get_state() end)
+    if ok_st and st == STATE_RELOAD then
+        return remember("fast_upgrade", "unavailable:reload_running_state7_do_fast_reload_needs_idle")
+    end
+    return remember("fast_upgrade", "fast_reload_now:" .. x_fast_reload())
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- E2.2d: use targets that only scripts know about.
+-- Some G.A.M.M.A. scripts react to the use key (F) next to something without an engine HUD target
+-- (nothing under the crosshair). The engine calls x_script_use_target() at the moment a short X is
+-- decided; if a check fires, X sends kUSE (the script's own on_key_press does the work) instead of a
+-- reload. Every check is read-only: it only asks "would F do something here now?".
+-- All foreign calls are wrapped in compat_call (pcall + session-long broken state on error, D57).
+-- ---------------------------------------------------------------------------------------------
+
+-- read-only lookup of a local upvalue by name (for checks a script keeps local); nil if absent
+local function find_upvalue(fn, name)
+    if type(fn) ~= "function" or not (debug and debug.getupvalue) then return nil end
+    for i = 1, 255 do
+        local n, v = debug.getupvalue(fn, i)
+        if n == nil then return nil end
+        if n == name then return v end
+    end
+    return nil
+end
+
+-- zz_glowstick_mcm.on_key_press: a hanging, lit glowstick within 2 m near the screen centre is picked up by F
+local function glowstick_pickup_target()
+    if not (zz_glowstick_mcm and zz_glowstick_mcm.on_key_press and level and level.iterate_nearest) then return false end
+    local sticks = find_upvalue(zz_glowstick_mcm.on_key_press, "glowsticks")
+    if type(sticks) ~= "table" or next(sticks) == nil then return false end
+    local found = false
+    level.iterate_nearest(db.actor:position(), 2, function(obj)
+        local ok_cb, stop_cb = pcall(function()
+            if obj and obj:section() == "lights_glowstick" and sticks[obj:id()] then
+                local lamp = obj:get_hanging_lamp()
+                if lamp and lamp:is_on() then
+                    local p = game.world2ui(obj:position())
+                    -- same screen window as zz_glowstick_mcm.on_key_press
+                    if p and p.x and p.y and p.x >= 350 and p.x <= 750 and p.y >= 250 and p.y <= 500 then
+                        found = true
+                        return true
+                    end
+                end
+            end
+            return false
+        end)
+        return (ok_cb and stop_cb) and true or false
+    end)
+    return found
+end
+
+-- szm_main (The Noise): F next to the transmitter, wherever the actor looks; transmitter_in_reach is local
+local function szm_transmitter_target()
+    if not (szm_main and szm_main.on_game_start) then return false end
+    local on_key = find_upvalue(szm_main.on_game_start, "on_key_press")
+    local in_reach = find_upvalue(on_key, "transmitter_in_reach")
+    return type(in_reach) == "function" and in_reach() ~= nil
+end
+
+-- hnt_main (Hunting Party): F next to a trail clue, wherever the actor looks
+local function hnt_clue_target()
+    if not (hnt_main and hnt_main.clue_in_reach) then return false end
+    if db.actor:is_talking() then return false end
+    return hnt_main.clue_in_reach() ~= nil
+end
+
+-- E2.2e: perk_based_artefacts "Ball" (af_ball) on the belt: F kicks the nearest suitable mutant within scan_radius
+local function af_ball_kick_target()
+    local pba = perk_based_artefacts
+    if not (pba and type(pba.process_artefacts) == "function" and pba.artefact_props and pba.artefact_props.af_ball) then return false end
+    local arts = find_upvalue(pba.process_artefacts, "artefacts")
+    if type(arts) ~= "table" or not arts.af_ball then return false end
+    local cd = type(pba.cooldowns) == "table" and pba.cooldowns.af_ball
+    if cd and type(pba.check_cooldown) == "function" then
+        local te = find_upvalue(pba.check_cooldown, "time_elapsed")
+        if type(te) == "number" and te < cd then return false end
+    end
+    local ball = pba.artefact_props.af_ball
+    local radius = tonumber(ball.scan_radius) or 2.7
+    local monsters = type(ball.monsters) == "table" and ball.monsters or {}
+    local apos = db.actor:position()
+    local found = false
+    level.iterate_nearest(apos, radius + 1, function(obj)
+        local ok_cb, stop_cb = pcall(function()
+            if not obj or obj:id() == AC_ID or not IsMonster(obj) or not obj:alive() then return false end
+            if obj:position():distance_to(apos) > radius then return false end
+            local sec = obj:section()
+            if not (monsters[(sec == "gigant_jumper" and clsid.pseudo_gigant) or obj:clsid()]
+                or monsters[SYS_GetParam(0, sec, "kind", 0)]) then return false end
+            local see = game.world2ui(obj:position())
+            if see and see.x and see.y and see.x > 0 and see.x < 1024 and see.y > 0 and see.y < 1024 then
+                found = true
+                return true
+            end
+            return false
+        end)
+        return (ok_cb and stop_cb) and true or false
+    end)
+    return found
+end
+
+script_use_targets = {
+    { id = "glowstick_pickup", fn = glowstick_pickup_target },
+    { id = "szm_transmitter",  fn = szm_transmitter_target },
+    { id = "hnt_clue",         fn = hnt_clue_target },
+    { id = "af_ball_kick",     fn = af_ball_kick_target },
+}
+
+-- called from C++ ResolveXTapTarget (GamepadContextDispatcher.cpp); returns the id of the first check that fires, or "none"
+function x_script_use_target()
+    if not db.actor then return "none" end
+    for _, t in ipairs(script_use_targets) do
+        if type(t) == "table" and type(t.fn) == "function" then
+            local target_key = "script_use_" .. tostring(t.id or "unknown")
+            if not compat_is_broken(target_key) then
+                local ok, hit = compat_call(target_key, t.fn)
+                if not ok then
+                    dbg("script_use_target %s failed and is marked broken for this session", tostring(t.id))
+                elseif hit then
+                    return tostring(t.id or "script")
+                end
+            end
+        end
+    end
+    return "none"
+end
+
+-- K3 (D61): Semantic world weapon action router (listens to action names via gp_bridge rather than hardcoded X/LT).
+local last_weapon_slot = 0
+
+-- Y short press (NextWeapon): cycle occupied weapon slots 1..4 (Knife, Pistol/Secondary, Primary 1, Primary 2 / Grenade)
+function next_weapon_slot()
+    local actor = db.actor
+    if not actor then
+        return remember("next_weapon", "blocked:no_actor")
+    end
+    local ok_cur, cur_slot = pcall(function() return tonumber(actor:active_slot()) or 0 end)
+    if not ok_cur then cur_slot = 0 end
+
+    local start_slot = (cur_slot >= 1 and cur_slot <= 4) and cur_slot or ((last_weapon_slot >= 1 and last_weapon_slot <= 4) and last_weapon_slot or 0)
+    for step = 1, 4 do
+        local candidate = ((start_slot + step - 1) % 4) + 1
+        local ok_it, item = pcall(function() return actor:item_in_slot(candidate) end)
+        if ok_it and item and not IsItem("fake_ammo_wpn", nil, item) then
+            last_weapon_slot = candidate
+            pcall(function() actor:activate_slot(candidate) end)
+            local ok_s, sec = pcall(function() return item:section() end)
+            return remember("next_weapon", string.format("slot%d:%s", candidate, tostring((ok_s and sec) or "weapon")))
+        end
+    end
+    return remember("next_weapon", "none:no_weapon_slots")
+end
+
+function get_bound_trigger(action_name)
+    if gp_bridge and type(gp_bridge.get_binding) == "function" then
+        local ok, trig = pcall(gp_bridge.get_binding, "World_Gameplay", tostring(action_name or ""))
+        if ok and type(trig) == "table" then
+            return trig
+        end
+    end
+    return nil
+end
+
+function on_world_action(action_name, phase, button_name)
+    local act = tostring(action_name or "")
+    local ph = tostring(phase or "tap")
+    if act == "ContextUseReload" then
+        if ph == "repeat" or ph == "double_tap" then
+            return x_fast_upgrade()
+        end
+        return x_reload()
+    elseif act == "AmmoCheck" then
+        return x_ammo_check()
+    elseif act == "FastReload" then
+        return x_fast_reload()
+    elseif act == "FastUpgrade" then
+        return x_fast_upgrade()
+    elseif act == "ScriptUseTarget" then
+        return x_script_use_target()
+    elseif act == "NextWeapon" then
+        return next_weapon_slot()
+    end
+    return remember("weapon_action", "unhandled:" .. act .. ":" .. tostring(button_name or ph))
+end

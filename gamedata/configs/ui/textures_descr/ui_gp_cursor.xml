@@ -1,0 +1,18 @@
+<w>
+  <!-- CURSOR1: Pixel-art emerald glass cursor atlas (1x=29, 2x=58, 3x=87, 4x=116; mips=1, NEAREST) -->
+  <file name="ui\ui_gp_cursor_glass">
+    <texture id="ui_gp_cursor_glass" x="0" y="128" width="87" height="87" />
+    <texture id="ui_gp_cursor_glass_idle_4x" x="0" y="0" width="116" height="116" />
+    <texture id="ui_gp_cursor_glass_hover_4x" x="128" y="0" width="116" height="116" />
+    <texture id="ui_gp_cursor_glass_pressed_4x" x="256" y="0" width="116" height="116" />
+    <texture id="ui_gp_cursor_glass_idle_1x" x="384" y="0" width="29" height="29" />
+    <texture id="ui_gp_cursor_glass_hover_1x" x="416" y="0" width="29" height="29" />
+    <texture id="ui_gp_cursor_glass_pressed_1x" x="448" y="0" width="29" height="29" />
+    <texture id="ui_gp_cursor_glass_idle_3x" x="0" y="128" width="87" height="87" />
+    <texture id="ui_gp_cursor_glass_hover_3x" x="96" y="128" width="87" height="87" />
+    <texture id="ui_gp_cursor_glass_pressed_3x" x="192" y="128" width="87" height="87" />
+    <texture id="ui_gp_cursor_glass_idle_2x" x="288" y="128" width="58" height="58" />
+    <texture id="ui_gp_cursor_glass_hover_2x" x="352" y="128" width="58" height="58" />
+    <texture id="ui_gp_cursor_glass_pressed_2x" x="416" y="128" width="58" height="58" />
+  </file>
+</w>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<!-- MENU-FOCUS P16: pause menu hints, save messages; "zz_" so the load confirmation text wins over ui_st_other.xml -->
+<string_table>
+	<string id="st_gp_game_saved">
+		<text>Game saved</text>
+	</string>
+	<string id="st_gp_autosave">
+		<text>Autosave</text>
+	</string>
+	<string id="st_gp_save_denied">
+		<text>You can only save at a campfire or base</text>
+	</string>
+	<string id="st_gp_hint_select">
+		<text>Select</text>
+	</string>
+	<string id="st_gp_hint_to_game">
+		<text>Resume</text>
+	</string>
+	<string id="st_gp_hint_exit">
+		<text>Quit</text>
+	</string>
+	<string id="st_gp_hint_quicksave">
+		<text>Quicksave</text>
+	</string>
+	<string id="st_gp_hint_columns">
+		<text>Columns</text>
+	</string>
+	<string id="st_gp_hint_to_buttons">
+		<text>Buttons</text>
+	</string>
+	<string id="ui_st_load_game_confirm">
+		<text>Unsaved progress will be lost. Load?</text>
+	</string>
+	<!-- FIX-LIVE1: нижняя полоса окна «Создание персонажа» (gp_new_game) -->
+	<string id="st_gp_hint_back">
+		<text>Back</text>
+	</string>
+	<string id="st_gp_hint_panel">
+		<text>Panel</text>
+	</string>
+	<string id="st_gp_hint_to_panels">
+		<text>To panels</text>
+	</string>
+	<string id="st_gp_hint_start_game">
+		<text>Start</text>
+	</string>
+</string_table>

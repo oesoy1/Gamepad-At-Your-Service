@@ -1,0 +1,8 @@
+<w>
+    <file name="ui\ui_gp_qaw_graphite">
+        <texture id="ui_gp_qaw_graphite_bg" x="4" y="4" width="600" height="600" />
+        <texture id="ui_gp_qaw_graphite_cursor" x="4" y="609" width="600" height="300" />
+        <texture id="ui_gp_qaw_graphite_hover" x="608" y="4" width="140" height="140" />
+        <texture id="ui_gp_qaw_graphite_selected" x="608" y="148" width="140" height="140" />
+    </file>
+</w>

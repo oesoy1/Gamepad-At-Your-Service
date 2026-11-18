@@ -1,0 +1,6 @@
+# Syntax highlighting on GitHub for S.T.A.L.K.E.R. X-Ray mod files
+*.script linguist-language=Lua
+*.ltx linguist-language=INI
+*.dds binary
+*.exe binary
+*.dll binary

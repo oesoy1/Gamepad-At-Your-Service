@@ -1,0 +1,122 @@
+-- =============================================================================
+-- modxml_gp_workshop.script (W4-HOOKS / DEF-P0-02)
+-- DXML-патч вкладок верстака (WS1) поверх любого аддона G.A.M.M.A.
+-- (Artefacts Reinvention и др.) без перезаписи configs/ui/ui_workshop_16.xml.
+-- В чистой Anomaly без DXML (PORT-A) работает runtime-подстраховка
+-- в gp_hooks_vanilla.script.
+-- =============================================================================
+
+local TAB_SPECS_16 = {
+    { tag = "btn_state",   x = 125, y = 21, width = 132, height = 34 },
+    { tag = "btn_repair",  x = 257, y = 21, width = 127, height = 34 },
+    { tag = "btn_upgrade", x = 384, y = 21, width = 128, height = 34 },
+    { tag = "btn_craft",   x = 512, y = 21, width = 140, height = 34 },
+}
+
+local TAB_SPECS_43 = {
+    { tag = "btn_state",   x = 156, y = 21, width = 165, height = 34 },
+    { tag = "btn_repair",  x = 321, y = 21, width = 159, height = 34 },
+    { tag = "btn_upgrade", x = 480, y = 21, width = 160, height = 34 },
+    { tag = "btn_craft",   x = 640, y = 21, width = 175, height = 34 },
+}
+
+local last_patched_file = nil
+local registered_rsc = nil
+
+local function normalize_xml_name(name)
+    if type(name) ~= "string" then
+        return ""
+    end
+    return (name:lower():gsub("\\", "/"))
+end
+
+function apply_workshop_dxml(xml_file_name, xml_obj)
+    if _G.gp_compat and type(_G.gp_compat.is_engine_compatible) == "function" and not _G.gp_compat.is_engine_compatible() then
+        return false
+    end
+    if _G.gp_hooks_vanilla and type(_G.gp_hooks_vanilla.install) == "function" then
+        _G.gp_hooks_vanilla.install()
+    end
+    local norm = normalize_xml_name(xml_file_name)
+    if norm ~= "ui/ui_workshop_16.xml" and norm ~= "ui/ui_workshop.xml" then
+        return false
+    end
+    if type(xml_obj) ~= "table" or type(xml_obj.query) ~= "function" then
+        return false
+    end
+
+    local specs = TAB_SPECS_16
+    local frame_res = xml_obj:query("workshop > frame")
+    if frame_res and frame_res[1] and type(xml_obj.getElementAttr) == "function" then
+        local attr = xml_obj:getElementAttr(frame_res[1])
+        if attr and tonumber(attr.width) == 969 then
+            specs = TAB_SPECS_43
+        end
+    end
+
+    local frame_tex = xml_obj:query("workshop > frame > texture")
+    if frame_tex and frame_tex[1] then
+        xml_obj:setText(frame_tex[1], "ui_gp_workshop_tabs_background")
+    end
+
+    local cap_text = xml_obj:query("workshop > cap_tab > text")
+    if cap_text and cap_text[1] then
+        xml_obj:setElementAttr(cap_text[1], { a = 0 })
+    end
+
+    for i = 1, #specs do
+        local spec = specs[i]
+        local btn_res = xml_obj:query("workshop > " .. spec.tag)
+        if btn_res and btn_res[1] then
+            xml_obj:setElementAttr(btn_res[1], {
+                x = spec.x,
+                y = spec.y,
+                width = spec.width,
+                height = spec.height,
+                check_mode = 0,
+            })
+        end
+        local btn_tex = xml_obj:query("workshop > " .. spec.tag .. " > texture")
+        if btn_tex and btn_tex[1] then
+            xml_obj:removeElement(btn_tex[1])
+        end
+    end
+
+    last_patched_file = norm
+    return true
+end
+
+function is_active()
+    return last_patched_file ~= nil
+end
+
+function reset_state()
+    last_patched_file = nil
+    registered_rsc = nil
+end
+
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_xml_read()
+    local rsc = _G.RegisterScriptCallback
+    if type(rsc) == "function" and registered_rsc ~= rsc then
+        registered_rsc = rsc
+        -- ANOM-COMPAT: DXML "on_xml_read" exists only with modded exes (G.A.M.M.A.); on clean
+        -- Anomaly the runtime re-layout in gp_hooks_vanilla below does the job.
+        if _G.gp_compat and type(_G.gp_compat.register_optional_callback) == "function" then
+            _G.gp_compat.register_optional_callback("on_xml_read", apply_workshop_dxml)
+        else
+            rsc("on_xml_read", apply_workshop_dxml)
+        end
+    end
+end
+
+function on_game_start()
+    if _G.gp_compat and type(_G.gp_compat.is_engine_compatible) == "function" and not _G.gp_compat.is_engine_compatible() then
+        return
+    end
+    on_xml_read()
+    if _G.gp_hooks_vanilla and type(_G.gp_hooks_vanilla.install) == "function" then
+        _G.gp_hooks_vanilla.install()
+    end
+end

@@ -1,0 +1,418 @@
+{
+  "_comment": "Машинная часть docs/kb/29-device-matrix.md. expect_* — ЧТО МЫ ХОТИМ от нашего кода (предложение), а не доказанное поведение. check_mapping.py предсказывает поведение нашего кода по открытым базам и сравнивает. VID/PID — из usb_ids.h / controller_list.h / SDL_joystick.c (SDL release-3.4.x), кроме помеченных source=log (наш лог).",
+  "schema": {
+    "expect_role": "gamepad | ignore (руль/флайтстик/РУД не должны управлять игрой)",
+    "expect_glyphs": "xbox | playstation | nintendo | generic | any",
+    "expect_type": "ожидаемый SDL_GamepadType (имя из SDL_GetGamepadStringForType) или null, если не важно"
+  },
+  "devices": [
+    {
+      "id": "xbox360-wired",
+      "name": "Xbox 360 Controller (проводной)",
+      "family": "xbox",
+      "ids": [
+        "045e:028e"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xbox360",
+      "expect_glyphs": "xbox"
+    },
+    {
+      "id": "xbox360-wireless",
+      "name": "Xbox 360 Wireless Receiver",
+      "family": "xbox",
+      "ids": [
+        "045e:0719"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xbox360",
+      "expect_glyphs": "xbox"
+    },
+    {
+      "id": "xboxone",
+      "name": "Xbox One Controller (2013/2015, S)",
+      "family": "xbox",
+      "ids": [
+        "045e:02d1",
+        "045e:02dd",
+        "045e:02ea",
+        "045e:02e0",
+        "045e:0b20"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xboxone",
+      "expect_glyphs": "xbox"
+    },
+    {
+      "id": "xbox-elite1",
+      "name": "Xbox One Elite Series 1 Controller",
+      "family": "xbox",
+      "ids": [
+        "045e:02e3"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xboxone",
+      "expect_glyphs": "xbox"
+    },
+    {
+      "id": "xbox-elite2",
+      "name": "Xbox Elite Series 2",
+      "family": "xbox",
+      "ids": [
+        "045e:0b00",
+        "045e:0b05",
+        "045e:0b22"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xboxone",
+      "expect_glyphs": "xbox"
+    },
+    {
+      "id": "xbox-series",
+      "name": "Xbox Series X|S Controller",
+      "family": "xbox",
+      "ids": [
+        "045e:0b12",
+        "045e:0b13"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xboxone",
+      "expect_glyphs": "xbox",
+      "observed": "045e:0b12 в evidence/batch-4-run2-xray.log:163 (class=A, xboxone, trig_rumble=0, GUID байт14='x' = XInput)"
+    },
+    {
+      "id": "ds4",
+      "name": "DualShock 4 (v1, v2, USB-адаптер)",
+      "family": "playstation",
+      "ids": [
+        "054c:05c4",
+        "054c:09cc",
+        "054c:0ba0"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "ps4",
+      "expect_glyphs": "playstation"
+    },
+    {
+      "id": "dualsense",
+      "name": "DualSense",
+      "family": "playstation",
+      "ids": [
+        "054c:0ce6"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "ps5",
+      "expect_glyphs": "playstation"
+    },
+    {
+      "id": "dualsense-edge",
+      "name": "DualSense Edge",
+      "family": "playstation",
+      "ids": [
+        "054c:0df2"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "ps5",
+      "expect_glyphs": "playstation"
+    },
+    {
+      "id": "switch-pro",
+      "name": "Nintendo Switch Pro Controller",
+      "family": "nintendo",
+      "ids": [
+        "057e:2009"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "switchpro",
+      "expect_glyphs": "nintendo"
+    },
+    {
+      "id": "switch2-pro",
+      "name": "Nintendo Switch 2 Pro Controller",
+      "family": "nintendo",
+      "ids": [
+        "057e:2069"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "switchpro",
+      "expect_glyphs": "nintendo"
+    },
+    {
+      "id": "hori-switch-pad",
+      "name": "HORIPAD for Nintendo Switch (USB)",
+      "family": "nintendo",
+      "ids": [
+        "0f0d:00c1"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "switchpro",
+      "expect_glyphs": "nintendo",
+      "note": "SwitchInputOnlyController в SDL: проводной, без вибрации и гироскопа"
+    },
+    {
+      "id": "joycon-l",
+      "name": "Joy-Con (L)",
+      "family": "nintendo",
+      "ids": [
+        "057e:2006"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "joyconleft",
+      "expect_glyphs": "nintendo"
+    },
+    {
+      "id": "joycon-r",
+      "name": "Joy-Con (R)",
+      "family": "nintendo",
+      "ids": [
+        "057e:2007"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "joyconright",
+      "expect_glyphs": "nintendo"
+    },
+    {
+      "id": "8bitdo-x",
+      "name": "8BitDo в режиме X (эмулирует Xbox 360)",
+      "family": "8bitdo",
+      "ids": [
+        "045e:028e"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xbox360",
+      "expect_glyphs": "xbox",
+      "note": "VID/PID совпадает с проводным Xbox 360 и виртуальным геймпадом DS4Windows"
+    },
+    {
+      "id": "8bitdo-d",
+      "name": "8BitDo в режиме D / Steam-режиме (свой VID 2dc8)",
+      "family": "8bitdo",
+      "ids": [
+        "2dc8:6001",
+        "2dc8:6003",
+        "2dc8:6006",
+        "2dc8:6009",
+        "2dc8:6012"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": null,
+      "expect_glyphs": "any"
+    },
+    {
+      "id": "8bitdo-ultimate-x",
+      "name": "8BitDo Ultimate (Xbox-лицензия / 2C)",
+      "family": "8bitdo",
+      "ids": [
+        "2dc8:2002",
+        "2dc8:3106",
+        "2dc8:310a"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xboxone",
+      "expect_glyphs": "xbox"
+    },
+    {
+      "id": "8bitdo-s",
+      "name": "8BitDo в режиме S (эмулирует Switch Pro)",
+      "family": "8bitdo",
+      "ids": [
+        "057e:2009"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "switchpro",
+      "expect_glyphs": "nintendo"
+    },
+    {
+      "id": "logitech-f310-x",
+      "name": "Logitech F310 (переключатель X — XInput)",
+      "family": "xbox",
+      "ids": [
+        "046d:c21d"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xbox360",
+      "expect_glyphs": "xbox",
+      "note": "У модели F310 аппаратно нет вибромоторов"
+    },
+    {
+      "id": "logitech-f310-d",
+      "name": "Logitech F310 (переключатель D — DirectInput)",
+      "family": "dinput-clone",
+      "ids": [
+        "046d:c216"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": null,
+      "expect_glyphs": "generic",
+      "note": "В режиме D без вибро, курки работают как цифровые кнопки b6/b7"
+    },
+    {
+      "id": "logitech-f710-x",
+      "name": "Logitech F710 Wireless (переключатель X — XInput)",
+      "family": "xbox",
+      "ids": [
+        "046d:c21f"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "xbox360",
+      "expect_glyphs": "xbox"
+    },
+    {
+      "id": "logitech-f710-d",
+      "name": "Logitech F710 Wireless (переключатель D — DirectInput)",
+      "family": "dinput-clone",
+      "ids": [
+        "046d:c219"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": null,
+      "expect_glyphs": "generic"
+    },
+    {
+      "id": "steam-deck",
+      "name": "Steam Deck (встроенный контроллер)",
+      "family": "steam",
+      "ids": [
+        "28de:1205"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "steam",
+      "expect_glyphs": "any"
+    },
+    {
+      "id": "steam-controller",
+      "name": "Steam Controller (2015)",
+      "family": "steam",
+      "ids": [
+        "28de:1102",
+        "28de:1142"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": "steam",
+      "expect_glyphs": "any"
+    },
+    {
+      "id": "steam-virtual",
+      "name": "Steam Virtual Gamepad (Steam Input)",
+      "family": "steam",
+      "ids": [
+        "28de:11ff"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": null,
+      "expect_glyphs": "any",
+      "note": "SDL скрывает его, если не задан SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD (Steam задаёт сам при запуске игры через Steam)"
+    },
+    {
+      "id": "dinput-dragonrise",
+      "name": "DirectInput-клон DragonRise (USB Gamepad, «Twin Shock»)",
+      "family": "dinput-clone",
+      "ids": [
+        "0079:0006"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": null,
+      "expect_glyphs": "generic"
+    },
+    {
+      "id": "dinput-ps3clone",
+      "name": "DirectInput-клон под PS3 (ShanWan/Digiflip/Retro-Bit)",
+      "family": "dinput-clone",
+      "ids": [
+        "2563:0523",
+        "2563:0575"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": null,
+      "expect_glyphs": "any"
+    },
+    {
+      "id": "dinput-greenasia",
+      "name": "Бюджетный USB-геймпад (GreenAsia / Defender / Sven)",
+      "family": "dinput-clone",
+      "ids": [
+        "0e8f:0003"
+      ],
+      "expect_role": "gamepad",
+      "expect_type": null,
+      "expect_glyphs": "generic",
+      "note": "Частый дешёвый чип: возможны цифровые курки и повышенный дрейф стиков"
+    },
+    {
+      "id": "wheel-logitech",
+      "name": "Рули Logitech G29/G920/G923",
+      "family": "wheel",
+      "ids": [
+        "046d:c24f",
+        "046d:c260",
+        "046d:c262",
+        "046d:c266",
+        "046d:c26e"
+      ],
+      "expect_role": "ignore",
+      "expect_type": null,
+      "expect_glyphs": "any"
+    },
+    {
+      "id": "wheel-thrustmaster",
+      "name": "Руль Thrustmaster T300RS",
+      "family": "wheel",
+      "ids": [
+        "044f:b66e",
+        "044f:b66d"
+      ],
+      "expect_role": "ignore",
+      "expect_type": null,
+      "expect_glyphs": "any"
+    },
+    {
+      "id": "flightstick",
+      "name": "Флайтстики T.16000M / Logitech Extreme 3D / Warthog",
+      "family": "flightstick",
+      "ids": [
+        "044f:b10a",
+        "046d:c215",
+        "044f:0402"
+      ],
+      "expect_role": "ignore",
+      "expect_type": null,
+      "expect_glyphs": "any"
+    },
+    {
+      "id": "throttle",
+      "name": "РУД Warthog / X-56 / TWCS",
+      "family": "flightstick",
+      "ids": [
+        "044f:0404",
+        "0738:a221",
+        "044f:b687"
+      ],
+      "expect_role": "ignore",
+      "expect_type": null,
+      "expect_glyphs": "any"
+    },
+    {
+      "id": "vjoy",
+      "name": "vJoy (виртуальный джойстик)",
+      "family": "virtual",
+      "ids": [
+        "1234:bead"
+      ],
+      "expect_role": "ignore",
+      "expect_type": null,
+      "expect_glyphs": "any",
+      "observed": "evidence/batch-4-run2-xray.log:164 (class=C)"
+    },
+    {
+      "id": "foot-3drudder",
+      "name": "3dRudder (ножной контроллер)",
+      "family": "other",
+      "ids": [
+        "2dfa:0001"
+      ],
+      "expect_role": "ignore",
+      "expect_type": null,
+      "expect_glyphs": "any"
+    }
+  ]
+}

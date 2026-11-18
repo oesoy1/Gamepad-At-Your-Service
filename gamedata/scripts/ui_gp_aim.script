@@ -1,0 +1,1290 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- K6a + K6b (D61): Вкладка «Прицеливание» меню «Управление» (ui_gp_aim.script).
+-- Подключает все 12 параметров правого стика (GamepadMath, appdata\gamepad\profile.ltx)
+-- и помощи в прицеливании (GamepadAimAssist, user.ltx / консоль gp_aa_*), включая добавленные в K6b
+-- чувствительность при прицеливании ADS (ads_sens_mult), ускорение поворота у края (turn_accel)
+-- и отключение помощи на оптике и в 3D-прицелах (gp_aa_disable_on_scope / disable_aa_on_scope).
+
+local AIM_GUI = nil
+
+-- Масштабы перевода шкалы макета в реальные единицы движка:
+-- omega_horz / omega_vert: макет 1..100 (дефолт sx=55 -> ~4.0 рад/с, sy=45 -> ~2.5 рад/с),
+-- движок gpmath::limits::kOmegaMin=0.5 .. kOmegaMax=15.0 рад/с (шаг 1 ед. шкалы = 0.1465 рад/с, либо точная формула).
+-- Для прозрачности и обратимости: 1..100 <-> 0.5..10.4 рад/с (шаг 0.1 рад/с: val_rad = 0.5 + (ui - 1) * 0.1,
+-- тогда sx=36 -> 4.0 рад/с, sy=21 -> 2.5 рад/с; либо дефолт профиля 4.0 рад/с = 55%, 2.5 рад/с = 35%).
+-- Используем линейную шкалу 1..100 <-> 0.50..15.00 рад/с с точным сохранением дефолтов:
+local OMEGA_MIN = 0.50
+local OMEGA_MAX = 15.00
+local DEFAULT_OMEGA_H = 4.00
+local DEFAULT_OMEGA_V = 2.50
+
+-- Русские и английские подписи по умолчанию (если ключ локализации ещё не добавлен в ui_st_gamepad.xml,
+-- так как ui_st_gamepad.xml не входит в список файлов K6a по карте волн)
+local FALLBACK_EN = {
+	ui_gp_ctrl_title             = "CONTROLS",
+	ui_gp_tab_world              = "World",
+	ui_gp_tab_menu               = "Inventory & Menus",
+	ui_gp_tab_aim                = "Aiming",
+	ui_gp_btn_reset              = "[Y] Reset",
+	ui_gp_btn_close              = "[B] Close",
+	ui_gp_aim_grp_look           = "Right Stick Look",
+	ui_gp_aim_grp_dz             = "Deadzones",
+	ui_gp_aim_grp_aa             = "Aim Assist",
+	ui_gp_aim_grp_curve          = "Response Curve",
+	ui_gp_aim_grp_stick          = "Stick",
+	ui_gp_aim_sx                 = "Horizontal Sensitivity",
+	ui_gp_aim_sy                 = "Vertical Sensitivity",
+	ui_gp_aim_ads                = "ADS Sensitivity Multiplier",
+	ui_gp_aim_acc                = "Edge Acceleration",
+	ui_gp_aim_curve              = "Response Curve",
+	ui_gp_aim_inv                = "Invert Vertical Look",
+	ui_gp_aim_dzi                = "Inner Deadzone (Anti-Drift)",
+	ui_gp_aim_dzo                = "Outer Threshold (Full Tilt)",
+	ui_gp_aim_assist             = "Assist Mode",
+	ui_gp_aim_fric               = "Target Slowdown (Friction)",
+	ui_gp_aim_mag                = "ADS Aim Pull",
+	ui_gp_aim_scope              = "Disable in Scopes & 3D Optics",
+	ui_gp_aim_curve_lin          = "Linear",
+	ui_gp_aim_curve_exp          = "Smooth",
+	ui_gp_aim_curve_s            = "S-Curve",
+	ui_gp_aim_off                = "Off",
+	ui_gp_aim_on                 = "On",
+	ui_gp_aim_yes                = "Yes",
+	ui_gp_aim_no                 = "No",
+	ui_gp_aim_aa_off             = "Off",
+	ui_gp_aim_aa_low             = "Low",
+	ui_gp_aim_aa_mid             = "Medium",
+	ui_gp_aim_aa_high            = "High",
+	ui_gp_aim_cap_curve          = "Horizontal: stick tilt, vertical: turn speed. Shaded bands show deadzones.",
+	ui_gp_aim_cap_stick          = "Inner circle: deadzone, outer circle: full tilt. Changes apply immediately.",
+	ui_gp_aim_k6b_locked         = "unavailable",
+	ui_gp_aim_info_curve         = "Horiz: %d%%  |  Vert: %d%%  |  Deadzone: %d%%-%d%%",
+	ui_gp_aim_info_stick         = "Stick tilt: %d%%   ->   Camera response: %d%%",
+	ui_gp_aim_footer_hint        = "Up/Down: Select Row  |  Left/Right: Adjust  |  LB/RB: Tab  |  Y: Reset  |  B: Close",
+}
+
+local function tr(id)
+	if game and type(game.translate_string) == "function" then
+		local ok, s = pcall(game.translate_string, id)
+		if ok and type(s) == "string" and s ~= "" and s ~= id then
+			return s
+		end
+	end
+	return FALLBACK_EN[id] or id
+end
+
+local function clamp(v, lo, hi)
+	v = tonumber(v) or lo
+	if v < lo then return lo end
+	if v > hi then return hi end
+	return v
+end
+
+local function round_int(v)
+	return math.floor((tonumber(v) or 0) + 0.5)
+end
+
+local function exec_cmd(cmd)
+	if not cmd or cmd == "" then return false end
+	if type(_G.get_console) == "function" then
+		local ok_c, con = pcall(_G.get_console)
+		if ok_c and con and type(con.execute) == "function" then
+			local ok_e = pcall(con.execute, con, cmd)
+			if ok_e then return true end
+		end
+	end
+	if type(_G.exec_console_cmd) == "function" then
+		local ok_x = pcall(_G.exec_console_cmd, cmd)
+		if ok_x then return true end
+	end
+	return false
+end
+
+local function get_con_float(name, def)
+	if type(_G.get_console) == "function" then
+		local ok_c, con = pcall(_G.get_console)
+		if ok_c and con and type(con.get_float) == "function" then
+			local ok_f, v = pcall(con.get_float, con, name)
+			if ok_f and type(v) == "number" then
+				return v
+			end
+		end
+	end
+	return def
+end
+
+local function get_con_token(name, def)
+	if type(_G.get_console) == "function" then
+		local ok_c, con = pcall(_G.get_console)
+		if ok_c and con then
+			if type(con.get_token) == "function" then
+				local ok_t, v = pcall(con.get_token, con, name)
+				if ok_t and type(v) == "string" and v ~= "" then
+					return v
+				end
+			end
+			if type(con.get_string) == "function" then
+				local ok_s, v = pcall(con.get_string, con, name)
+				if ok_s and type(v) == "string" and v ~= "" then
+					return v
+				end
+			end
+		end
+	end
+	return def
+end
+
+-- Перевод угловой скорости omega (0.5..15.0 рад/с) <-> шкала UI (1..100)
+function omega_to_ui(omega_rad)
+	local w = clamp(tonumber(omega_rad) or DEFAULT_OMEGA_H, OMEGA_MIN, OMEGA_MAX)
+	local t = (w - OMEGA_MIN) / (OMEGA_MAX - OMEGA_MIN)
+	return clamp(round_int(1 + t * 99), 1, 100)
+end
+
+function ui_to_omega(ui_val)
+	local u = clamp(tonumber(ui_val) or 50, 1, 100)
+	local t = (u - 1) / 99.0
+	return tonumber(string.format("%.4f", OMEGA_MIN + t * (OMEGA_MAX - OMEGA_MIN)))
+end
+
+-- Определение пути к appdata\gamepad\profile.ltx (решение D37)
+function resolve_profile_ltx_path()
+	if type(_G.getFS) == "function" then
+		local ok_fs, fs = pcall(_G.getFS)
+		if ok_fs and fs and type(fs.update_path) == "function" then
+			local ok_p, p = pcall(fs.update_path, fs, "$app_data_root$", "gamepad\\profile.ltx")
+			if ok_p and type(p) == "string" and p ~= "" then
+				return p
+			end
+		end
+	end
+	return "appdata\\gamepad\\profile.ltx"
+end
+
+-- Чтение секции [right_stick] (и omega_horz/omega_vert/ads_sens_mult/turn_accel/disable_aa_on_scope из [profile] / [right_stick]) из текста profile.ltx
+function parse_right_stick_from_ltx(ltx_text)
+	local res = {
+		deadzone            = 0.15,
+		saturation          = 0.95,
+		curve               = "linear",
+		gamma               = 2.0,
+		s_exponent          = 2.0,
+		invert_x            = false,
+		invert_y            = false,
+		omega_horz          = DEFAULT_OMEGA_H,
+		omega_vert          = DEFAULT_OMEGA_V,
+		ads_sens_mult       = 0.70,
+		turn_accel          = 0.30,
+		disable_aa_on_scope = true,
+	}
+	if type(ltx_text) ~= "string" or ltx_text == "" then
+		return res
+	end
+	local cur_sec = ""
+	for raw_line in string.gmatch(ltx_text, "[^\r\n]+") do
+		local line = string.gsub(raw_line, ";.*$", "")
+		line = string.match(line, "^%s*(.-)%s*$") or ""
+		if line ~= "" then
+			local sec = string.match(line, "^%[([^%]]+)%]$")
+			if sec then
+				cur_sec = string.lower(string.match(sec, "^%s*(.-)%s*$") or "")
+			elseif cur_sec == "right_stick" or cur_sec == "profile" then
+				local k, v = string.match(line, "^([^=]+)=(.*)$")
+				if k and v then
+					k = string.lower(string.match(k, "^%s*(.-)%s*$") or "")
+					v = string.lower(string.match(v, "^%s*(.-)%s*$") or "")
+					if k == "omega_horz" then
+						local n = tonumber(v)
+						if n then res.omega_horz = clamp(n, OMEGA_MIN, OMEGA_MAX) end
+					elseif k == "omega_vert" then
+						local n = tonumber(v)
+						if n then res.omega_vert = clamp(n, OMEGA_MIN, OMEGA_MAX) end
+					elseif k == "ads_sens_mult" then
+						local n = tonumber(v)
+						if n then res.ads_sens_mult = clamp(n, 0.10, 1.50) end
+					elseif k == "turn_accel" then
+						local n = tonumber(v)
+						if n then res.turn_accel = clamp(n, 0.00, 1.00) end
+					elseif k == "disable_aa_on_scope" then
+						res.disable_aa_on_scope = not (v == "0" or v == "false" or v == "off")
+					elseif cur_sec == "right_stick" then
+						if k == "deadzone" then
+							local n = tonumber(v)
+							if n then res.deadzone = clamp(n, 0.0, 0.30) end
+						elseif k == "saturation" then
+							local n = tonumber(v)
+							if n then res.saturation = clamp(n, 0.70, 1.00) end
+						elseif k == "curve" then
+							if v == "power" or v == "1" then
+								res.curve = "power"
+							elseif v == "scurve" or v == "2" then
+								res.curve = "scurve"
+							elseif v == "twozone" or v == "3" then
+								res.curve = "twozone"
+							else
+								res.curve = "linear"
+							end
+						elseif k == "gamma" then
+							local n = tonumber(v)
+							if n then res.gamma = clamp(n, 0.5, 4.0) end
+						elseif k == "s_exponent" then
+							local n = tonumber(v)
+							if n then res.s_exponent = clamp(n, 0.5, 4.0) end
+						elseif k == "invert_x" then
+							res.invert_x = (v == "1" or v == "true" or v == "on")
+						elseif k == "invert_y" then
+							res.invert_y = (v == "1" or v == "true" or v == "on")
+						end
+					end
+				end
+			end
+		end
+	end
+	if res.saturation < res.deadzone + 0.05 then
+		res.saturation = clamp(res.deadzone + 0.05, 0.70, 1.00)
+	end
+	return res
+end
+
+-- Таблица параметров K6a («ползунок макета -> параметр движка -> статус поддержки сейчас»)
+local PARAMETER_SPECS = {
+	{
+		id = "sx", group = "look", kind = "slider", supported = true,
+		label_id = "ui_gp_aim_sx", min = 1, max = 100, step = 2, unit = "",
+		engine_param = "CalibrationProfile.omega_horz (gp_calib set right_stick omega_horz)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] omega_horz (0.5..15.0 rad/s)",
+	},
+	{
+		id = "sy", group = "look", kind = "slider", supported = true,
+		label_id = "ui_gp_aim_sy", min = 1, max = 100, step = 2, unit = "",
+		engine_param = "CalibrationProfile.omega_vert (gp_calib set right_stick omega_vert)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] omega_vert (0.5..15.0 rad/s)",
+	},
+	{
+		id = "ads", group = "look", kind = "slider", supported = true,
+		label_id = "ui_gp_aim_ads", min = 10, max = 150, step = 5, unit = "%",
+		engine_param = "CalibrationProfile.ads_sens_mult (gp_calib set right_stick ads_sens_mult 0.10..1.50)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] ads_sens_mult (0.10..1.50)",
+	},
+	{
+		id = "acc", group = "look", kind = "slider", supported = true,
+		label_id = "ui_gp_aim_acc", min = 0, max = 100, step = 5, unit = "%",
+		engine_param = "CalibrationProfile.turn_accel (gp_calib set right_stick turn_accel 0.00..1.00)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] turn_accel (0.00..1.00)",
+	},
+	{
+		id = "curve", group = "look", kind = "segment", supported = true,
+		label_id = "ui_gp_aim_curve",
+		options = {
+			{ val = "lin", label_id = "ui_gp_aim_curve_lin" },
+			{ val = "exp", label_id = "ui_gp_aim_curve_exp" },
+			{ val = "s",   label_id = "ui_gp_aim_curve_s" },
+		},
+		engine_param = "StickConfig.curve.type (gp_calib set right_stick curve linear|power|scurve)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] curve",
+	},
+	{
+		id = "inv", group = "look", kind = "segment", supported = true,
+		label_id = "ui_gp_aim_inv",
+		options = {
+			{ val = false, label_id = "ui_gp_aim_off" },
+			{ val = true,  label_id = "ui_gp_aim_on" },
+		},
+		engine_param = "StickConfig.invert_y (gp_calib set right_stick invert_y 0|1)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] invert_y",
+	},
+	{
+		id = "dzi", group = "dz", kind = "slider", supported = true,
+		label_id = "ui_gp_aim_dzi", min = 0, max = 30, step = 1, unit = "%",
+		engine_param = "StickConfig.deadzone (gp_calib set right_stick deadzone 0.00..0.30)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] deadzone",
+	},
+	{
+		id = "dzo", group = "dz", kind = "slider", supported = true,
+		label_id = "ui_gp_aim_dzo", min = 70, max = 100, step = 1, unit = "%",
+		engine_param = "StickConfig.saturation (gp_calib set right_stick saturation 0.70..1.00)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] saturation",
+	},
+	{
+		id = "assist", group = "aa", kind = "segment", supported = true,
+		label_id = "ui_gp_aim_assist",
+		options = {
+			{ val = "off",  label_id = "ui_gp_aim_aa_off" },
+			{ val = "low",  label_id = "ui_gp_aim_aa_low" },
+			{ val = "mid",  label_id = "ui_gp_aim_aa_mid" },
+			{ val = "high", label_id = "ui_gp_aim_aa_high" },
+		},
+		engine_param = "gpaa::g_level (gp_aa_level off|smooth|medium|strong)",
+		storage = "appdata\\user.ltx (gp_aa_level)",
+	},
+	{
+		id = "fric", group = "aa", kind = "slider", supported = true,
+		label_id = "ui_gp_aim_fric", min = 0, max = 100, step = 5, unit = "%",
+		engine_param = "gpaa::g_partSlowdown (gp_aa_slowdown 0.00..1.00)",
+		storage = "appdata\\user.ltx (gp_aa_slowdown)",
+	},
+	{
+		id = "mag", group = "aa", kind = "slider", supported = true,
+		label_id = "ui_gp_aim_mag", min = 0, max = 100, step = 5, unit = "%",
+		engine_param = "gpaa::g_partRotational + g_partTracking + g_partAdsPull (gp_aa_rotational/tracking/ads_pull 0..1)",
+		storage = "appdata\\user.ltx (gp_aa_rotational, gp_aa_tracking, gp_aa_ads_pull)",
+	},
+	{
+		id = "scope", group = "aa", kind = "segment", supported = true,
+		label_id = "ui_gp_aim_scope",
+		options = {
+			{ val = true,  label_id = "ui_gp_aim_yes" },
+			{ val = false, label_id = "ui_gp_aim_no" },
+		},
+		engine_param = "gpaa::g_disableOnScope + CalibrationProfile.disable_aa_on_scope (gp_aa_disable_on_scope 0|1)",
+		storage = "appdata\\gamepad\\profile.ltx [right_stick] disable_aa_on_scope + appdata\\user.ltx (gp_aa_disable_on_scope)",
+	},
+}
+
+function get_parameter_specs()
+	return PARAMETER_SPECS
+end
+
+-- Пресеты помощи в прицеливании из макета controller-remap-xbox.html:181
+local ASSIST_PRESETS = {
+	off  = { engine_token = "off",    fric = 0,  mag = 0  },
+	-- FIX-LIVE2 п.2 (2026-11-16): значения пресетов теперь в профилях движка (Слабая/Средняя/Сильная),
+	-- пресет ставит ползунки на 100% (полная сила профиля), ползунки дальше только ослабляют.
+	low  = { engine_token = "smooth", fric = 100, mag = 100 },
+	mid  = { engine_token = "medium", fric = 100, mag = 100 },
+	high = { engine_token = "strong", fric = 100, mag = 100 },
+}
+
+-- Дефолтное состояние вкладки «Прицеливание» (совпадает с дефолтами движка и макета)
+function get_default_aim_state()
+	return {
+		sx     = omega_to_ui(DEFAULT_OMEGA_H), -- 4.0 рад/с -> 25 (по шкале 0.5..15.0)
+		sy     = omega_to_ui(DEFAULT_OMEGA_V), -- 2.5 рад/с -> 15
+		ads    = 70,     -- неактивно (K6b)
+		acc    = 30,     -- неактивно (K6b)
+		curve  = "lin",  -- Linear по умолчанию в GamepadMath.h:44
+		inv    = false,  -- invert_y = false
+		dzi    = 15,     -- deadzone = 0.15 (15%)
+		dzo    = 95,     -- saturation = 0.95 (95%)
+		assist = "mid",  -- gp_aa_level = medium (D44)
+		fric   = 100,    -- gp_aa_slowdown = 1.0 (100% от профиля уровня)
+		mag    = 100,    -- gp_aa_rotational / tracking / ads_pull = 1.0
+		scope  = true,   -- неактивно (K6b)
+	}
+end
+
+-- Чтение текущего состояния из profile.ltx и консольных переменных gp_aa_*
+function load_aim_state_from_engine(custom_ltx_text)
+	local st = get_default_aim_state()
+	local ltx_text = custom_ltx_text
+	if type(ltx_text) ~= "string" and io and type(io.open) == "function" then
+		local path = resolve_profile_ltx_path()
+		local f = io.open(path, "rb")
+		if f then
+			ltx_text = f:read("*a")
+			f:close()
+		end
+	end
+
+	if type(ltx_text) == "string" and ltx_text ~= "" then
+		local rs = parse_right_stick_from_ltx(ltx_text)
+		st.sx    = omega_to_ui(rs.omega_horz)
+		st.sy    = omega_to_ui(rs.omega_vert)
+		st.ads   = clamp(round_int((rs.ads_sens_mult or 0.70) * 100), 10, 150)
+		st.acc   = clamp(round_int((rs.turn_accel or 0.30) * 100), 0, 100)
+		st.scope = (rs.disable_aa_on_scope ~= false)
+		st.dzi   = clamp(round_int(rs.deadzone * 100), 0, 30)
+		st.dzo   = clamp(round_int(rs.saturation * 100), 70, 100)
+		if rs.curve == "power" then
+			st.curve = "exp"
+		elseif rs.curve == "scurve" then
+			st.curve = "s"
+		else
+			st.curve = "lin"
+		end
+		st.inv = (rs.invert_y == true)
+	end
+
+	local scope_tok = string.lower(get_con_token("gp_aa_disable_on_scope", ""))
+	if scope_tok == "0" or scope_tok == "off" or scope_tok == "false" then
+		st.scope = false
+	elseif scope_tok == "1" or scope_tok == "on" or scope_tok == "true" then
+		st.scope = true
+	end
+
+	local aa_tok = string.lower(get_con_token("gp_aa_level", "medium"))
+	if aa_tok == "off" or aa_tok == "0" then
+		st.assist = "off"
+	elseif aa_tok == "smooth" or aa_tok == "1" then
+		st.assist = "low"
+	elseif aa_tok == "strong" or aa_tok == "super" or aa_tok == "full_auto" or aa_tok == "3" or aa_tok == "4" or aa_tok == "5" then
+		st.assist = "high"
+	else
+		st.assist = "mid"
+	end
+
+	local slow = get_con_float("gp_aa_slowdown", 1.0)
+	local pull = get_con_float("gp_aa_ads_pull", 1.0)
+	-- Если консоль в тестовой среде возвращает 0.0 при неинициализированных переменных, проверяем наличие в console_vars
+	if type(_G.get_console) == "function" then
+		local ok_c, con = pcall(_G.get_console)
+		if ok_c and con then
+			local tok_raw = con.get_token and con:get_token("gp_aa_level") or ""
+			if tok_raw ~= "" or slow > 0 or pull > 0 then
+				st.fric = clamp(round_int(slow * 100), 0, 100)
+				st.mag  = clamp(round_int(pull * 100), 0, 100)
+			end
+		end
+	end
+
+	return st
+end
+
+-- Чистая математика кривой отклика (точно как в макете controller-remap-xbox.html:173 и GamepadMath.cpp)
+function eval_response_curve(st, t)
+	t = clamp(tonumber(t) or 0, 0.0, 1.0)
+	local dzi = clamp((tonumber(st and st.dzi) or 15) / 100.0, 0.0, 0.30)
+	local dzo = clamp((tonumber(st and st.dzo) or 95) / 100.0, 0.70, 1.00)
+	if dzo < dzi + 0.05 then
+		dzo = dzi + 0.05
+	end
+	if t <= dzi then
+		return 0.0
+	end
+	if t >= dzo then
+		return 1.0
+	end
+	local u = (t - dzi) / (dzo - dzi)
+	local crv = st and st.curve or "lin"
+	if crv == "exp" then
+		return u * u
+	elseif crv == "s" then
+		return u * u * (3.0 - 2.0 * u)
+	end
+	return u
+end
+
+-- Вычисление обработанного отклонения стика (rx, ry в [-1..1]) для предпросмотра живой точки
+function eval_stick_preview(st, raw_x, raw_y)
+	local rx = clamp(tonumber(raw_x) or 0.0, -1.0, 1.0)
+	local ry = clamp(tonumber(raw_y) or 0.0, -1.0, 1.0)
+	local mag = math.sqrt(rx * rx + ry * ry)
+	if mag <= 1e-6 then
+		return 0.0, 0.0, 0.0, 0.0
+	end
+	local clamped_mag = mag > 1.0 and 1.0 or mag
+	local out_mag = eval_response_curve(st, clamped_mag)
+	local nx = rx / mag
+	local ny = ry / mag
+	if st and st.inv then
+		ny = -ny
+	end
+	return nx * out_mag, ny * out_mag, clamped_mag, out_mag
+end
+
+-- Применение одного изменённого параметра в движок (gp_calib set ... сохраняет сразу в profile.ltx; gp_aa_* — в консоль)
+function apply_param_to_engine(state, param_id)
+	if type(state) ~= "table" then return false end
+	if param_id == "sx" then
+		local w = ui_to_omega(state.sx)
+		return exec_cmd(string.format("gp_calib set right_stick omega_horz %.4f", w))
+	elseif param_id == "sy" then
+		local w = ui_to_omega(state.sy)
+		return exec_cmd(string.format("gp_calib set right_stick omega_vert %.4f", w))
+	elseif param_id == "ads" then
+		local m = clamp((tonumber(state.ads) or 70) / 100.0, 0.10, 1.50)
+		return exec_cmd(string.format("gp_calib set right_stick ads_sens_mult %.4f", m))
+	elseif param_id == "acc" then
+		local a = clamp((tonumber(state.acc) or 30) / 100.0, 0.00, 1.00)
+		return exec_cmd(string.format("gp_calib set right_stick turn_accel %.4f", a))
+	elseif param_id == "curve" then
+		local cname = "linear"
+		if state.curve == "exp" then
+			cname = "power"
+		elseif state.curve == "s" then
+			cname = "scurve"
+		end
+		local ok = exec_cmd("gp_calib set right_stick curve " .. cname)
+		if state.curve == "exp" then
+			exec_cmd("gp_calib set right_stick gamma 2.0000")
+		elseif state.curve == "s" then
+			exec_cmd("gp_calib set right_stick s_exponent 2.0000")
+		end
+		return ok
+	elseif param_id == "inv" then
+		local v = state.inv and 1 or 0
+		return exec_cmd(string.format("gp_calib set right_stick invert_y %d", v))
+	elseif param_id == "dzi" then
+		local dz = clamp((tonumber(state.dzi) or 15) / 100.0, 0.0, 0.30)
+		return exec_cmd(string.format("gp_calib set right_stick deadzone %.4f", dz))
+	elseif param_id == "dzo" then
+		local sat = clamp((tonumber(state.dzo) or 95) / 100.0, 0.70, 1.00)
+		return exec_cmd(string.format("gp_calib set right_stick saturation %.4f", sat))
+	elseif param_id == "assist" then
+		local preset = ASSIST_PRESETS[state.assist] or ASSIST_PRESETS.mid
+		state.fric = preset.fric
+		state.mag  = preset.mag
+		exec_cmd("gp_aa_level " .. preset.engine_token)
+		exec_cmd(string.format("gp_aa_slowdown %.2f", state.fric / 100.0))
+		local m = state.mag / 100.0
+		exec_cmd(string.format("gp_aa_rotational %.2f", m))
+		exec_cmd(string.format("gp_aa_tracking %.2f", m))
+		exec_cmd(string.format("gp_aa_ads_pull %.2f", m))
+		return true
+	elseif param_id == "fric" then
+		local f = clamp((tonumber(state.fric) or 0) / 100.0, 0.0, 1.0)
+		return exec_cmd(string.format("gp_aa_slowdown %.2f", f))
+	elseif param_id == "mag" then
+		local m = clamp((tonumber(state.mag) or 0) / 100.0, 0.0, 1.0)
+		exec_cmd(string.format("gp_aa_rotational %.2f", m))
+		exec_cmd(string.format("gp_aa_tracking %.2f", m))
+		return exec_cmd(string.format("gp_aa_ads_pull %.2f", m))
+	elseif param_id == "scope" then
+		local v = (state.scope ~= false) and 1 or 0
+		exec_cmd(string.format("gp_aa_disable_on_scope %d", v))
+		return exec_cmd(string.format("gp_calib set right_stick disable_aa_on_scope %d", v))
+	end
+	return false
+end
+
+-- Полное применение всех активных параметров состояния в движок
+function apply_all_to_engine(state)
+	if type(state) ~= "table" then return false end
+	apply_param_to_engine(state, "sx")
+	apply_param_to_engine(state, "sy")
+	apply_param_to_engine(state, "ads")
+	apply_param_to_engine(state, "acc")
+	apply_param_to_engine(state, "curve")
+	apply_param_to_engine(state, "inv")
+	apply_param_to_engine(state, "dzi")
+	apply_param_to_engine(state, "dzo")
+	local preset = ASSIST_PRESETS[state.assist] or ASSIST_PRESETS.mid
+	exec_cmd("gp_aa_level " .. preset.engine_token)
+	apply_param_to_engine(state, "fric")
+	apply_param_to_engine(state, "mag")
+	apply_param_to_engine(state, "scope")
+	exec_cmd("gp_calib save")
+	return true
+end
+
+-- Изменение параметра по шагу dir (-1 или +1) с проверкой границ и активности
+function adjust_param(state, param_id, dir)
+	if type(state) ~= "table" then return false, "no_state" end
+	dir = (tonumber(dir) or 1) >= 0 and 1 or -1
+	local spec = nil
+	for _, s in ipairs(PARAMETER_SPECS) do
+		if s.id == param_id then
+			spec = s
+			break
+		end
+	end
+	if not spec then return false, "unknown_param" end
+	if not spec.supported then
+		return false, "locked_for_k6b"
+	end
+
+	if spec.kind == "slider" then
+		local cur = tonumber(state[param_id]) or spec.min
+		local nxt = clamp(cur + dir * spec.step, spec.min, spec.max)
+		if param_id == "dzi" and nxt > (state.dzo - 5) then
+			nxt = math.max(spec.min, state.dzo - 5)
+		elseif param_id == "dzo" and nxt < (state.dzi + 5) then
+			nxt = math.min(spec.max, state.dzi + 5)
+		end
+		state[param_id] = nxt
+		apply_param_to_engine(state, param_id)
+		return true, tostring(nxt)
+	elseif spec.kind == "segment" then
+		local opts = spec.options or {}
+		local cur_idx = 1
+		for i, o in ipairs(opts) do
+			if o.val == state[param_id] then
+				cur_idx = i
+				break
+			end
+		end
+		local next_idx = ((cur_idx - 1 + dir) % #opts) + 1
+		state[param_id] = opts[next_idx].val
+		apply_param_to_engine(state, param_id)
+		return true, tostring(state[param_id])
+	end
+	return false, "unsupported_kind"
+end
+
+-- Чтение живого положения стика (если доступно через консольную диагностику / колесо, иначе тестовая точка из макета)
+function sample_live_stick()
+	if game and type(game.get_wheel_stick_angle) == "function" and type(game.is_wheel_stick_active) == "function" then
+		local ok_a, active = pcall(game.is_wheel_stick_active)
+		local ok_r, ang = pcall(game.get_wheel_stick_angle)
+		if ok_a and active and ok_r and type(ang) == "number" then
+			return math.sin(ang) * 0.75, math.cos(ang) * 0.75, true
+		end
+	end
+	-- Демонстрационная точка (как в макете controller-remap-xbox.html:176 cx=198, cy=118 -> rx=+0.40, ry=+0.27)
+	return 0.40, 0.27, false
+end
+
+--------------------------------------------------------------------------------
+-- Класс окна CUIScriptWnd: UIGpAimWnd
+--------------------------------------------------------------------------------
+class "UIGpAimWnd" (CUIScriptWnd)
+
+function UIGpAimWnd:__init(parent_controls_wnd) super()
+	self.parent_controls_wnd = parent_controls_wnd
+	self.state = load_aim_state_from_engine()
+	self.selected_idx = 1
+	self.pause_token_id = 0
+	self.live_rx = 0.40
+	self.live_ry = 0.27
+
+	if self.AllowWorkInPause then self:AllowWorkInPause(true) end
+	if self.AllowMovement then self:AllowMovement(false) end
+	if self.AllowCursor then self:AllowCursor(true) end
+	if self.AllowCenterCursor then self:AllowCenterCursor(false) end
+
+	self:SetWndRect(Frect():set(0, 0, 1024, 768))
+	self:InitControls()
+	self:InitCallbacks()
+	self:RefreshUI()
+end
+
+function UIGpAimWnd:__finalize()
+end
+
+local function make_text(parent, x, y, w, h, font_fn, r, g, b, align)
+	local lbl = CUITextWnd()
+	lbl:SetAutoDelete(true)
+	lbl:SetWndPos(vector2():set(x, y))
+	lbl:SetWndSize(vector2():set(w, h))
+	if font_fn then
+		lbl:SetFont(font_fn())
+	elseif GetFontLetterica16Russian then
+		lbl:SetFont(GetFontLetterica16Russian())
+	end
+	lbl:SetTextColor(GetARGB(255, r or 236, g or 230, b or 216))
+	lbl:SetTextAlignment(align or 0)
+	parent:AttachChild(lbl)
+	return lbl
+end
+
+local function make_rect_static(parent, x, y, w, h, a, r, g, b, tex_id)
+	local st = CUIStatic()
+	st:SetAutoDelete(true)
+	st:SetWndPos(vector2():set(x, y))
+	st:SetWndSize(vector2():set(w, h))
+	st:InitTexture(tex_id or 'ui_gp_solid_white')
+	st:SetStretchTexture(true)
+	st:SetTextureColor(GetARGB(a or 255, r or 212, g or 166, b or 74))
+	parent:AttachChild(st)
+	return st
+end
+
+function UIGpAimWnd:InitControls()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_gp_aim.xml")
+
+	self.back = xml:InitFrame("background", self)
+	self.back:SetWndPos(vector2():set(32, 20))
+	self.back:SetWndSize(vector2():set(960, 728))
+
+	self.lbl_title = make_text(self.back, 24, 12, 168, 28, GetFontLetterica18Russian, 240, 200, 112, 0)
+	self.lbl_title:SetText(tr("ui_gp_ctrl_title"))
+
+	self.btn_tab_world = xml:Init3tButton("tab_world", self.back)
+	self.btn_tab_world:SetWndPos(vector2():set(196, 10))
+	self.btn_tab_world:SetWndSize(vector2():set(120, 30))
+	self.btn_tab_world:TextControl():SetText(tr("ui_gp_tab_world"))
+	self.btn_tab_world:TextControl():SetTextColor(GetARGB(255, 165, 158, 146))
+	self:Register(self.btn_tab_world, "btn_tab_world")
+
+	self.btn_tab_menu = xml:Init3tButton("tab_menu", self.back)
+	self.btn_tab_menu:SetWndPos(vector2():set(324, 10))
+	self.btn_tab_menu:SetWndSize(vector2():set(164, 30))
+	self.btn_tab_menu:TextControl():SetText(tr("ui_gp_tab_menu"))
+	self.btn_tab_menu:TextControl():SetTextColor(GetARGB(255, 165, 158, 146))
+	self:Register(self.btn_tab_menu, "btn_tab_menu")
+
+	self.btn_tab_aim = xml:Init3tButton("tab_aim", self.back)
+	self.btn_tab_aim:SetWndPos(vector2():set(496, 10))
+	self.btn_tab_aim:SetWndSize(vector2():set(140, 30))
+	self.btn_tab_aim:TextControl():SetText(tr("ui_gp_tab_aim"))
+	self.btn_tab_aim:TextControl():SetTextColor(GetARGB(255, 240, 200, 112))
+	self:Register(self.btn_tab_aim, "btn_tab_aim")
+
+	self.btn_reset_bg = make_rect_static(self.back, 760, 10, 92, 28, 225, 255, 255, 255, 'ui_gp_card_flat')
+	self.btn_reset = xml:Init3tButton("btn_reset", self.back)
+	self.btn_reset:SetWndPos(vector2():set(760, 10))
+	self.btn_reset:SetWndSize(vector2():set(92, 28))
+	self.btn_reset:TextControl():SetText(tr("ui_gp_btn_reset"))
+	self:Register(self.btn_reset, "btn_reset")
+
+	self.btn_close_bg = make_rect_static(self.back, 858, 10, 82, 28, 225, 255, 255, 255, 'ui_gp_card_flat')
+	self.btn_close = xml:Init3tButton("btn_close", self.back)
+	self.btn_close:SetWndPos(vector2():set(858, 10))
+	self.btn_close:SetWndSize(vector2():set(82, 28))
+	self.btn_close:TextControl():SetText(tr("ui_gp_btn_close"))
+	self:Register(self.btn_close, "btn_close")
+
+	self.header_line = make_rect_static(self.back, 20, 44, 920, 1, 140, 90, 84, 74)
+	self.tab_underline = make_rect_static(self.back, 496, 41, 140, 3, 255, 240, 200, 112)
+
+	-- Левая колонка: 3 чистые группы без грубых рамок InitFrame
+	self.grp_look = xml:InitStatic("grp_look", self.back)
+	self.grp_look:SetWndPos(vector2():set(16, 50))
+	self.grp_look:SetWndSize(vector2():set(540, 260))
+	make_text(self.grp_look, 14, 7, 500, 22, GetFontLetterica18Russian, 240, 200, 112, 0):SetText(tr("ui_gp_aim_grp_look"))
+	make_rect_static(self.grp_look, 14, 30, 512, 1, 110, 88, 82, 72)
+
+	self.grp_dz = xml:InitStatic("grp_dz", self.back)
+	self.grp_dz:SetWndPos(vector2():set(16, 316))
+	self.grp_dz:SetWndSize(vector2():set(540, 114))
+	make_text(self.grp_dz, 14, 7, 500, 22, GetFontLetterica18Russian, 240, 200, 112, 0):SetText(tr("ui_gp_aim_grp_dz"))
+	make_rect_static(self.grp_dz, 14, 30, 512, 1, 110, 88, 82, 72)
+
+	self.grp_aa = xml:InitStatic("grp_aa", self.back)
+	self.grp_aa:SetWndPos(vector2():set(16, 436))
+	self.grp_aa:SetWndSize(vector2():set(540, 236))
+	make_text(self.grp_aa, 14, 7, 500, 22, GetFontLetterica18Russian, 240, 200, 112, 0):SetText(tr("ui_gp_aim_grp_aa"))
+	make_rect_static(self.grp_aa, 14, 30, 512, 1, 110, 88, 82, 72)
+
+	local group_parents = {
+		look = { wnd = self.grp_look, next_y = 35 },
+		dz   = { wnd = self.grp_dz,   next_y = 35 },
+		aa   = { wnd = self.grp_aa,   next_y = 35 },
+	}
+
+	self.rows = {}
+	for idx, spec in ipairs(PARAMETER_SPECS) do
+		local gp = group_parents[spec.group]
+		local ry = gp.next_y
+		gp.next_y = ry + 36
+
+		local row = {
+			idx       = idx,
+			spec      = spec,
+			parent    = gp.wnd,
+			y         = ry,
+			seg_btns  = {},
+			bar_fills = {},
+		}
+
+		row.focus_bg = make_rect_static(gp.wnd, 8, ry - 3, 524, 30, 255, 255, 255, 255, 'ui_gp_card_focus')
+		row.focus_bg:Show(false)
+
+		row.lbl_name = make_text(gp.wnd, 18, ry + 2, 242, 22, GetFontLetterica16Russian, 236, 230, 216, 0)
+
+		if spec.kind == "slider" then
+			row.minus_bg = make_rect_static(gp.wnd, 264, ry, 24, 24, 210, 255, 255, 255, 'ui_gp_card_flat')
+			row.btn_minus = xml:Init3tButton("btn_step", gp.wnd)
+			row.btn_minus:SetWndPos(vector2():set(264, ry))
+			row.btn_minus:SetWndSize(vector2():set(24, 24))
+			row.btn_minus:TextControl():SetText("-")
+			local m_name = "btn_minus_" .. spec.id
+			self:Register(row.btn_minus, m_name)
+			row.minus_name = m_name
+
+			-- Непрерывная полоса слайдера + 10 сегментов-индикаторов + ползунок
+			row.bar_bg = make_rect_static(gp.wnd, 294, ry + 8, 144, 8, 220, 24, 24, 26)
+			row.bar_fill = make_rect_static(gp.wnd, 294, ry + 8, 72, 8, 235, 212, 166, 74)
+			for b = 1, 10 do
+				row.bar_fills[b] = make_rect_static(gp.wnd, 296 + (b - 1) * 14, ry + 9, 12, 6, 235, 212, 166, 74)
+			end
+			row.bar_knob = make_rect_static(gp.wnd, 364, ry + 5, 4, 14, 255, 240, 200, 112)
+
+			row.plus_bg = make_rect_static(gp.wnd, 444, ry, 24, 24, 210, 255, 255, 255, 'ui_gp_card_flat')
+			row.btn_plus = xml:Init3tButton("btn_step", gp.wnd)
+			row.btn_plus:SetWndPos(vector2():set(444, ry))
+			row.btn_plus:SetWndSize(vector2():set(24, 24))
+			row.btn_plus:TextControl():SetText("+")
+			local p_name = "btn_plus_" .. spec.id
+			self:Register(row.btn_plus, p_name)
+			row.plus_name = p_name
+
+			row.lbl_val = make_text(gp.wnd, 472, ry + 2, 56, 22, GetFontLetterica16Russian, 240, 200, 112, 2)
+		else
+			local opts = spec.options or {}
+			local avail_w = 264
+			local btn_w = math.floor((avail_w - (#opts - 1) * 4) / math.max(1, #opts))
+			for oi, opt in ipairs(opts) do
+				local bx = 264 + (oi - 1) * (btn_w + 4)
+				local sb_bg = make_rect_static(gp.wnd, bx, ry, btn_w, 24, 200, 28, 26, 24)
+				local sb_bar = make_rect_static(gp.wnd, bx, ry + 22, btn_w, 2, 255, 240, 200, 112)
+				local sb = xml:Init3tButton("btn_seg", gp.wnd)
+				sb:SetWndPos(vector2():set(bx, ry))
+				sb:SetWndSize(vector2():set(btn_w, 24))
+				local s_name = string.format("btn_seg_%s_%d", spec.id, oi)
+				self:Register(sb, s_name)
+				row.seg_btns[oi] = { btn = sb, bg = sb_bg, bar = sb_bar, opt = opt, cb_name = s_name }
+			end
+		end
+
+		self.rows[idx] = row
+	end
+
+	-- Правая колонка: график кривой отклика (чистая панель + координатная сетка)
+	self.grp_curve = xml:InitStatic("grp_curve", self.back)
+	self.grp_curve:SetWndPos(vector2():set(568, 50))
+	self.grp_curve:SetWndSize(vector2():set(376, 304))
+	make_text(self.grp_curve, 14, 7, 348, 22, GetFontLetterica18Russian, 240, 200, 112, 0):SetText(tr("ui_gp_aim_grp_curve"))
+	make_rect_static(self.grp_curve, 14, 30, 348, 1, 110, 88, 82, 72)
+
+	self.curve_plot_bg = make_rect_static(self.grp_curve, 24, 36, 328, 190, 230, 16, 16, 18)
+	-- Координатная сетка 4x4 внутри графика
+	for g = 1, 3 do
+		make_rect_static(self.grp_curve, 24 + round_int(g * 328 / 4), 36, 1, 190, 55, 80, 76, 68)
+		make_rect_static(self.grp_curve, 24, 36 + round_int(g * 190 / 4), 328, 1, 55, 80, 76, 68)
+	end
+	-- Оси X и Y
+	make_rect_static(self.grp_curve, 24, 36, 1, 190, 140, 110, 104, 94)
+	make_rect_static(self.grp_curve, 24, 225, 328, 1, 140, 110, 104, 94)
+
+	self.curve_dz_left = make_rect_static(self.grp_curve, 24, 36, 40, 190, 95, 92, 48, 42)
+	self.curve_dz_right = make_rect_static(self.grp_curve, 330, 36, 22, 190, 95, 92, 48, 42)
+	self.curve_dz_left_line = make_rect_static(self.grp_curve, 64, 36, 1, 190, 180, 190, 110, 72)
+	self.curve_dz_right_line = make_rect_static(self.grp_curve, 330, 36, 1, 190, 180, 190, 110, 72)
+
+	self.curve_pts = {}
+	for i = 0, 40 do
+		self.curve_pts[i + 1] = make_rect_static(self.grp_curve, 24 + i * 8, 220, 9, 3, 255, 240, 200, 112)
+	end
+	self.curve_live_dot = make_rect_static(self.grp_curve, 24, 220, 7, 9, 255, 255, 236, 160, 'ui_gp_circle_disc')
+
+	self.lbl_curve_info = make_text(self.grp_curve, 16, 232, 344, 22, GetFontLetterica16Russian, 240, 200, 112, 2)
+	self.lbl_curve_cap = make_text(self.grp_curve, 16, 254, 344, 42, GetFontLetterica16Russian, 165, 158, 146, 0)
+	self.lbl_curve_cap:SetTextComplexMode(true)
+	self.lbl_curve_cap:SetText(tr("ui_gp_aim_cap_curve"))
+
+	-- Правая колонка: виджет стика с коррекцией 16:9 (Rx=68, Ry=90 -> круг на экране 16:9)
+	self.grp_stick = xml:InitStatic("grp_stick", self.back)
+	self.grp_stick:SetWndPos(vector2():set(568, 360))
+	self.grp_stick:SetWndSize(vector2():set(376, 312))
+	make_text(self.grp_stick, 14, 7, 348, 22, GetFontLetterica18Russian, 240, 200, 112, 0):SetText(tr("ui_gp_aim_grp_stick"))
+	make_rect_static(self.grp_stick, 14, 30, 348, 1, 110, 88, 82, 72)
+
+	-- Поле стика с коррекцией пропорций 16:9 (136x180 в координатах 1024x768 = 180x180 на экране)
+	self.stick_bg = make_rect_static(self.grp_stick, 120, 38, 136, 180, 230, 16, 16, 18)
+	make_rect_static(self.grp_stick, 120, 128, 136, 1, 70, 90, 86, 78)
+	make_rect_static(self.grp_stick, 188, 38, 1, 180, 70, 90, 86, 78)
+
+	self.stick_sat_box = make_rect_static(self.grp_stick, 123, 42, 130, 172, 185, 212, 166, 74, 'ui_gp_circle_ring')
+	self.stick_dz_box  = make_rect_static(self.grp_stick, 168, 101, 40, 54, 85, 140, 64, 48, 'ui_gp_circle_disc')
+	self.stick_dz_ring = make_rect_static(self.grp_stick, 168, 101, 40, 54, 195, 200, 108, 76, 'ui_gp_circle_ring')
+	self.stick_dot_raw  = make_rect_static(self.grp_stick, 185, 124, 6, 8, 210, 155, 155, 155, 'ui_gp_circle_disc')
+	self.stick_dot_proc = make_rect_static(self.grp_stick, 183, 122, 9, 12, 255, 240, 200, 112, 'ui_gp_circle_disc')
+
+	self.lbl_stick_info = make_text(self.grp_stick, 16, 224, 344, 22, GetFontLetterica16Russian, 240, 200, 112, 2)
+	self.lbl_stick_cap = make_text(self.grp_stick, 16, 248, 344, 54, GetFontLetterica16Russian, 165, 158, 146, 0)
+	self.lbl_stick_cap:SetTextComplexMode(true)
+	self.lbl_stick_cap:SetText(tr("ui_gp_aim_cap_stick"))
+
+	-- Подвал
+	self.lbl_footer = xml:InitTextWnd("lbl_footer", self.back)
+	self.lbl_footer:SetText(tr("ui_gp_aim_footer_hint"))
+end
+
+function UIGpAimWnd:InitCallbacks()
+	self:AddCallback("btn_tab_world", ui_events.BUTTON_CLICKED, self.OnTabWorld, self)
+	self:AddCallback("btn_tab_menu",  ui_events.BUTTON_CLICKED, self.OnTabMenu,  self)
+	self:AddCallback("btn_tab_aim",   ui_events.BUTTON_CLICKED, self.OnTabAim,   self)
+	self:AddCallback("btn_reset",     ui_events.BUTTON_CLICKED, self.OnResetClicked, self)
+	self:AddCallback("btn_close",     ui_events.BUTTON_CLICKED, self.OnCloseClicked, self)
+
+	for idx, row in ipairs(self.rows) do
+		local spec = row.spec
+		if spec.kind == "slider" then
+			self:AddCallback(row.minus_name, ui_events.BUTTON_CLICKED, function()
+				self.selected_idx = idx
+				self:StepSelected(-1)
+			end, self)
+			self:AddCallback(row.plus_name, ui_events.BUTTON_CLICKED, function()
+				self.selected_idx = idx
+				self:StepSelected(1)
+			end, self)
+		else
+			for _, sb in ipairs(row.seg_btns) do
+				self:AddCallback(sb.cb_name, ui_events.BUTTON_CLICKED, function()
+					self.selected_idx = idx
+					if spec.supported then
+						self.state[spec.id] = sb.opt.val
+						apply_param_to_engine(self.state, spec.id)
+						self:RefreshUI()
+					end
+				end, self)
+			end
+		end
+	end
+end
+
+function UIGpAimWnd:RefreshUI()
+	local st = self.state
+	for idx, row in ipairs(self.rows) do
+		local spec = row.spec
+		local is_sel = (idx == self.selected_idx)
+		if row.focus_bg then
+			row.focus_bg:Show(is_sel)
+		end
+		local title = tr(spec.label_id)
+		if not spec.supported then
+			title = title .. " [" .. tr("ui_gp_aim_k6b_locked") .. "]"
+			row.lbl_name:SetTextColor(GetARGB(255, 130, 126, 118))
+		elseif is_sel then
+			row.lbl_name:SetTextColor(GetARGB(255, 240, 200, 112))
+		else
+			row.lbl_name:SetTextColor(GetARGB(255, 236, 230, 216))
+		end
+		row.lbl_name:SetText(title)
+
+		if spec.kind == "slider" then
+			local val = tonumber(st[spec.id]) or spec.min
+			row.lbl_val:SetText(tostring(val) .. tostring(spec.unit or ""))
+			if not spec.supported then
+				row.lbl_val:SetTextColor(GetARGB(255, 130, 126, 118))
+				row.btn_minus:Enable(false)
+				row.btn_plus:Enable(false)
+			else
+				row.lbl_val:SetTextColor(GetARGB(255, 240, 200, 112))
+				row.btn_minus:Enable(true)
+				row.btn_plus:Enable(true)
+			end
+			local ratio = clamp((val - spec.min) / math.max(1, (spec.max - spec.min)), 0.0, 1.0)
+			local fill_w = math.max(2, round_int(ratio * 144))
+			if row.bar_fill then
+				row.bar_fill:SetWndSize(vector2():set(fill_w, 8))
+				row.bar_fill:Show(ratio > 0.0)
+			end
+			if row.bar_knob then
+				row.bar_knob:SetWndPos(vector2():set(294 + round_int(ratio * 140), row.y + 5))
+			end
+			local active_bars = round_int(ratio * 10)
+			for b = 1, 10 do
+				row.bar_fills[b]:Show(b <= active_bars)
+				if not spec.supported then
+					row.bar_fills[b]:SetTextureColor(GetARGB(140, 110, 110, 110))
+				else
+					row.bar_fills[b]:SetTextureColor(GetARGB(235, 212, 166, 74))
+				end
+			end
+		else
+			for _, sb in ipairs(row.seg_btns) do
+				local is_on = (st[spec.id] == sb.opt.val)
+				local lbl = tr(sb.opt.label_id)
+				sb.btn:TextControl():SetText(lbl)
+				if is_on then
+					sb.btn:TextControl():SetTextColor(GetARGB(255, 240, 200, 112))
+					if sb.bg then sb.bg:SetTextureColor(GetARGB(235, 76, 58, 28)) end
+					if sb.bar then sb.bar:Show(true) end
+				else
+					sb.btn:TextControl():SetTextColor(GetARGB(255, 165, 158, 146))
+					if sb.bg then sb.bg:SetTextureColor(GetARGB(195, 28, 26, 24)) end
+					if sb.bar then sb.bar:Show(false) end
+				end
+				sb.btn:Enable(spec.supported == true)
+			end
+		end
+	end
+
+	self:UpdateCurvePreview()
+	self:UpdateStickPreview()
+end
+
+function UIGpAimWnd:UpdateCurvePreview()
+	local st = self.state
+	local x0, y0, W, H = 24, 226, 328, 190
+	local dzi = clamp((tonumber(st.dzi) or 15) / 100.0, 0.0, 0.30)
+	local dzo = clamp((tonumber(st.dzo) or 95) / 100.0, 0.70, 1.00)
+
+	local left_w = math.max(2, round_int(dzi * W))
+	self.curve_dz_left:SetWndPos(vector2():set(x0, y0 - H))
+	self.curve_dz_left:SetWndSize(vector2():set(left_w, H))
+	if self.curve_dz_left_line then
+		self.curve_dz_left_line:SetWndPos(vector2():set(x0 + left_w, y0 - H))
+	end
+
+	local right_w = math.max(2, round_int((1.0 - dzo) * W))
+	self.curve_dz_right:SetWndPos(vector2():set(x0 + W - right_w, y0 - H))
+	self.curve_dz_right:SetWndSize(vector2():set(right_w, H))
+	if self.curve_dz_right_line then
+		self.curve_dz_right_line:SetWndPos(vector2():set(x0 + W - right_w, y0 - H))
+	end
+
+	local scale_sx = 0.5 + (clamp(tonumber(st.sx) or 50, 1, 100) / 200.0)
+	local n_pts = #self.curve_pts
+	local denom = math.max(1, n_pts - 1)
+	for i = 0, denom do
+		local t = i / denom
+		local y_norm = eval_response_curve(st, t) * scale_sx
+		local px = x0 + round_int(t * (W - 9))
+		local py = (y0 - 3) - round_int(clamp(y_norm, 0.0, 1.0) * (H - 6))
+		self.curve_pts[i + 1]:SetWndPos(vector2():set(px, py))
+	end
+
+	local rx, ry = sample_live_stick()
+	local raw_mag = clamp(math.sqrt(rx * rx + ry * ry), 0.0, 1.0)
+	if self.curve_live_dot then
+		local live_y = eval_response_curve(st, raw_mag) * scale_sx
+		local lpx = x0 + round_int(raw_mag * (W - 7))
+		local lpy = (y0 - 5) - round_int(clamp(live_y, 0.0, 1.0) * (H - 8))
+		self.curve_live_dot:SetWndPos(vector2():set(lpx, lpy))
+	end
+
+	self.lbl_curve_info:SetText(string.format(
+		tr("ui_gp_aim_info_curve"),
+		tonumber(st.sx) or 55, tonumber(st.sy) or 45, tonumber(st.dzi) or 15, tonumber(st.dzo) or 95
+	))
+end
+
+function UIGpAimWnd:UpdateStickPreview()
+	local st = self.state
+	local cx, cy, Rx, Ry = 188, 128, 68, 90
+	local dzi = clamp((tonumber(st.dzi) or 15) / 100.0, 0.0, 0.30)
+	local dzo = clamp((tonumber(st.dzo) or 95) / 100.0, 0.70, 1.00)
+
+	local sat_rx = math.max(6, round_int(Rx * dzo))
+	local sat_ry = math.max(8, round_int(Ry * dzo))
+	self.stick_sat_box:SetWndPos(vector2():set(cx - sat_rx, cy - sat_ry))
+	self.stick_sat_box:SetWndSize(vector2():set(sat_rx * 2, sat_ry * 2))
+
+	local dz_rx = math.max(3, round_int(Rx * dzi))
+	local dz_ry = math.max(4, round_int(Ry * dzi))
+	self.stick_dz_box:SetWndPos(vector2():set(cx - dz_rx, cy - dz_ry))
+	self.stick_dz_box:SetWndSize(vector2():set(dz_rx * 2, dz_ry * 2))
+	if self.stick_dz_ring then
+		self.stick_dz_ring:SetWndPos(vector2():set(cx - dz_rx, cy - dz_ry))
+		self.stick_dz_ring:SetWndSize(vector2():set(dz_rx * 2, dz_ry * 2))
+	end
+
+	local rx, ry = sample_live_stick()
+	self.live_rx, self.live_ry = rx, ry
+	local out_x, out_y, raw_mag, out_mag = eval_stick_preview(st, rx, ry)
+
+	self.stick_dot_raw:SetWndPos(vector2():set(cx + round_int(rx * Rx) - 3, cy - round_int(ry * Ry) - 4))
+	self.stick_dot_proc:SetWndPos(vector2():set(cx + round_int(out_x * Rx) - 4, cy - round_int(out_y * Ry) - 6))
+
+	self.lbl_stick_info:SetText(string.format(
+		tr("ui_gp_aim_info_stick"),
+		round_int(raw_mag * 100), round_int(out_mag * 100)
+	))
+end
+
+function UIGpAimWnd:Update()
+	CUIScriptWnd.Update(self)
+	self:UpdateStickPreview()
+end
+
+function UIGpAimWnd:MoveSelection(delta)
+	local count = #self.rows
+	if count == 0 then return end
+	self.selected_idx = ((self.selected_idx - 1 + delta) % count) + 1
+	self:RefreshUI()
+end
+
+function UIGpAimWnd:StepSelected(dir)
+	local row = self.rows[self.selected_idx]
+	if not row then return false end
+	local ok = adjust_param(self.state, row.spec.id, dir)
+	self:RefreshUI()
+	return ok
+end
+
+function UIGpAimWnd:OnResetClicked()
+	self.state = get_default_aim_state()
+	apply_all_to_engine(self.state)
+	self:RefreshUI()
+end
+
+function UIGpAimWnd:OnTabWorld()
+	if _G.ui_gp_controls and type(_G.ui_gp_controls.open_tab) == "function" then
+		self:Close()
+		_G.ui_gp_controls.open_tab("world")
+	elseif _G.ui_gp_controls and type(_G.ui_gp_controls.open) == "function" then
+		self:Close()
+		_G.ui_gp_controls.open("world")
+	end
+end
+
+function UIGpAimWnd:OnTabMenu()
+	if _G.ui_gp_controls and type(_G.ui_gp_controls.open_tab) == "function" then
+		self:Close()
+		_G.ui_gp_controls.open_tab("menu")
+	elseif _G.ui_gp_controls and type(_G.ui_gp_controls.open) == "function" then
+		self:Close()
+		_G.ui_gp_controls.open("menu")
+	end
+end
+
+function UIGpAimWnd:OnTabAim()
+	self:RefreshUI()
+end
+
+function UIGpAimWnd:OnCloseClicked()
+	self:Close()
+end
+
+function UIGpAimWnd:Open()
+	self.state = load_aim_state_from_engine()
+	self:RefreshUI()
+	if game and type(game.acquire_pause_token) == "function" and self.pause_token_id == 0 then
+		local ok, tok = pcall(game.acquire_pause_token, "ui_gp_aim")
+		if ok and type(tok) == "number" then
+			self.pause_token_id = tok
+		end
+	end
+	self:ShowDialog(true)
+	if _G.gp_bridge and type(_G.gp_bridge.sync_context_hints) == "function" then
+		pcall(_G.gp_bridge.sync_context_hints, true)
+	end
+end
+
+function UIGpAimWnd:Close()
+	if self:IsShown() then
+		self:HideDialog()
+	end
+	if self.pause_token_id ~= 0 and game and type(game.release_pause_token) == "function" then
+		pcall(game.release_pause_token, self.pause_token_id)
+		self.pause_token_id = 0
+	end
+	if game and type(game.consume_all_gamepad_buttons) == "function" then
+		pcall(game.consume_all_gamepad_buttons)
+	end
+	if _G.gp_bridge and type(_G.gp_bridge.sync_context_hints) == "function" then
+		pcall(_G.gp_bridge.sync_context_hints, true)
+	end
+end
+
+function UIGpAimWnd:OnKeyboard(dik, keyboard_action)
+	local res = CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+	if keyboard_action ~= ui_events.WINDOW_KEY_PRESSED then
+		return res
+	end
+	if type(dik) ~= "number" or not DIK_keys then
+		return res
+	end
+
+	local k_esc   = DIK_keys.DIK_ESCAPE or 1
+	local k_back  = DIK_keys.DIK_BACK or 14
+	local k_q     = DIK_keys.DIK_Q or 16
+	local k_w     = DIK_keys.DIK_W or 17
+	local k_e     = DIK_keys.DIK_E or 18
+	local k_r     = DIK_keys.DIK_R or 19
+	local k_y     = DIK_keys.DIK_Y or 21
+	local k_ret   = DIK_keys.DIK_RETURN or 28
+	local k_a     = DIK_keys.DIK_A or 30
+	local k_s     = DIK_keys.DIK_S or 31
+	local k_d     = DIK_keys.DIK_D or 32
+	local k_space = DIK_keys.DIK_SPACE or 57
+	local k_up    = DIK_keys.DIK_UP or 200
+	local k_left  = DIK_keys.DIK_LEFT or 203
+	local k_right = DIK_keys.DIK_RIGHT or 205
+	local k_down  = DIK_keys.DIK_DOWN or 208
+
+	if dik == k_esc or dik == k_back then
+		self:OnCloseClicked()
+		return true
+	elseif dik == k_up or dik == k_w then
+		self:MoveSelection(-1)
+		return true
+	elseif dik == k_down or dik == k_s then
+		self:MoveSelection(1)
+		return true
+	elseif dik == k_left or dik == k_a then
+		self:StepSelected(-1)
+		return true
+	elseif dik == k_right or dik == k_d or dik == k_ret or dik == k_space then
+		self:StepSelected(1)
+		return true
+	elseif dik == k_y or dik == k_r then
+		self:OnResetClicked()
+		return true
+	elseif dik == k_q then
+		self:OnTabMenu()
+		return true
+	elseif dik == k_e then
+		self:OnTabWorld()
+		return true
+	end
+	return res
+end
+
+--------------------------------------------------------------------------------
+-- Публичное API модуля ui_gp_aim (для вызова из ui_gp_controls / настроек / тестов)
+--------------------------------------------------------------------------------
+function get_gui()
+	if not AIM_GUI then
+		AIM_GUI = UIGpAimWnd()
+	end
+	return AIM_GUI
+end
+
+function open(parent_controls_wnd)
+	local gui = get_gui()
+	gui.parent_controls_wnd = parent_controls_wnd
+	gui:Open()
+	return gui
+end
+
+function close()
+	if AIM_GUI then
+		AIM_GUI:Close()
+		return true
+	end
+	return false
+end
+
+function is_open()
+	return AIM_GUI ~= nil and AIM_GUI:IsShown() == true
+end
+
+function on_gamepad_button(btn_name)
+	if not is_open() then return false end
+	local b = string.upper(tostring(btn_name or ""))
+	if b == "B" or b == "EAST" then
+		AIM_GUI:OnCloseClicked()
+		return true
+	elseif b == "Y" or b == "NORTH" then
+		AIM_GUI:OnResetClicked()
+		return true
+	elseif b == "LB" or b == "LSHOULDER" then
+		AIM_GUI:OnTabMenu()
+		return true
+	elseif b == "RB" or b == "RSHOULDER" then
+		AIM_GUI:OnTabWorld()
+		return true
+	elseif b == "DPAD_UP" or b == "UP" then
+		AIM_GUI:MoveSelection(-1)
+		return true
+	elseif b == "DPAD_DOWN" or b == "DOWN" then
+		AIM_GUI:MoveSelection(1)
+		return true
+	elseif b == "DPAD_LEFT" or b == "LEFT" then
+		AIM_GUI:StepSelected(-1)
+		return true
+	elseif b == "DPAD_RIGHT" or b == "RIGHT" or b == "A" or b == "SOUTH" then
+		AIM_GUI:StepSelected(1)
+		return true
+	end
+	return false
+end
+
+function selftest()
+	local def = get_default_aim_state()
+	assert(def.dzi == 15 and def.dzo == 95 and def.curve == "lin" and def.assist == "mid", "default state check")
+	assert(def.ads == 70 and def.acc == 30 and def.scope == true, "k6b default state check")
+	assert(math.abs(eval_response_curve(def, 0.10) - 0.0) < 1e-6, "deadzone curve 0")
+	assert(math.abs(eval_response_curve(def, 0.98) - 1.0) < 1e-6, "saturation curve 1")
+	local mid_lin = eval_response_curve(def, 0.55)
+	def.curve = "exp"
+	local mid_exp = eval_response_curve(def, 0.55)
+	assert(mid_exp < mid_lin and mid_exp > 0, "exp curve below linear at mid")
+	def.curve = "s"
+	local mid_s = eval_response_curve(def, 0.55)
+	assert(mid_s > 0 and mid_s < 1, "s-curve valid")
+	local ok_ads = adjust_param(def, "ads", 1)
+	local ok_acc = adjust_param(def, "acc", 1)
+	local ok_scp = adjust_param(def, "scope", 1)
+	assert(ok_ads and def.ads == 75 and ok_acc and def.acc == 35 and ok_scp and def.scope == false, "k6b params active")
+	return true
+end
+
+function on_game_start()
+	-- Модуль открывается по требованию через ui_gp_aim.open() или вкладку «Прицеливание» в ui_gp_controls
+end

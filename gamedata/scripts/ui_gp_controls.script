@@ -1,0 +1,2453 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- K5a + K5b (D61): Экран «Управление» — схема геймпада, 18 выносок с действиями, вкладки контекстов,
+-- чтение и запись профиля (appdata\gamepad\profile.ltx), интерактивное переназначение кнопок
+-- (нажать / удерживать / сочетание), перестановка при конфликте, мигание подписей, сброс с подтверждением,
+-- запреты (стики движения/обзора, Пауза, Назад), навигация геймпадом и дампер вёрстки F2.2 на 4 разрешениях.
+-- Макет: docs/ui/mockups/controller-remap-xbox.html.
+-- Свои файлы K5a/K5b: ui_gp_controls.script, configs\ui\ui_gp_controls.xml.
+local singleton_wnd = nil
+local custom_profile_path = nil
+-- 1. Константы вкладок, порогов захвата и слотов (строго по макету controller-remap-xbox.html:116-121)
+local TAB_IDS = { "world", "menu", "aim" }
+local CONTEXT_TO_SECTION = {
+    world = "context_World_Gameplay",
+    menu  = "context_MenuUI",
+}
+local CONTEXT_TO_ENGINE_NAME = {
+    world = "World_Gameplay",
+    menu  = "MenuUI",
+}
+local LOCKED_SLOTS = {
+    LS = true,
+    RS = true,
+}
+-- Порог распознавания удержания в режиме «нажмите кнопку» (K5b п.1) и длительность мигания подписей (K5b п.1, 2)
+local CAPTURE_HOLD_THRESHOLD_MS = 300
+local CAPTURE_TIMEOUT_MS        = 8000
+local FLASH_DURATION_MS         = 1200
+local FLASH_BLINK_PERIOD_MS     = 200
+local DEFAULT_ACTION_HOLD_MS = {
+    WeaponWheel       = 220,
+    Freelook          = 250,
+    LowCrouch         = 300,
+    AmmoCheck         = 300,
+    NightVision       = 300,
+    FireModeNext      = 300,
+    AmmoTypeNext      = 300,
+    UnderbarrelToggle = 300,
+    KnifeDraw         = 300,
+    WeaponSelect      = 300,
+    AmmoWheel         = 300,
+    BoltThrow         = 300,
+    PdaFlat           = 300,
+    MouseCursor       = 300,
+}
+-- Обратная карта слота в каноническое имя кнопки C++ D4.1 (GamepadBindings.cpp:1594-1617)
+local SLOT_TO_ENGINE_BUTTON = {
+    A    = "A",
+    B    = "B",
+    X    = "X",
+    Y    = "Y",
+    View = "Back",
+    Menu = "Start",
+    L3   = "L3",
+    R3   = "R3",
+    LB   = "LB",
+    RB   = "RB",
+    LT   = "LT",
+    RT   = "RT",
+    DU   = "DPadUp",
+    DD   = "DPadDown",
+    DL   = "DPadLeft",
+    DR   = "DPadRight",
+}
+-- 18 слотов кнопок: 9 слева (L, row 1..9) и 9 справа (R, row 1..9).
+-- Координаты якорей (ax, ay) заданы относительно рамки окна background (960x728),
+-- где схема геймпада расположена в центре (pad_area: x=310..650, y=54..600, центр геймпада cx=480, cy=320).
+local SLOTS = {
+    -- Левая колонка (9 слотов; координаты ax, ay синхронизированы с configs\ui\textures_descr\ui_gp_pads.xml win_960x728)
+    { id = "LT",   side = "L", row = 1, ax = 403, ay = 224, locked = false },
+    { id = "LB",   side = "L", row = 2, ax = 420, ay = 229, locked = false },
+    { id = "View", side = "L", row = 3, ax = 462, ay = 273, locked = false },
+    { id = "LS",   side = "L", row = 4, ax = 415, ay = 274, locked = true  },
+    { id = "L3",   side = "L", row = 5, ax = 415, ay = 283, locked = false },
+    { id = "DU",   side = "L", row = 6, ax = 447, ay = 308, locked = false },
+    { id = "DL",   side = "L", row = 7, ax = 432, ay = 322, locked = false },
+    { id = "DR",   side = "L", row = 8, ax = 461, ay = 322, locked = false },
+    { id = "DD",   side = "L", row = 9, ax = 447, ay = 337, locked = false },
+    -- Правая колонка (9 слотов; координаты ax, ay синхронизированы с configs\ui\textures_descr\ui_gp_pads.xml win_960x728)
+    { id = "RT",   side = "R", row = 1, ax = 558, ay = 224, locked = false },
+    { id = "RB",   side = "R", row = 2, ax = 542, ay = 229, locked = false },
+    { id = "Menu", side = "R", row = 3, ax = 500, ay = 274, locked = false },
+    { id = "Y",    side = "R", row = 4, ax = 548, ay = 256, locked = false },
+    { id = "B",    side = "R", row = 5, ax = 566, ay = 274, locked = false },
+    { id = "X",    side = "R", row = 6, ax = 529, ay = 274, locked = false },
+    { id = "A",    side = "R", row = 7, ax = 548, ay = 292, locked = false },
+    { id = "RS",   side = "R", row = 8, ax = 513, ay = 324, locked = true  },
+    { id = "R3",   side = "R", row = 9, ax = 513, ay = 334, locked = false },
+}
+local SLOT_BY_ID = {}
+for idx, s in ipairs(SLOTS) do
+    s.index = idx
+    SLOT_BY_ID[s.id] = s
+end
+-- Таблица локализационных ключей и русскоязычных игровых подписей по макету (D61, правило 0)
+-- Все ключи также продублированы в configs\text\rus\ui_st_gamepad.xml и eng\ui_st_gamepad.xml
+local ST_FALLBACKS = {
+    ui_gp_ctrl_title            = "CONTROLS",
+    ui_gp_ctrl_tab_world        = "World",
+    ui_gp_ctrl_tab_menu         = "Inventory & Menus",
+    ui_gp_ctrl_tab_aim          = "Aiming",
+    ui_gp_ctrl_btn_wish         = "Wheel on Y",
+    ui_gp_ctrl_btn_reset        = "[Y] Reset",
+    ui_gp_ctrl_btn_close        = "[B] Close",
+    ui_gp_ctrl_hold_prefix      = "[Hold] ",
+    ui_gp_ctrl_locked_suffix    = " · locked",
+    ui_gp_ctrl_unbound          = "Not assigned",
+    ui_gp_ctrl_footer_hint      = "A - Remap  ·  X - Tap/Hold  ·  Y - Reset  ·  LB/RB - Tab  ·  B - Close",
+    ui_gp_ctrl_capture_prompt   = "Press a button (tap - press, hold - hold, 2 buttons - chord; B - cancel)",
+    ui_gp_ctrl_capture_slot     = "Press a button...",
+    ui_gp_ctrl_reset_confirm    = "Reset this tab to default bindings?  [A] Yes   [B] Cancel",
+    ui_gp_ctrl_reset_done       = "Default bindings for this tab restored",
+    ui_gp_ctrl_err_locked       = "Movement and Look sticks cannot be remapped",
+    ui_gp_ctrl_err_pause        = "Cannot leave controls without a Pause button",
+    ui_gp_ctrl_err_back         = "Cannot leave menu without a Back button",
+    ui_gp_ctrl_pad_xbox         = "Controller Layout: Xbox Series",
+    ui_gp_ctrl_pad_playstation  = "Controller Layout: DualSense / PlayStation",
+    ui_gp_ctrl_pad_generic      = "Controller Layout: Standard (Generic)",
+    ui_gp_ctrl_pad_nintendo     = "Controller Layout: Nintendo Switch",
+    -- Имена кнопок по семействам (Xbox / PlayStation / Generic)
+    ui_gp_btn_name_xbox_LT      = "LT",
+    ui_gp_btn_name_xbox_LB      = "LB",
+    ui_gp_btn_name_xbox_View    = "View",
+    ui_gp_btn_name_xbox_LS      = "Left Stick",
+    ui_gp_btn_name_xbox_L3      = "L3 (Click)",
+    ui_gp_btn_name_xbox_DU      = "D-Pad Up",
+    ui_gp_btn_name_xbox_DL      = "D-Pad Left",
+    ui_gp_btn_name_xbox_DR      = "D-Pad Right",
+    ui_gp_btn_name_xbox_DD      = "D-Pad Down",
+    ui_gp_btn_name_xbox_RT      = "RT",
+    ui_gp_btn_name_xbox_RB      = "RB",
+    ui_gp_btn_name_xbox_Menu    = "Menu",
+    ui_gp_btn_name_xbox_Y       = "Y",
+    ui_gp_btn_name_xbox_B       = "B",
+    ui_gp_btn_name_xbox_X       = "X",
+    ui_gp_btn_name_xbox_A       = "A",
+    ui_gp_btn_name_xbox_RS      = "Right Stick",
+    ui_gp_btn_name_xbox_R3      = "R3 (Click)",
+    ui_gp_btn_name_ps_LT        = "L2",
+    ui_gp_btn_name_ps_LB        = "L1",
+    ui_gp_btn_name_ps_View      = "Share",
+    ui_gp_btn_name_ps_LS        = "Left Stick",
+    ui_gp_btn_name_ps_L3        = "L3 (Click)",
+    ui_gp_btn_name_ps_DU        = "D-Pad Up",
+    ui_gp_btn_name_ps_DL        = "D-Pad Left",
+    ui_gp_btn_name_ps_DR        = "D-Pad Right",
+    ui_gp_btn_name_ps_DD        = "D-Pad Down",
+    ui_gp_btn_name_ps_RT        = "R2",
+    ui_gp_btn_name_ps_RB        = "R1",
+    ui_gp_btn_name_ps_Menu      = "Options",
+    ui_gp_btn_name_ps_Y        = "Triangle",
+    ui_gp_btn_name_ps_B        = "Circle",
+    ui_gp_btn_name_ps_X        = "Square",
+    ui_gp_btn_name_ps_A        = "Cross",
+    ui_gp_btn_name_ps_RS        = "Right Stick",
+    ui_gp_btn_name_ps_R3        = "R3 (Click)",
+    ui_gp_btn_name_gen_LT       = "LT / B7",
+    ui_gp_btn_name_gen_LB       = "LB / B5",
+    ui_gp_btn_name_gen_View     = "Back / Select",
+    ui_gp_btn_name_gen_LS       = "Left Stick",
+    ui_gp_btn_name_gen_L3       = "L3 (Click)",
+    ui_gp_btn_name_gen_DU       = "D-Pad Up",
+    ui_gp_btn_name_gen_DL       = "D-Pad Left",
+    ui_gp_btn_name_gen_DR       = "D-Pad Right",
+    ui_gp_btn_name_gen_DD       = "D-Pad Down",
+    ui_gp_btn_name_gen_RT       = "RT / B8",
+    ui_gp_btn_name_gen_RB       = "RB / B6",
+    ui_gp_btn_name_gen_Menu     = "Start",
+    ui_gp_btn_name_gen_Y        = "B4 (Top)",
+    ui_gp_btn_name_gen_B        = "B2 (Right)",
+    ui_gp_btn_name_gen_X        = "B3 (Left)",
+    ui_gp_btn_name_gen_A        = "B1 (Bottom)",
+    ui_gp_btn_name_gen_RS       = "Right Stick",
+    ui_gp_btn_name_gen_R3       = "R3 (Click)",
+    -- Nintendo (Switch): раскладка BAYX — юг=B, восток=A, запад=Y, север=X
+    ui_gp_btn_name_nin_LT       = "ZL",
+    ui_gp_btn_name_nin_LB       = "L",
+    ui_gp_btn_name_nin_View     = "Minus",
+    ui_gp_btn_name_nin_LS       = "Left Stick",
+    ui_gp_btn_name_nin_L3       = "L3 (Click)",
+    ui_gp_btn_name_nin_DU       = "D-Pad Up",
+    ui_gp_btn_name_nin_DL       = "D-Pad Left",
+    ui_gp_btn_name_nin_DR       = "D-Pad Right",
+    ui_gp_btn_name_nin_DD       = "D-Pad Down",
+    ui_gp_btn_name_nin_RT       = "ZR",
+    ui_gp_btn_name_nin_RB       = "R",
+    ui_gp_btn_name_nin_Menu     = "Plus",
+    ui_gp_btn_name_nin_Y        = "Y",
+    ui_gp_btn_name_nin_B        = "A",
+    ui_gp_btn_name_nin_X        = "X",
+    ui_gp_btn_name_nin_A        = "B",
+    ui_gp_btn_name_nin_RS       = "Right Stick",
+    ui_gp_btn_name_nin_R3       = "R3 (Click)",
+    -- Названия действий в мире (игровыми словами по макету controller-remap-xbox.html:74-81)
+    ui_gp_act_Jump              = "Jump",
+    ui_gp_act_Crouch            = "Crouch",
+    ui_gp_act_LowCrouch         = "Low Crouch",
+    ui_gp_act_Sprint            = "Sprint",
+    ui_gp_act_MeleeQuick        = "Quick Melee",
+    ui_gp_act_Freelook          = "Freelook",
+    ui_gp_act_Fire              = "Fire",
+    ui_gp_act_Aim               = "Aim",
+    ui_gp_act_ContextUseReload  = "Use / Reload",
+    ui_gp_act_AmmoCheck         = "Check Magazine",
+    ui_gp_act_FastReload        = "Quick Reload",
+    ui_gp_act_NextWeapon        = "Next Weapon",
+    ui_gp_act_WeaponWheel       = "Weapon Wheel",
+    ui_gp_act_GrenadeQuick      = "Quick Grenade",
+    ui_gp_act_QuickBoltOrSlot   = "Quick Slot / Bolt",
+    ui_gp_act_LeanLeft          = "Lean Left",
+    ui_gp_act_LeanRight         = "Lean Right",
+    ui_gp_act_TorchToggle       = "Headlamp",
+    ui_gp_act_NightVision       = "Night Vision",
+    ui_gp_act_DetectorToggle    = "Detector",
+    ui_gp_act_FireModeNext      = "Fire Mode",
+    ui_gp_act_Pda3DToggle       = "3D PDA",
+    ui_gp_act_AmmoTypeNext      = "Next Ammo Type",
+    ui_gp_act_AmmoWheel         = "Ammo Wheel",
+    ui_gp_act_MaskClean         = "Wipe Mask",
+    ui_gp_act_UnderbarrelToggle = "Underbarrel",
+    ui_gp_act_PauseMenu         = "Pause Menu",
+    ui_gp_act_PdaFullToggle     = "Inventory Menu",
+    ui_gp_act_KnifeDraw         = "Draw Knife / Binoculars",
+    ui_gp_act_WeaponLower       = "Lower Weapon",
+    ui_gp_act_PdaFlat           = "PDA",
+    ui_gp_act_BoltThrow         = "Болт",
+    ui_gp_act_WeaponSelect      = "Выбор ствола",
+    ui_gp_act_ForceReload       = "Перезарядка (принудительно)",
+    ui_gp_act_TutorialPrompt    = "Учебник",
+    ui_gp_act_MoveStick         = "Движение",
+    ui_gp_act_LookStick         = "Look Stick",
+    -- Названия действий в инвентаре, диалогах, колесе, КПК и меню (полная синхронизация с GamepadBindings.cpp)
+    ui_gp_act_Confirm           = "Select / Drag",
+    ui_gp_act_Back              = "Back / Close",
+    ui_gp_act_ContextMenu       = "Context Menu",
+    ui_gp_act_QuickAction       = "Quick Action",
+    ui_gp_act_TabPrev           = "LB Combos",
+    ui_gp_act_TabNext           = "Medical Filter",
+    ui_gp_act_PagePrev          = "Previous Category",
+    ui_gp_act_PageNext          = "Next Category",
+    ui_gp_act_PanelSwitch       = "Bag / Equipment",
+    ui_gp_act_SwitchPanel       = "Bag / Equipment",
+    ui_gp_act_CancelQueue       = "Remove Last Queued",
+    ui_gp_act_MouseCursor       = "Mouse Cursor",
+    ui_gp_act_CursorStick       = "Cursor Stick",
+    ui_gp_act_ScrollStick       = "List Scrolling",
+    ui_gp_act_NavigateCells     = "Navigate Cells",
+    ui_gp_act_Menu              = "-",
+    ui_gp_act_MoveStack         = "Move Stack",
+    ui_gp_act_InspectItem       = "Inspect Item",
+    ui_gp_act_QuickSlotAssign   = "Assign to F1-F4",
+    ui_gp_act_DialogSelect      = "Select Line",
+    ui_gp_act_DialogExit        = "Exit Dialog",
+    ui_gp_act_WheelConfirm      = "Confirm in Wheel",
+    ui_gp_act_WheelCancel       = "Close Wheel",
+    ui_gp_act_WheelTabPrev      = "Prev Wheel Tab",
+    ui_gp_act_WheelTabNext      = "Next Wheel Tab",
+    ui_gp_act_WheelMaskClean    = "Wipe Mask (wheel shortcut)",
+    ui_gp_act_WheelLaser        = "Laser (wheel shortcut)",
+    ui_gp_act_PdaInteractiveToggle = "PDA Cursor",
+    ui_gp_act_PdaClose          = "Close PDA",
+    ui_gp_act_PlacementConfirm  = "Place Item",
+    ui_gp_act_PlacementCancel   = "Cancel Placement",
+    ui_gp_act_PlacementRotate   = "Rotate Item",
+    ui_gp_chord_lb_dpad         = "LB + D-Pad",
+}
+
+-- Суффиксы глифов кнопок в configs\ui\textures_descr\ui_gamepad_glyphs.xml для каждого слота
+local SLOT_TO_GLYPH_SUFFIX = {
+    LT   = "ltrigger",
+    LB   = "lshoulder",
+    View = "back",
+    LS   = "ls",
+    L3   = "lstick",
+    DU   = "dpup",
+    DL   = "dpleft",
+    DR   = "dpright",
+    DD   = "dpdown",
+    RT   = "rtrigger",
+    RB   = "rshoulder",
+    Menu = "start",
+    Y    = "north",
+    B    = "east",
+    X    = "west",
+    A    = "south",
+    RS   = "rs",
+    R3   = "rstick",
+}
+-- Канонические привязки модели D4.1 (GamepadBindings.cpp:157-201) для построения стартового состояния
+-- до наложения пользовательских переопределений из appdata\gamepad\profile.ltx
+local DEFAULT_MODEL_BINDINGS = {
+    world = {
+        { action = "Jump",              spec = "button:A" },
+        { action = "Crouch",            spec = "button:B" },
+        { action = "LowCrouch",         spec = "hold:B:300" },
+        { action = "Sprint",            spec = "button:L3" },
+        { action = "MeleeQuick",        spec = "button:RB" },
+        { action = "KnifeDraw",         spec = "hold:RB:300" },
+        { action = "WeaponLower",       spec = "button:R3" },
+        { action = "Freelook",          spec = "chord:LB+B" },
+        { action = "Fire",              spec = "button:RT" },
+        { action = "Aim",               spec = "button:LT" },
+        { action = "ContextUseReload",  spec = "button:X" },
+        { action = "AmmoCheck",         spec = "hold:X:300" },
+        { action = "ForceReload",       spec = "chord:LT+X" },
+        { action = "FastReload",        spec = "unbound" },
+        { action = "NextWeapon",        spec = "button:Y" },
+        { action = "QuickBoltOrSlot",   spec = "button:LB" },
+        { action = "WeaponWheel",       spec = "hold:LB:250" },
+        { action = "GrenadeQuick",      spec = "chord:LB+Y" },
+        { action = "LeanLeft",          spec = "chord:LT+LB" },
+        { action = "LeanRight",         spec = "chord:LT+RB" },
+        { action = "TorchToggle",       spec = "button:DPadUp" },
+        { action = "NightVision",       spec = "hold:DPadUp:300" },
+        { action = "DetectorToggle",    spec = "button:DPadLeft" },
+        { action = "BoltThrow",         spec = "hold:DPadLeft:300" },
+        { action = "FireModeNext",      spec = "button:DPadRight" },
+        { action = "UnderbarrelToggle", spec = "hold:DPadRight:300" },
+        { action = "AmmoTypeNext",      spec = "button:DPadDown" },
+        { action = "AmmoWheel",         spec = "hold:DPadDown:300" },
+        { action = "Pda3DToggle",       spec = "unbound" },
+        { action = "MaskClean",         spec = "unbound" },
+        { action = "PauseMenu",         spec = "button:Start" },
+        { action = "PdaFullToggle",     spec = "button:Back" },
+        { action = "PdaFlat",           spec = "hold:Back:300" },
+        { action = "TutorialPrompt",    spec = "chord:LB+Back" },
+        { action = "WheelMaskClean",    spec = "chord:LB+R3" },
+        { action = "WheelLaser",        spec = "chord:LB+DPadRight" },
+    },
+    menu = {
+        { action = "Menu",              spec = "button:Start" },
+        { action = "Confirm",           spec = "button:A" },
+        { action = "Back",              spec = "button:B" },
+        { action = "ContextMenu",       spec = "button:X" },
+        { action = "QuickAction",       spec = "button:Y" },
+        { action = "TabPrev",           spec = "button:LB" },
+        { action = "TabNext",           spec = "button:RB" },
+        { action = "PagePrev",          spec = "button:LT" },
+        { action = "PageNext",          spec = "button:RT" },
+        { action = "PanelSwitch",       spec = "button:Back" },
+        { action = "CancelQueue",       spec = "button:L3" },
+        { action = "MouseCursor",       spec = "button:R3" },
+    },
+}
+-- Встроенные сочетания для вкладки «Инвентарь и меню» (макет controller-remap-xbox.html:81)
+local MENU_BUILTIN_CHORDS = {
+    { mod = "LB", btn = "Y",    action = "MoveStack" },
+    { mod = "LB", btn = "X",    action = "MoveStack" },
+    { mod = "LB", btn = "A",    action = "InspectItem" },
+    { mod = "LB", btn = "DPad", action = "QuickSlotAssign", raw_chord_key = "ui_gp_chord_lb_dpad" },
+}
+-- ---------------------------------------------------------------------------
+-- 2. Вспомогательные функции локализации, глифов и парсера профиля D4.1
+-- ---------------------------------------------------------------------------
+local function trim_str(s)
+    if type(s) ~= "string" then
+        return ""
+    end
+    return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+local function now_ms()
+    if _G.game and type(_G.game.get_time_continual) == "function" then
+        local ok, t = pcall(_G.game.get_time_continual)
+        if ok and type(t) == "number" then
+            return t
+        end
+    end
+    if type(_G.time_global) == "function" then
+        local ok, t = pcall(_G.time_global)
+        if ok and type(t) == "number" then
+            return t
+        end
+    end
+    return 0
+end
+function tr(str_id)
+    local key = tostring(str_id or "")
+    if key == "" then
+        return ""
+    end
+    if _G.game and type(_G.game.translate_string) == "function" then
+        local ok, res = pcall(_G.game.translate_string, key)
+        if ok and type(res) == "string" and res ~= "" and res ~= key then
+            return res
+        end
+    end
+    return ST_FALLBACKS[key] or key
+end
+function resolve_pad_family(override_hint)
+    local raw = override_hint
+    if (type(raw) ~= "string" or raw == "" or raw == "auto") and _G.gp_bridge and type(_G.gp_bridge.get_glyph_override) == "function" then
+        local ok, ov = pcall(_G.gp_bridge.get_glyph_override)
+        if ok and type(ov) == "string" and ov ~= "" and ov ~= "auto" then
+            raw = ov
+        end
+    end
+    if type(raw) ~= "string" or raw == "" or raw == "auto" then
+        if _G.game and type(_G.game.get_gamepad_glyph_set) == "function" then
+            local ok, eff = pcall(_G.game.get_gamepad_glyph_set)
+            if ok and type(eff) == "string" and eff ~= "" and eff ~= "auto" then
+                raw = eff
+            end
+        end
+    end
+    local low = string.lower(trim_str(tostring(raw or "xbox")))
+    if low == "playstation" or low == "ps" or low == "ps4" or low == "ps5" or low == "dualsense" or low == "dualshock" or low == "sony" then
+        return "playstation"
+    elseif low == "nintendo" or low == "switch" or low == "nx" or low == "bayx" then
+        return "nintendo"
+    elseif low == "generic" or low == "dinput" or low == "directinput" or low == "numbered" then
+        return "generic"
+    end
+    return "xbox"
+end
+
+local function icon_state_info()
+    local ic = _G.gp_icons
+    local style = (ic and ic.get_icon_style) and ic.get_icon_style() or "white"
+    local sk = (ic and ic.scale_k) and ic.scale_k() or 1.0
+    local vis = (not ic or not ic.hints_visible) or ic.hints_visible("menu")
+    local rev = (ic and ic.revision) and ic.revision() or 0
+    return ic, style, sk, vis, rev
+end
+
+local function dm_glyph_prefix(set_code)
+    local ic, style = icon_state_info()
+    if ic and ic.tex then
+        return "ui_gp_" .. style .. "_" .. set_code .. "_"
+    end
+    return "ui_gp_" .. set_code .. "_"
+end
+
+local function slot_glyph_tex(slot_id, fam)
+    local suffix = SLOT_TO_GLYPH_SUFFIX[slot_id] or "south"
+    local ic = _G.gp_icons
+    if ic and ic.tex then
+        return ic.tex(suffix, "round", fam)
+    end
+    local spec = get_pad_image_spec(fam)
+    return (spec.glyph_prefix or "ui_gp_xbox_") .. suffix
+end
+
+local function fit_slot_icon_glyph(wnd, rx_rel, ry_rel, slot_id, fam)
+    if not (wnd and vector2) then return end
+    local suffix = SLOT_TO_GLYPH_SUFFIX[slot_id] or "south"
+    local ic, _, sk = icon_state_info()
+    local tw, th = 28, 28
+    if ic and ic.dims then
+        local _, _, dw, dh = ic.dims(suffix, "round", fam)
+        if dw and dh and dh > 0 then tw, th = dw, dh end
+    end
+    local dev = device and device()
+    local dev_aspect = ((dev and dev.height or 1080) / math.max(1, dev and dev.width or 1920)) * (1024 / 768)
+    local iw = tw * dev_aspect * sk
+    local ih = th * sk
+    local max_w, max_h = 27, 38
+    if iw > max_w then
+        local f = max_w / iw
+        iw, ih = max_w, ih * f
+    end
+    if ih > max_h then
+        local f = max_h / ih
+        ih, iw = max_h, iw * f
+    end
+    wnd:SetWndPos(vector2():set(rx_rel + 18.5 - iw * 0.5, ry_rel + 27 - ih * 0.5))
+    wnd:SetWndSize(vector2():set(iw, ih))
+end
+
+function get_pad_image_spec(family_or_hint)
+    local fam = resolve_pad_family(family_or_hint)
+    if fam == "playstation" then
+        return {
+            family = "playstation",
+            texture = "ui_gp_pad_ps",
+            fallback_texture = "ui_inGame2_hint_wnd_main_window",
+            title = tr("ui_gp_ctrl_pad_playstation"),
+            glyph_prefix = dm_glyph_prefix("ps"),
+        }
+    elseif fam == "nintendo" then
+        -- Схемы корпуса Nintendo в проекте нет (ui_gp_pad_nintendo.dds отсутствует),
+        -- поэтому рисуем Xbox-схему: раскладка слотов экрана от Xbox, меняются только глифы.
+        return {
+            family = "nintendo",
+            texture = "ui_gp_pad_xbox",
+            fallback_texture = "ui_inGame2_hint_wnd_main_window",
+            title = tr("ui_gp_ctrl_pad_nintendo"),
+            glyph_prefix = dm_glyph_prefix("nintendo"),
+        }
+    elseif fam == "generic" then
+        return {
+            family = "generic",
+            texture = "ui_gp_pad_generic",
+            fallback_texture = "ui_inGame2_hint_wnd_main_window",
+            title = tr("ui_gp_ctrl_pad_generic"),
+            glyph_prefix = dm_glyph_prefix("generic"),
+        }
+    end
+    return {
+        family = "xbox",
+        texture = "ui_gp_pad_xbox",
+        fallback_texture = "ui_inGame2_hint_wnd_main_window",
+        title = tr("ui_gp_ctrl_pad_xbox"),
+        glyph_prefix = dm_glyph_prefix("xbox"),
+    }
+end
+function normalize_button_id(raw_btn)
+    local s = string.lower(trim_str(tostring(raw_btn or "")))
+    if s == "a" or s == "south" or s == "cross" then return "A" end
+    if s == "b" or s == "east" or s == "circle" then return "B" end
+    if s == "x" or s == "west" or s == "square" then return "X" end
+    if s == "y" or s == "north" or s == "triangle" then return "Y" end
+    if s == "back" or s == "view" or s == "select" or s == "share" then return "View" end
+    if s == "start" or s == "menu" or s == "options" then return "Menu" end
+    if s == "l3" or s == "leftstick" then return "L3" end
+    if s == "r3" or s == "rightstick" then return "R3" end
+    if s == "ls" or s == "left_stick_move" or s == "movestick" then return "LS" end
+    if s == "rs" or s == "right_stick_look" or s == "lookstick" then return "RS" end
+    if s == "lb" or s == "l1" or s == "leftshoulder" or s == "lshoulder" then return "LB" end
+    if s == "rb" or s == "r1" or s == "rightshoulder" or s == "rshoulder" then return "RB" end
+    if s == "lt" or s == "l2" or s == "lefttrigger" or s == "ltrigger" then return "LT" end
+    if s == "rt" or s == "r2" or s == "righttrigger" or s == "rtrigger" then return "RT" end
+    if s == "dpadup" or s == "dpad_up" or s == "up" or s == "du" then return "DU" end
+    if s == "dpaddown" or s == "dpad_down" or s == "down" or s == "dd" then return "DD" end
+    if s == "dpadleft" or s == "dpad_left" or s == "left" or s == "dl" then return "DL" end
+    if s == "dpadright" or s == "dpad_right" or s == "right" or s == "dr" then return "DR" end
+    return nil
+end
+function slot_to_engine_button_name(slot_id)
+    local norm = normalize_button_id(slot_id)
+    if not norm then
+        return nil
+    end
+    return SLOT_TO_ENGINE_BUTTON[norm] or norm
+end
+function parse_trigger_spec(spec_str)
+    local s = trim_str(tostring(spec_str or ""))
+    if s == "" then
+        return nil
+    end
+    local low = string.lower(s)
+    if low == "unbound" or low == "none" then
+        return { kind = "unbound" }
+    end
+    if low:sub(1, 7) == "button:" or low:sub(1, 6) == "press:" or low:sub(1, 4) == "tap:" then
+        local colon = s:find(":", 1, true)
+        local btn = normalize_button_id(s:sub(colon + 1))
+        if not btn then return nil end
+        return { kind = "button", button = btn }
+    end
+    if low:sub(1, 5) == "hold:" then
+        local rest = s:sub(6)
+        local colon2 = rest:find(":", 1, true)
+        local btn_part = colon2 and rest:sub(1, colon2 - 1) or rest
+        local ms_part = colon2 and rest:sub(colon2 + 1) or "300"
+        local btn = normalize_button_id(btn_part)
+        if not btn then return nil end
+        local ms = tonumber(trim_str(ms_part)) or 300
+        if ms < 100 then ms = 100 end
+        if ms > 2000 then ms = 2000 end
+        return { kind = "hold", button = btn, hold_ms = math.floor(ms) }
+    end
+    if low:sub(1, 6) == "chord:" or s:find("+", 1, true) then
+        local rest = (low:sub(1, 6) == "chord:") and s:sub(7) or s
+        local sep = rest:find("+", 1, true) or rest:find(":", 1, true)
+        if not sep then return nil end
+        local mod = normalize_button_id(rest:sub(1, sep - 1))
+        local btn = normalize_button_id(rest:sub(sep + 1))
+        if not mod or not btn then return nil end
+        return { kind = "chord", modifier = mod, button = btn }
+    end
+    local bare = normalize_button_id(s)
+    if bare then
+        return { kind = "button", button = bare }
+    end
+    return nil
+end
+function format_trigger_spec(trig, act_for_default_ms)
+    if type(trig) ~= "table" or not trig.kind then
+        return "unbound"
+    end
+    if trig.kind == "unbound" then
+        return "unbound"
+    elseif trig.kind == "button" then
+        local eng_btn = slot_to_engine_button_name(trig.button)
+        if not eng_btn then return "unbound" end
+        return "button:" .. eng_btn
+    elseif trig.kind == "hold" then
+        local eng_btn = slot_to_engine_button_name(trig.button)
+        if not eng_btn then return "unbound" end
+        local ms = tonumber(trig.hold_ms) or (act_for_default_ms and DEFAULT_ACTION_HOLD_MS[act_for_default_ms]) or 300
+        if ms < 100 then ms = 100 end
+        if ms > 2000 then ms = 2000 end
+        return string.format("hold:%s:%d", eng_btn, math.floor(ms))
+    elseif trig.kind == "chord" then
+        local eng_mod = slot_to_engine_button_name(trig.modifier)
+        local eng_btn = slot_to_engine_button_name(trig.button)
+        if not eng_mod or not eng_btn then return "unbound" end
+        return "chord:" .. eng_mod .. "+" .. eng_btn
+    end
+    return "unbound"
+end
+function get_slot_display_name(slot_id, pad_family)
+    local fam = resolve_pad_family(pad_family)
+    local prefix = "ui_gp_btn_name_xbox_"
+    if fam == "playstation" then
+        prefix = "ui_gp_btn_name_ps_"
+    elseif fam == "nintendo" then
+        prefix = "ui_gp_btn_name_nin_"
+    elseif fam == "generic" then
+        prefix = "ui_gp_btn_name_gen_"
+    end
+    return tr(prefix .. tostring(slot_id or ""))
+end
+function get_action_display_name(action_id)
+    local act = trim_str(tostring(action_id or ""))
+    if act == "" or act == "unbound" or act == "—" then
+        return tr("ui_gp_ctrl_unbound")
+    end
+    local key = "ui_gp_act_" .. act
+    local translated = tr(key)
+    if translated ~= key then
+        return translated
+    end
+    return act
+end
+function set_custom_profile_path(path)
+    custom_profile_path = path
+end
+function resolve_profile_ltx_path()
+    if type(custom_profile_path) == "string" and custom_profile_path ~= "" then
+        return custom_profile_path
+    end
+    if _G.getFS then
+        local ok, fs = pcall(_G.getFS)
+        if ok and fs and type(fs.update_path) == "function" then
+            local ok_p, p = pcall(fs.update_path, fs, "$app_data_root$", "gamepad\\profile.ltx")
+            if ok_p and type(p) == "string" and p ~= "" then
+                return p
+            end
+        end
+    end
+    return "appdata\\gamepad\\profile.ltx"
+end
+function is_path_forbidden_for_write(path)
+    local raw = trim_str(tostring(path or ""))
+    if raw == "" then
+        return true, "empty_path"
+    end
+    local norm = string.lower(raw):gsub("/", "\\")
+    if norm:find("d:\\" .. "stalker", 1, true) then
+        return true, "forbidden_stalker_root"
+    end
+    local base = norm:match("([^\\]+)$") or norm
+    if base == "user.ltx" or base == "axr_options.ltx" or base == "gamecontrollerdb.txt" then
+        return true, "forbidden_config_file"
+    end
+    return false, nil
+end
+function parse_profile_text(ltx_text)
+    local out = {
+        world = {},
+        menu  = {},
+    }
+    if type(ltx_text) ~= "string" or ltx_text == "" then
+        return out
+    end
+    local cur_ctx = nil
+    for raw_line in ltx_text:gmatch("[^\r\n]+") do
+        local line = trim_str(raw_line)
+        if line ~= "" and line:sub(1, 1) ~= ";" and line:sub(1, 1) ~= "#" and line:sub(1, 2) ~= "//" then
+            if line:sub(1, 1) == "[" then
+                local close_pos = line:find("]", 1, true)
+                local sec_name = close_pos and trim_str(line:sub(2, close_pos - 1)) or ""
+                if sec_name == CONTEXT_TO_SECTION.world then
+                    cur_ctx = "world"
+                elseif sec_name == CONTEXT_TO_SECTION.menu then
+                    cur_ctx = "menu"
+                else
+                    cur_ctx = nil
+                end
+            elseif cur_ctx then
+                local eq_pos = line:find("=", 1, true)
+                if eq_pos and eq_pos > 1 then
+                    local key = trim_str(line:sub(1, eq_pos - 1))
+                    local val = trim_str(line:sub(eq_pos + 1))
+                    local semi = val:find(";", 1, true)
+                    if semi then
+                        val = trim_str(val:sub(1, semi - 1))
+                    end
+                    local slashes = val:find("//", 1, true)
+                    if slashes then
+                        val = trim_str(val:sub(1, slashes - 1))
+                    end
+                    if key ~= "" and val ~= "" then
+                        table.insert(out[cur_ctx], { action = key, spec = val })
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+function read_profile_text_from_disk(explicit_path)
+    local path = explicit_path or resolve_profile_ltx_path()
+    if type(io) ~= "table" or type(io.open) ~= "function" then
+        return nil, path
+    end
+    local f = io.open(path, "rb")
+    if not f then
+        return nil, path
+    end
+    local content = f:read("*a")
+    f:close()
+    return content, path
+end
+-- Собирает эффективную карту (action_order, action_map) для вкладки ("world" | "menu")
+local function build_effective_action_map(ctx_id, profile_text_or_table)
+    local ctx = (ctx_id == "menu") and "menu" or "world"
+    local action_order = {}
+    local action_seen = {}
+    local action_map = {}
+    local function apply_entry(act, spec)
+        local trig = parse_trigger_spec(spec)
+        if not trig then
+            return
+        end
+        if not action_seen[act] then
+            action_seen[act] = true
+            table.insert(action_order, act)
+        end
+        if trig.kind == "unbound" then
+            action_map[act] = nil
+        else
+            for other_act, other_trig in pairs(action_map) do
+                if other_act ~= act and other_trig.kind == trig.kind then
+                    if trig.kind == "chord" then
+                        if other_trig.modifier == trig.modifier and other_trig.button == trig.button then
+                            action_map[other_act] = nil
+                        end
+                    else
+                        if other_trig.button == trig.button then
+                            action_map[other_act] = nil
+                        end
+                    end
+                end
+            end
+            action_map[act] = trig
+        end
+    end
+    local defaults = DEFAULT_MODEL_BINDINGS[ctx] or DEFAULT_MODEL_BINDINGS.world
+    for _, d in ipairs(defaults) do
+        apply_entry(d.action, d.spec)
+    end
+    local parsed_overrides = nil
+    if type(profile_text_or_table) == "string" then
+        parsed_overrides = parse_profile_text(profile_text_or_table)
+    elseif type(profile_text_or_table) == "table" then
+        parsed_overrides = profile_text_or_table
+    else
+        local disk_txt = read_profile_text_from_disk()
+        if type(disk_txt) == "string" and disk_txt ~= "" then
+            parsed_overrides = parse_profile_text(disk_txt)
+        end
+    end
+    if parsed_overrides and type(parsed_overrides[ctx]) == "table" then
+        for _, ov in ipairs(parsed_overrides[ctx]) do
+            if type(ov) == "table" and ov.action and ov.spec then
+                apply_entry(ov.action, ov.spec)
+            end
+        end
+    end
+    return action_order, action_map, parsed_overrides
+end
+-- Строит полную модель подписей 18 слотов и списка плашек сочетаний (chords) для вкладки ("world" | "menu")
+-- из данных профиля D4.1 (с наложением дефолтов модели и пользовательских переопределений из profile.ltx).
+function build_context_view_model(tab_id, profile_text_or_table, pad_family)
+    local ctx = (tab_id == "menu") and "menu" or "world"
+    local fam = resolve_pad_family(pad_family)
+    local action_order, action_map = build_effective_action_map(ctx, profile_text_or_table)
+    local unbound_str = tr("ui_gp_ctrl_unbound")
+    local slots_data = {}
+    local slot_lookup = {}
+    for _, s in ipairs(SLOTS) do
+        local btn_title = get_slot_display_name(s.id, fam)
+        local header_txt = s.locked and (btn_title .. tr("ui_gp_ctrl_locked_suffix")) or btn_title
+        local tap_act = nil
+        local hold_act = nil
+        -- Стики LS/RS имеют фиксированные аналоговые роли (D61: прямое аналоговое управление, не переназначаются)
+        if s.id == "LS" then
+            tap_act = (ctx == "menu") and "CursorStick" or "MoveStick"
+        elseif s.id == "RS" then
+            tap_act = (ctx == "menu") and "ScrollStick" or "LookStick"
+        elseif ctx == "menu" and (s.id == "DU" or s.id == "DD" or s.id == "DL" or s.id == "DR") then
+            tap_act = "NavigateCells"
+        end
+        local entry = {
+            id = s.id,
+            side = s.side,
+            row = s.row,
+            ax = s.ax,
+            ay = s.ay,
+            locked = s.locked,
+            button_title = btn_title,
+            header_text = header_txt,
+            tap_action_id = tap_act,
+            hold_action_id = hold_act,
+            tap_text = tap_act and get_action_display_name(tap_act) or unbound_str,
+            hold_text = "",
+            combined_action_text = "",
+        }
+        table.insert(slots_data, entry)
+        slot_lookup[s.id] = entry
+    end
+    local chords_data = {}
+    for _, act in ipairs(action_order) do
+        local trig = action_map[act]
+        if trig then
+            if trig.kind == "button" then
+                local target_slot = slot_lookup[trig.button]
+                if target_slot and not target_slot.locked then
+                    if not (ctx == "menu" and act == "Menu" and trig.button == "Menu") then
+                        target_slot.tap_action_id = act
+                        target_slot.tap_text = get_action_display_name(act)
+                    end
+                end
+            elseif trig.kind == "hold" then
+                local target_slot = slot_lookup[trig.button]
+                if target_slot and not target_slot.locked then
+                    target_slot.hold_action_id = act
+                    target_slot.hold_text = get_action_display_name(act)
+                end
+            elseif trig.kind == "chord" then
+                local mod_name = get_slot_display_name(trig.modifier, fam)
+                local btn_name = get_slot_display_name(trig.button, fam)
+                local chord_label = mod_name .. " + " .. btn_name
+                local act_label = get_action_display_name(act)
+                table.insert(chords_data, {
+                    modifier = trig.modifier,
+                    button = trig.button,
+                    action_id = act,
+                    chord_text = chord_label,
+                    action_text = act_label,
+                    chip_text = chord_label .. " — " .. act_label,
+                })
+            end
+        end
+    end
+    if ctx == "menu" and #chords_data == 0 then
+        for _, mc in ipairs(MENU_BUILTIN_CHORDS) do
+            local chord_label
+            if mc.raw_chord_key then
+                chord_label = tr(mc.raw_chord_key)
+            else
+                chord_label = get_slot_display_name(mc.mod, fam) .. " + " .. get_slot_display_name(mc.btn, fam)
+            end
+            local act_label = get_action_display_name(mc.action)
+            table.insert(chords_data, {
+                modifier = mc.mod,
+                button = mc.btn,
+                action_id = mc.action,
+                chord_text = chord_label,
+                action_text = act_label,
+                chip_text = chord_label .. " — " .. act_label,
+            })
+        end
+    end
+    for _, entry in ipairs(slots_data) do
+        local tap_str = (entry.tap_text and entry.tap_text ~= "") and entry.tap_text or unbound_str
+        entry.tap_text = tap_str
+        if entry.hold_text and entry.hold_text ~= "" then
+            entry.hold_Full_text = tr("ui_gp_ctrl_hold_prefix") .. entry.hold_text
+            entry.combined_action_text = tap_str .. entry.hold_Full_text
+        else
+            entry.hold_Full_text = ""
+            entry.combined_action_text = tap_str
+        end
+    end
+    return {
+        context = ctx,
+        pad_family = fam,
+        pad_spec = get_pad_image_spec(fam),
+        slots = slots_data,
+        slot_by_id = slot_lookup,
+        chords = chords_data,
+        action_map = action_map,
+        action_order = action_order,
+    }
+end
+-- ---------------------------------------------------------------------------
+-- 2b. Переназначение, проверка запретов, перестановка и запись profile.ltx (K5b)
+-- ---------------------------------------------------------------------------
+-- Проверяет инварианты K5b п.5:
+-- 1) Стики движения и обзора (LS, RS) не могут использоваться как триггеры действий.
+-- 2) Во вкладке "world" обязательно должна остаться кнопка «Пауза» (PauseMenu) на одиночном нажатии/удержании (не unbound и не chord).
+-- 3) Во вкладке "menu" обязательно должна остаться кнопка «Назад» (Back) на одиночной кнопке (не unbound и не chord),
+--    причём Confirm и Back не могут конфликтовать на одной и той же кнопке.
+function validate_context_action_map(ctx_id, candidate_map)
+    local ctx = (ctx_id == "menu") and "menu" or "world"
+    if type(candidate_map) ~= "table" then
+        return false, "invalid_map"
+    end
+    for _, trig in pairs(candidate_map) do
+        if type(trig) == "table" then
+            if LOCKED_SLOTS[trig.button] or LOCKED_SLOTS[trig.modifier] then
+                return false, "locked_stick"
+            end
+        end
+    end
+    if ctx == "world" then
+        local pause_trig = candidate_map["PauseMenu"]
+        if not pause_trig or (pause_trig.kind ~= "button" and pause_trig.kind ~= "hold") or not pause_trig.button or LOCKED_SLOTS[pause_trig.button] then
+            return false, "missing_pause"
+        end
+    elseif ctx == "menu" then
+        local back_trig = candidate_map["Back"]
+        if not back_trig or (back_trig.kind ~= "button" and back_trig.kind ~= "hold") or not back_trig.button or LOCKED_SLOTS[back_trig.button] then
+            return false, "missing_back"
+        end
+        local confirm_trig = candidate_map["Confirm"]
+        if confirm_trig and confirm_trig.button == back_trig.button and confirm_trig.kind == back_trig.kind then
+            return false, "missing_back"
+        end
+    end
+    return true, "ok"
+end
+-- Сериализует профиль в текст формата D4.1 (schema_version = 2), сохраняя все сторонние секции
+-- ([profile], [left_stick], [right_stick], [haptics], [glyphs], [wheel_slots] и нетронутые [context_*]).
+function serialize_profile_text(world_action_map, menu_action_map, existing_raw_text)
+    local preserved_blocks = {}
+    if type(existing_raw_text) == "string" and existing_raw_text ~= "" then
+        local keep_current = false
+        local current_lines = {}
+        local function flush_block()
+            if keep_current and #current_lines > 0 then
+                table.insert(preserved_blocks, table.concat(current_lines, "\n"))
+            end
+            current_lines = {}
+        end
+        for raw_line in existing_raw_text:gmatch("[^\r\n]+") do
+            local trimmed = trim_str(raw_line)
+            if trimmed:sub(1, 1) == "[" then
+                local close_pos = trimmed:find("]", 1, true)
+                if close_pos and close_pos > 1 then
+                    flush_block()
+                    local sec = trim_str(trimmed:sub(2, close_pos - 1))
+                    if sec == "profile_header" or sec == CONTEXT_TO_SECTION.world or sec == CONTEXT_TO_SECTION.menu then
+                        keep_current = false
+                    else
+                        keep_current = true
+                        table.insert(current_lines, trimmed)
+                    end
+                elseif keep_current then
+                    table.insert(current_lines, raw_line)
+                end
+            elseif keep_current then
+                table.insert(current_lines, raw_line)
+            end
+        end
+        flush_block()
+    end
+    local lines = {
+        "[profile_header]",
+        "schema_version = 2",
+        "",
+        "[" .. CONTEXT_TO_SECTION.world .. "]",
+    }
+    for _, def in ipairs(DEFAULT_MODEL_BINDINGS.world) do
+        local act = def.action
+        local trig = world_action_map and world_action_map[act] or nil
+        local spec = trig and format_trigger_spec(trig, act) or "unbound"
+        table.insert(lines, act .. " = " .. spec)
+    end
+    table.insert(lines, "")
+    table.insert(lines, "[" .. CONTEXT_TO_SECTION.menu .. "]")
+    for _, def in ipairs(DEFAULT_MODEL_BINDINGS.menu) do
+        local act = def.action
+        local trig = menu_action_map and menu_action_map[act] or nil
+        local spec = trig and format_trigger_spec(trig, act) or "unbound"
+        table.insert(lines, act .. " = " .. spec)
+    end
+    if #preserved_blocks > 0 then
+        table.insert(lines, "")
+        for _, blk in ipairs(preserved_blocks) do
+            table.insert(lines, blk)
+            table.insert(lines, "")
+        end
+    else
+        table.insert(lines, "")
+    end
+    return table.concat(lines, "\n")
+end
+-- Сохраняет текст профиля в appdata\gamepad\profile.ltx (с проверкой запрещённых путей D37)
+function write_profile_text_to_disk(new_text, explicit_path)
+    local path = explicit_path or resolve_profile_ltx_path()
+    local forbidden, reason = is_path_forbidden_for_write(path)
+    if forbidden then
+        return false, reason, path
+    end
+    if type(io) ~= "table" or type(io.open) ~= "function" then
+        return false, "io_unavailable", path
+    end
+    local f = io.open(path, "wb")
+    if not f then
+        return false, "open_failed", path
+    end
+    f:write(tostring(new_text or ""))
+    f:close()
+    return true, "ok", path
+end
+-- Уведомляет движок C++ (K2: gp_remap reload) и Lua-мост (K3: gp_bridge.reload_binding_profile)
+-- о том, что профиль переназначения изменился, без перезапуска игры (K5b п.4).
+function notify_engine_profile_updated()
+    local reload_called = false
+    if type(_G.exec_console_cmd) == "function" then
+        pcall(_G.exec_console_cmd, "gp_remap reload")
+        reload_called = true
+    elseif _G.get_console and type(_G.get_console) == "function" then
+        local ok, con = pcall(_G.get_console)
+        if ok and con and type(con.execute) == "function" then
+            pcall(con.execute, con, "gp_remap reload")
+            reload_called = true
+        end
+    end
+    if _G.gp_bridge and type(_G.gp_bridge.reload_binding_profile) == "function" then
+        pcall(_G.gp_bridge.reload_binding_profile)
+    end
+    return reload_called
+end
+-- K5b п.1, 2, 4, 5: Назначает действию `action_id` новый триггер `new_spec_str` в контексте `ctx_id` ("world"|"menu").
+-- Если на целевом триггере уже стоит другое действие `other_act` — меняет их местами (swap) и возвращает список
+-- затронутых слотов (`flashed_slots`) для мигания обеих подписей!
+function apply_remap_action(ctx_id, action_id, new_spec_str, current_profile_text)
+    local ctx = (ctx_id == "menu") and "menu" or "world"
+    local act = trim_str(tostring(action_id or ""))
+    if act == "" or act == "MoveStick" or act == "LookStick" or act == "CursorStick" or act == "ScrollStick" or act == "NavigateCells" then
+        return { ok = false, reason = "locked_stick", flashed_slots = {} }
+    end
+    local cand_trig = parse_trigger_spec(new_spec_str)
+    if not cand_trig then
+        return { ok = false, reason = "invalid_trigger", flashed_slots = {} }
+    end
+    if LOCKED_SLOTS[cand_trig.button] or LOCKED_SLOTS[cand_trig.modifier] then
+        return { ok = false, reason = "locked_stick", flashed_slots = {} }
+    end
+    -- Запрет оставлять без Паузы или Назад (K5b п.5)
+    if act == "PauseMenu" and (cand_trig.kind == "unbound" or cand_trig.kind == "chord") then
+        return { ok = false, reason = "missing_pause", flashed_slots = {} }
+    end
+    if act == "Back" and (cand_trig.kind == "unbound" or cand_trig.kind == "chord") then
+        return { ok = false, reason = "missing_back", flashed_slots = {} }
+    end
+    local raw_text = current_profile_text
+    if type(raw_text) ~= "string" then
+        raw_text = read_profile_text_from_disk() or ""
+    end
+    local _, world_map = build_effective_action_map("world", raw_text)
+    local _, menu_map  = build_effective_action_map("menu",  raw_text)
+    local target_map   = (ctx == "menu") and menu_map or world_map
+    local prev_trig = target_map[act]
+    local prev_slot_id = prev_trig and prev_trig.button or nil
+    local new_slot_id  = cand_trig.button
+    -- Ищем конфликтующее действие на том же триггере (button + kind, либо chord modifier+button)
+    local swapped_with = nil
+    if cand_trig.kind ~= "unbound" then
+        for other_act, other_trig in pairs(target_map) do
+            if other_act ~= act and other_trig.kind == cand_trig.kind then
+                local same_target = false
+                if cand_trig.kind == "chord" then
+                    same_target = (other_trig.modifier == cand_trig.modifier and other_trig.button == cand_trig.button)
+                else
+                    same_target = (other_trig.button == cand_trig.button)
+                end
+                if same_target then
+                    swapped_with = other_act
+                    break
+                end
+            end
+        end
+    end
+    -- Выполняем перестановку (swap) при конфликте (K5b п.2)
+    if swapped_with then
+        if prev_trig and prev_trig.kind ~= "unbound" then
+            local swapped_copy = {
+                kind = prev_trig.kind,
+                button = prev_trig.button,
+                modifier = prev_trig.modifier,
+                hold_ms = (prev_trig.kind == "hold") and (DEFAULT_ACTION_HOLD_MS[swapped_with] or prev_trig.hold_ms or 300) or nil,
+            }
+            target_map[swapped_with] = swapped_copy
+        else
+            target_map[swapped_with] = nil
+        end
+    end
+    if cand_trig.kind == "unbound" then
+        target_map[act] = nil
+    else
+        local assigned_copy = {
+            kind = cand_trig.kind,
+            button = cand_trig.button,
+            modifier = cand_trig.modifier,
+            hold_ms = (cand_trig.kind == "hold") and (cand_trig.hold_ms or DEFAULT_ACTION_HOLD_MS[act] or 300) or nil,
+        }
+        target_map[act] = assigned_copy
+    end
+    local valid, v_reason = validate_context_action_map(ctx, target_map)
+    if not valid then
+        return { ok = false, reason = v_reason, flashed_slots = {} }
+    end
+    local flashed = {}
+    local flashed_seen = {}
+    local function add_flash(sid)
+        if sid and SLOT_BY_ID[sid] and not flashed_seen[sid] then
+            flashed_seen[sid] = true
+            table.insert(flashed, sid)
+        end
+    end
+    add_flash(new_slot_id)
+    if prev_slot_id and prev_slot_id ~= new_slot_id then
+        add_flash(prev_slot_id)
+    end
+    local new_profile_text = serialize_profile_text(world_map, menu_map, raw_text)
+    write_profile_text_to_disk(new_profile_text)
+    notify_engine_profile_updated()
+    return {
+        ok = true,
+        reason = "ok",
+        action = act,
+        new_spec = format_trigger_spec(target_map[act], act),
+        swapped_with = swapped_with,
+        flashed_slots = flashed,
+        profile_text = new_profile_text,
+    }
+end
+-- K5b п.3: Сброс вкладки ("world" | "menu") к стандартным привязкам D4.1
+function reset_context_bindings(ctx_id, current_profile_text)
+    local ctx = (ctx_id == "menu") and "menu" or "world"
+    local raw_text = current_profile_text
+    if type(raw_text) ~= "string" then
+        raw_text = read_profile_text_from_disk() or ""
+    end
+    local _, world_map = build_effective_action_map("world", (ctx == "world") and "" or raw_text)
+    local _, menu_map  = build_effective_action_map("menu",  (ctx == "menu")  and "" or raw_text)
+    local new_profile_text = serialize_profile_text(world_map, menu_map, raw_text)
+    write_profile_text_to_disk(new_profile_text)
+    notify_engine_profile_updated()
+    local flashed = {}
+    for _, s in ipairs(SLOTS) do
+        if not s.locked then
+            table.insert(flashed, s.id)
+        end
+    end
+    return {
+        ok = true,
+        context = ctx,
+        flashed_slots = flashed,
+        profile_text = new_profile_text,
+    }
+end
+-- Пресет из макета controller-remap-xbox.html:153 («Колесо на Y»):
+-- переносит WeaponWheel на удержание Y (hold:Y:220), мигают Y и RB.
+function apply_preset_wheel_on_y(current_profile_text)
+    local res = apply_remap_action("world", "WeaponWheel", "hold:Y:220", current_profile_text)
+    if res.ok then
+        local has_y, has_rb = false, false
+        for _, sid in ipairs(res.flashed_slots) do
+            if sid == "Y" then has_y = true end
+            if sid == "RB" then has_rb = true end
+        end
+        if not has_y then table.insert(res.flashed_slots, "Y") end
+        if not has_rb then table.insert(res.flashed_slots, "RB") end
+    end
+    return res
+end
+-- ---------------------------------------------------------------------------
+-- 3. Геометрия вёрстки и проверка на 4 разрешениях (дампер по стандарту F2.2)
+-- ---------------------------------------------------------------------------
+local function rects_overlap(a, b)
+    if not a or not b then return false end
+    return (a.x < b.x + b.w) and (a.x + a.w > b.x) and (a.y < b.y + b.h) and (a.y + a.h > b.y)
+end
+local function rect_inside(inner, outer)
+    if not inner or not outer then return false end
+    return (inner.x >= outer.x)
+        and (inner.y >= outer.y)
+        and (inner.x + inner.w <= outer.x + outer.w)
+        and (inner.y + inner.h <= outer.y + outer.h)
+end
+-- Вычисляет координаты всех элементов экрана «Управление» в виртуальной сетке 1024x768 и в пикселях целевого разрешения
+function compute_controls_layout(screen_w, screen_h, font_scale_pct)
+    local w = math.max(640, math.floor(tonumber(screen_w) or 1920))
+    local h = math.max(480, math.floor(tonumber(screen_h) or 1080))
+    local scale_pct = math.max(80, math.min(130, math.floor(tonumber(font_scale_pct) or 100)))
+    local aspect = w / h
+    local aspect_tag = (aspect >= 2.10) and "21:9" or "16:9"
+    local function to_px_rect(ux, uy, uw, uh)
+        local x1 = math.floor((ux / 1024.0) * w + 0.5)
+        local y1 = math.floor((uy / 768.0) * h + 0.5)
+        local x2 = math.floor(((ux + uw) / 1024.0) * w + 0.5)
+        local y2 = math.floor(((uy + uh) / 768.0) * h + 0.5)
+        return {
+            x = x1,
+            y = y1,
+            w = math.max(1, x2 - x1),
+            h = math.max(1, y2 - y1),
+            ux = ux,
+            uy = uy,
+            uw = uw,
+            uh = uh,
+        }
+    end
+    local bg_ux, bg_uy, bg_uw, bg_uh = 32, 20, 960, 728
+    local screen_rect = { x = 0, y = 0, w = w, h = h }
+    local bg_rect = to_px_rect(bg_ux, bg_uy, bg_uw, bg_uh)
+    local header_rect = to_px_rect(bg_ux + 16, bg_uy + 10, 928, 34)
+    local pad_rect = to_px_rect(bg_ux + 310, bg_uy + 54, 340, 546)
+    local chords_rect = to_px_rect(bg_ux + 20, bg_uy + 614, 920, 56)
+    local footer_rect = to_px_rect(bg_ux + 20, bg_uy + 680, 920, 36)
+    local slot_rects = {}
+    local lead_polylines = {}
+    for _, s in ipairs(SLOTS) do
+        local rx_rel = (s.side == "L") and 16 or 700
+        local ry_rel = 54 + (s.row - 1) * 60
+        local rw = 244
+        local rh = 54
+        local srect = to_px_rect(bg_ux + rx_rel, bg_uy + ry_rel, rw, rh)
+        srect.id = s.id
+        srect.side = s.side
+        srect.row = s.row
+        srect.rx_rel = rx_rel
+        srect.ry_rel = ry_rel
+        srect.rw_rel = rw
+        srect.rh_rel = rh
+        table.insert(slot_rects, srect)
+        local start_x = (s.side == "L") and (rx_rel + rw) or rx_rel
+        local start_y = ry_rel + math.floor(rh * 0.5)
+        local elbow_x = (s.side == "L") and (start_x + 14 + (s.row - 1) * 5) or (start_x - 14 - (s.row - 1) * 5)
+        local elbow_y = start_y
+        lead_polylines[s.id] = {
+            x1 = start_x, y1 = start_y,
+            x2 = elbow_x, y2 = elbow_y,
+            x3 = s.ax,    y3 = s.ay,
+            elbow_x = elbow_x,
+        }
+    end
+    local chord_rects = {}
+    for i = 1, 4 do
+        local cx_rel = 28 + (i - 1) * 228
+        local cy_rel = 624
+        local crect = to_px_rect(bg_ux + cx_rel, bg_uy + cy_rel, 212, 28)
+        crect.index = i
+        crect.rx_rel = cx_rel
+        crect.ry_rel = cy_rel
+        table.insert(chord_rects, crect)
+    end
+    return {
+        screen_w = w,
+        screen_h = h,
+        font_scale_pct = scale_pct,
+        aspect_tag = aspect_tag,
+        screen_rect = screen_rect,
+        bg_rect = bg_rect,
+        header_rect = header_rect,
+        pad_rect = pad_rect,
+        chords_rect = chords_rect,
+        footer_rect = footer_rect,
+        slot_rects = slot_rects,
+        chord_rects = chord_rects,
+        lead_polylines = lead_polylines,
+    }
+end
+function inspect_controls_layout(screen_w, screen_h, font_scale_pct)
+    local lay = compute_controls_layout(screen_w, screen_h, font_scale_pct)
+    local clipped = {}
+    local overlapped = {}
+    if not rect_inside(lay.bg_rect, lay.screen_rect) then
+        table.insert(clipped, "background_outside_screen")
+    end
+    local bands = {
+        { name = "header", rect = lay.header_rect },
+        { name = "pad_area", rect = lay.pad_rect },
+        { name = "chords_bar", rect = lay.chords_rect },
+        { name = "footer", rect = lay.footer_rect },
+    }
+    for i = 1, #bands do
+        local b = bands[i]
+        if not rect_inside(b.rect, lay.bg_rect) then
+            table.insert(clipped, "band_outside_bg:" .. b.name)
+        end
+        for j = i + 1, #bands do
+            if rects_overlap(b.rect, bands[j].rect) then
+                table.insert(overlapped, b.name .. "_overlaps_" .. bands[j].name)
+            end
+        end
+    end
+    for i = 1, #lay.slot_rects do
+        local sr = lay.slot_rects[i]
+        if not rect_inside(sr, lay.bg_rect) then
+            table.insert(clipped, "slot_outside_bg:" .. sr.id)
+        end
+        if rects_overlap(sr, lay.header_rect) then
+            table.insert(overlapped, "slot_" .. sr.id .. "_overlaps_header")
+        end
+        if rects_overlap(sr, lay.pad_rect) then
+            table.insert(overlapped, "slot_" .. sr.id .. "_overlaps_pad_area")
+        end
+        if rects_overlap(sr, lay.chords_rect) then
+            table.insert(overlapped, "slot_" .. sr.id .. "_overlaps_chords_bar")
+        end
+        if rects_overlap(sr, lay.footer_rect) then
+            table.insert(overlapped, "slot_" .. sr.id .. "_overlaps_footer")
+        end
+        for j = i + 1, #lay.slot_rects do
+            local other = lay.slot_rects[j]
+            if rects_overlap(sr, other) then
+                table.insert(overlapped, "slot_" .. sr.id .. "_overlaps_slot_" .. other.id)
+            end
+        end
+    end
+    for i = 1, #lay.chord_rects do
+        local cr = lay.chord_rects[i]
+        if not rect_inside(cr, lay.chords_rect) then
+            table.insert(clipped, "chord_outside_bar:" .. tostring(cr.index))
+        end
+        for j = i + 1, #lay.chord_rects do
+            if rects_overlap(cr, lay.chord_rects[j]) then
+                table.insert(overlapped, "chord_" .. tostring(cr.index) .. "_overlaps_" .. tostring(lay.chord_rects[j].index))
+            end
+        end
+    end
+    return {
+        layout = lay,
+        clipped = clipped,
+        overlapped = overlapped,
+        clean = (#clipped == 0 and #overlapped == 0),
+    }
+end
+function dump_controls_layout_4res(font_scale_pct)
+    local resolutions = {
+        { w = 1920, h = 1080 },
+        { w = 2560, h = 1440 },
+        { w = 3840, h = 2160 },
+        { w = 2560, h = 1080 },
+    }
+    local lines = {}
+    local reports = {}
+    local all_clean = true
+    for _, r in ipairs(resolutions) do
+        local rep = inspect_controls_layout(r.w, r.h, font_scale_pct or 100)
+        local lay = rep.layout
+        local clip_str = (#rep.clipped == 0) and "none" or table.concat(rep.clipped, ",")
+        local over_str = (#rep.overlapped == 0) and "none" or table.concat(rep.overlapped, ",")
+        local line = string.format(
+            "[ui_gp_controls_layout_dump] res=%dx%d (%s) font=%d%% bg=%d,%d,%dx%d pad=%d,%d,%dx%d slots=%d clipped=%s overlapped=%s",
+            lay.screen_w, lay.screen_h, lay.aspect_tag, lay.font_scale_pct,
+            lay.bg_rect.x, lay.bg_rect.y, lay.bg_rect.w, lay.bg_rect.h,
+            lay.pad_rect.x, lay.pad_rect.y, lay.pad_rect.w, lay.pad_rect.h,
+            #lay.slot_rects, clip_str, over_str
+        )
+        if not rep.clean then
+            all_clean = false
+        end
+        table.insert(lines, line)
+        table.insert(reports, rep)
+    end
+    return all_clean, lines, reports
+end
+-- ---------------------------------------------------------------------------
+-- 4. Класс модального окна UIGpControlsWnd (CUIScriptWnd)
+-- ---------------------------------------------------------------------------
+class "UIGpControlsWnd" (CUIScriptWnd)
+function UIGpControlsWnd:__init(initial_tab)
+    super()
+    self:SetWindowName("UIGpControlsWnd")
+    if self.AllowWorkInPause then
+        self:AllowWorkInPause(true)
+    end
+    if self.AllowMovement then
+        self:AllowMovement(false)
+    end
+    self.current_tab = (initial_tab == "menu") and "menu" or "world"
+    self.selected_slot_idx = 1
+    self.selected_sub_kind = "tap" -- "tap" | "hold"
+    self.pad_family = resolve_pad_family("auto")
+    self.profile_override = nil
+    self.view_model = nil
+    self.slot_widgets = {}
+    self.chord_widgets = {}
+    self.holds_pause = false
+    -- K5b: состояния переназначения ("browse" | "capturing" | "confirm_reset")
+    self.remap_state = "browse"
+    self.capture_slot_id = nil
+    self.capture_action_id = nil
+    self.capture_sub_kind = "tap"
+    self.capture_start_ms = 0
+    self.capture_primary_btn = nil
+    self.capture_press_ms = 0
+    self.capture_second_btn = nil
+    self.flashing_slots = {} -- map: slot_id -> expire_ms
+    self.status_message = nil
+    self.status_is_error = false
+    self:InitControls()
+    self:InitCallbacks()
+    self:RefreshView()
+end
+function UIGpControlsWnd:__finalize()
+end
+local function apply_font_and_color(txt_wnd, font_fn_name, a, r, g, b, align_code)
+    if not txt_wnd then
+        return
+    end
+    local font_fn = font_fn_name and _G[font_fn_name] or nil
+    if type(font_fn) == "function" and txt_wnd.SetFont then
+        txt_wnd:SetFont(font_fn())
+    end
+    if _G.GetARGB and txt_wnd.SetTextColor then
+        txt_wnd:SetTextColor(_G.GetARGB(a or 255, r or 236, g or 230, b or 216))
+    end
+    if align_code ~= nil and txt_wnd.SetTextAlignment then
+        txt_wnd:SetTextAlignment(align_code)
+    end
+end
+local function make_flat_static(parent, tex_id, x, y, w, h, a, r, g, b)
+    local st = CUIStatic()
+    st:SetAutoDelete(true)
+    st:SetWndPos(vector2():set(x, y))
+    st:SetWndSize(vector2():set(w, h))
+    if st.InitTexture and tex_id then
+        pcall(st.InitTexture, st, tex_id)
+    end
+    if st.SetStretchTexture then
+        st:SetStretchTexture(true)
+    end
+    if _G.GetARGB and st.SetTextureColor and a ~= nil then
+        st:SetTextureColor(_G.GetARGB(a, r or 255, g or 255, b or 255))
+    end
+    parent:AttachChild(st)
+    return st
+end
+
+function UIGpControlsWnd:InitControls()
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ui_gp_controls.xml")
+    self.xml = xml
+
+    -- Семейство геймпада для начальной инициализации глифов Dot Marks (ICONS-1).
+    local init_family = resolve_pad_family("auto")
+
+    self.back = xml:InitFrame("background", self)
+    self.back:SetWndPos(vector2():set(32, 20))
+    self.back:SetWndSize(vector2():set(960, 728))
+
+    self.lbl_title = xml:InitTextWnd("title", self.back)
+    self.lbl_title:SetText(tr("ui_gp_ctrl_title"))
+
+    self.btn_tab_world = xml:Init3tButton("tab_world", self.back)
+    self:Register(self.btn_tab_world, "gp_ctrl_tab_world")
+
+    self.btn_tab_menu = xml:Init3tButton("tab_menu", self.back)
+    self:Register(self.btn_tab_menu, "gp_ctrl_tab_menu")
+
+    self.btn_tab_aim = xml:Init3tButton("tab_aim", self.back)
+    self:Register(self.btn_tab_aim, "gp_ctrl_tab_aim")
+
+    -- Плоские подложки под кнопки действий шапки (без 3D-рамок ui_button_ordinary)
+    self.bg_btn_wish  = make_flat_static(self.back, 'ui_gp_card_flat', 648, 10, 104, 28)
+    self.bg_btn_reset = make_flat_static(self.back, 'ui_gp_card_flat', 760, 10, 92, 28)
+    self.bg_btn_close = make_flat_static(self.back, 'ui_gp_card_flat', 858, 10, 82, 28)
+
+    self.btn_wish = xml:Init3tButton("btn_wish", self.back)
+    self.btn_wish:TextControl():SetText(tr("ui_gp_ctrl_btn_wish"))
+    self:Register(self.btn_wish, "gp_ctrl_btn_wish")
+
+    self.btn_reset = xml:Init3tButton("btn_reset", self.back)
+    self.btn_reset:TextControl():SetText(tr("ui_gp_ctrl_btn_reset"))
+    self:Register(self.btn_reset, "gp_ctrl_btn_reset")
+
+    self.btn_close = xml:Init3tButton("btn_close", self.back)
+    self.btn_close:TextControl():SetText(tr("ui_gp_ctrl_btn_close"))
+    self:Register(self.btn_close, "gp_ctrl_btn_close")
+
+    -- Разделительная линия шапки и золотая полоска-индикатор активной вкладки (Forza / XAG стиль)
+    self.header_line   = make_flat_static(self.back, 'ui_gp_solid_white', 20, 44, 920, 1, 180, 60, 56, 48)
+    self.tab_underline = make_flat_static(self.back, 'ui_gp_solid_white', 196, 41, 120, 3, 255, 240, 200, 112)
+
+    -- Центральная зона со схемой геймпада (чистый открытый фон без грубой коробки InitFrame)
+    self.pad_area = xml:InitStatic("pad_area", self.back)
+    if _G.GetARGB and self.pad_area.SetTextureColor then
+        self.pad_area:SetTextureColor(_G.GetARGB(0, 0, 0, 0))
+    end
+    self.pad_image = xml:InitStatic("pad_image", self.back)
+    self.lbl_pad_title = CUITextWnd()
+    self.lbl_pad_title:SetAutoDelete(true)
+    self.lbl_pad_title:SetWndPos(vector2():set(318, 62))
+    self.lbl_pad_title:SetWndSize(vector2():set(324, 22))
+    apply_font_and_color(self.lbl_pad_title, "GetFontLetterica16Russian", 255, 155, 148, 134, 2)
+    self.back:AttachChild(self.lbl_pad_title)
+
+    -- 18 слотов выносок и 3-звенных ортогональных линий (seg_h1, seg_v, seg_h2 толщиной 2 px)
+    local lay = compute_controls_layout(1920, 1080, 100)
+    self.slot_widgets = {}
+    for idx, s in ipairs(SLOTS) do
+        local srect = lay.slot_rects[idx]
+        local poly = lay.lead_polylines[s.id]
+
+        -- Звено 1 (seg_h): горизонтальный выход от карточки до вертикального канала elbow_x (h = 2 px)
+        local seg_h = xml:InitStatic("lead_seg", self.back)
+        local hx1 = math.min(poly.x1, poly.x2)
+        local hw1 = math.max(2, math.abs(poly.x2 - poly.x1))
+        seg_h:SetWndPos(vector2():set(hx1, poly.y1 - 1))
+        seg_h:SetWndSize(vector2():set(hw1, 2))
+
+        -- Звено 2 (seg_v): строго вертикальный отрезок по каналу elbow_x от start_y до ay (w = 2 px, никаких диагональных прямоугольников!)
+        local seg_v = xml:InitStatic("lead_seg", self.back)
+        local vx = poly.x2 - 1
+        local vy = math.min(poly.y1, poly.y3)
+        local vh = math.max(2, math.abs(poly.y3 - poly.y1))
+        seg_v:SetWndPos(vector2():set(vx, vy))
+        seg_v:SetWndSize(vector2():set(2, vh))
+
+        -- Звено 3 (seg_h2): горизонтальный подход от канала elbow_x к точке кнопки ax на высоте ay (h = 2 px)
+        local seg_h2 = xml:InitStatic("lead_seg", self.back)
+        local hx2 = math.min(poly.x2, poly.x3)
+        local hw2 = math.max(2, math.abs(poly.x3 - poly.x2))
+        seg_h2:SetWndPos(vector2():set(hx2, poly.y3 - 1))
+        seg_h2:SetWndSize(vector2():set(hw2, 2))
+
+        -- Круглая точка-якорь на кнопке геймпада (6x8 в сетке 1024x768 = круг 11x11 px на 16:9)
+        local dot = xml:InitStatic("anchor_dot", self.back)
+        dot:SetWndPos(vector2():set(poly.x3 - 3, poly.y3 - 4))
+        dot:SetWndSize(vector2():set(6, 8))
+
+        -- Плоская карточка слота (ui_gp_card_flat в покое, ui_gp_card_focus в фокусе по XAG 113)
+        local frame = xml:InitStatic("slot_frame", self.back)
+        frame:SetWndPos(vector2():set(srect.rx_rel, srect.ry_rel))
+        frame:SetWndSize(vector2():set(srect.rw_rel, srect.rh_rel))
+
+        -- Графическая иконка глифа кнопки слева (Dot Marks round через gp_icons, с сохранением пропорций плашек LT/LB/SEL/START)
+        local icon_glyph = make_flat_static(
+            self.back,
+            slot_glyph_tex(s.id, init_family),
+            srect.rx_rel + 8,
+            srect.ry_rel + 13,
+            21,
+            28
+        )
+        fit_slot_icon_glyph(icon_glyph, srect.rx_rel, srect.ry_rel, s.id, init_family)
+
+        -- Невидимая кнопка для клика мышью (без текстуры ui_button_ordinary)
+        local btn = xml:Init3tButton("slot_btn", self.back)
+        btn:SetWndPos(vector2():set(srect.rx_rel, srect.ry_rel))
+        btn:SetWndSize(vector2():set(srect.rw_rel, srect.rh_rel))
+        btn:TextControl():SetText("")
+        local cb_name = "gp_ctrl_slot_" .. tostring(idx)
+        self:Register(btn, cb_name)
+
+        -- Строка заголовка кнопки / пометки блокировки стика (справа от иконки глифа)
+        local lbl_hdr = CUITextWnd()
+        lbl_hdr:SetAutoDelete(true)
+        lbl_hdr:SetWndPos(vector2():set(srect.rx_rel + 34, srect.ry_rel + 5))
+        lbl_hdr:SetWndSize(vector2():set(srect.rw_rel - 40, 18))
+        apply_font_and_color(lbl_hdr, "GetFontLetterica16Russian", 255, 143, 136, 122, 0)
+        self.back:AttachChild(lbl_hdr)
+
+        -- Верхний/основной ярус: действие при коротком нажатии
+        local lbl_tap = CUITextWnd()
+        lbl_tap:SetAutoDelete(true)
+        lbl_tap:SetWndPos(vector2():set(srect.rx_rel + 34, srect.ry_rel + 24))
+        lbl_tap:SetWndSize(vector2():set(srect.rw_rel - 40, 22))
+        apply_font_and_color(lbl_tap, "GetFontLetterica18Russian", 255, 236, 230, 216, 0)
+        self.back:AttachChild(lbl_tap)
+
+        -- Нижний ярус на всю ширину карточки: действие при удержании ("[Удерж.] <действие>")
+        local lbl_hold = CUITextWnd()
+        lbl_hold:SetAutoDelete(true)
+        lbl_hold:SetWndPos(vector2():set(srect.rx_rel + 34, srect.ry_rel + 28))
+        lbl_hold:SetWndSize(vector2():set(srect.rw_rel - 40, 20))
+        apply_font_and_color(lbl_hold, "GetFontLetterica16Russian", 255, 232, 192, 110, 0)
+        self.back:AttachChild(lbl_hold)
+
+        self.slot_widgets[idx] = {
+            index = idx,
+            id = s.id,
+            rx_rel = srect.rx_rel,
+            ry_rel = srect.ry_rel,
+            rw_rel = srect.rw_rel,
+            rh_rel = srect.rh_rel,
+            frame = frame,
+            icon_glyph = icon_glyph,
+            btn = btn,
+            lbl_hdr = lbl_hdr,
+            lbl_tap = lbl_tap,
+            lbl_hold = lbl_hold,
+            seg_h = seg_h,
+            seg_v = seg_v,
+            seg_h2 = seg_h2,
+            dot = dot,
+        }
+    end
+
+    -- Нижняя полоса плашек сочетаний (плоские капсулы ui_gp_card_flat без 3D-рамок InitFrame)
+    self.chord_widgets = {}
+    for i = 1, 4 do
+        local crect = lay.chord_rects[i]
+        local chip_frame = xml:InitStatic("chord_chip", self.back)
+        chip_frame:SetWndPos(vector2():set(crect.rx_rel, crect.ry_rel))
+        chip_frame:SetWndSize(vector2():set(212, 28))
+
+        local chip_txt = CUITextWnd()
+        chip_txt:SetAutoDelete(true)
+        chip_txt:SetWndPos(vector2():set(crect.rx_rel + 6, crect.ry_rel + 4))
+        chip_txt:SetWndSize(vector2():set(200, 20))
+        apply_font_and_color(chip_txt, "GetFontLetterica16Russian", 255, 240, 200, 112, 2)
+        self.back:AttachChild(chip_txt)
+
+        self.chord_widgets[i] = {
+            frame = chip_frame,
+            lbl = chip_txt,
+        }
+    end
+
+    -- Модальная плашка подтверждения сброса вкладки (чистая панель ui_gp_panel_flat)
+    self.reset_modal = xml:InitStatic("reset_modal", self.back)
+    self.reset_modal:SetWndPos(vector2():set(318, 260))
+    self.reset_modal:SetWndSize(vector2():set(324, 110))
+    self.lbl_reset_modal = CUITextWnd()
+    self.lbl_reset_modal:SetAutoDelete(true)
+    self.lbl_reset_modal:SetWndPos(vector2():set(12, 18))
+    self.lbl_reset_modal:SetWndSize(vector2():set(300, 74))
+    apply_font_and_color(self.lbl_reset_modal, "GetFontLetterica16Russian", 255, 240, 200, 112, 2)
+    self.reset_modal:AttachChild(self.lbl_reset_modal)
+    self.reset_modal:Show(false)
+
+    self.lbl_footer = xml:InitTextWnd("lbl_footer", self.back)
+    self.lbl_footer:SetText(tr("ui_gp_ctrl_footer_hint"))
+end
+
+function UIGpControlsWnd:InitCallbacks()
+    self:AddCallback("gp_ctrl_tab_world", ui_events.BUTTON_CLICKED, self.OnTabWorldClicked, self)
+    self:AddCallback("gp_ctrl_tab_menu",  ui_events.BUTTON_CLICKED, self.OnTabMenuClicked,  self)
+    self:AddCallback("gp_ctrl_tab_aim",   ui_events.BUTTON_CLICKED, self.OnTabAimClicked,   self)
+    self:AddCallback("gp_ctrl_btn_wish",  ui_events.BUTTON_CLICKED, self.OnWishWheelOnYClicked, self)
+    self:AddCallback("gp_ctrl_btn_reset", ui_events.BUTTON_CLICKED, self.OnResetClicked,    self)
+    self:AddCallback("gp_ctrl_btn_close", ui_events.BUTTON_CLICKED, self.OnCloseClicked,    self)
+    for idx = 1, #SLOTS do
+        local cb_name = "gp_ctrl_slot_" .. tostring(idx)
+        self:AddCallback(cb_name, ui_events.BUTTON_CLICKED, function()
+            self:OnSlotClicked(idx)
+        end, self)
+    end
+end
+function UIGpControlsWnd:OnSlotClicked(idx)
+    if self.remap_state == "confirm_reset" then
+        return false
+    end
+    if self.remap_state == "capturing" then
+        local clicked_slot = SLOTS[idx]
+        if clicked_slot and not clicked_slot.locked then
+            return self:CompleteCaptureWithTrigger("button:" .. slot_to_engine_button_name(clicked_slot.id))
+        end
+        return false
+    end
+    local was_selected = (self.selected_slot_idx == idx)
+    self:SelectSlotByIndex(idx)
+    if was_selected then
+        return self:BeginCaptureOnSelectedSlot()
+    end
+    return true
+end
+function UIGpControlsWnd:TriggerFlashSlots(slot_ids, duration_ms, base_time_ms)
+    local base_t = tonumber(base_time_ms) or now_ms()
+    local expire = base_t + (tonumber(duration_ms) or FLASH_DURATION_MS)
+    if type(slot_ids) == "table" then
+        for _, sid in ipairs(slot_ids) do
+            if SLOT_BY_ID[sid] then
+                self.flashing_slots[sid] = expire
+            end
+        end
+    end
+    self:RefreshView()
+end
+function UIGpControlsWnd:IsSlotFlashing(slot_id, current_time)
+    local exp = self.flashing_slots and self.flashing_slots[slot_id] or nil
+    if not exp then
+        return false
+    end
+    local t = current_time or now_ms()
+    if t > exp then
+        self.flashing_slots[slot_id] = nil
+        return false
+    end
+    return true
+end
+function UIGpControlsWnd:RefreshPadTexture()
+    self.pad_family = resolve_pad_family("auto")
+    local spec = get_pad_image_spec(self.pad_family)
+    if self.lbl_pad_title then
+        self.lbl_pad_title:SetText(spec.title)
+    end
+    if self.pad_image and self.pad_image.InitTexture then
+        local ok = pcall(self.pad_image.InitTexture, self.pad_image, spec.texture)
+        if not ok then
+            pcall(self.pad_image.InitTexture, self.pad_image, spec.fallback_texture)
+        end
+    end
+end
+function UIGpControlsWnd:RefreshView()
+    self:RefreshPadTexture()
+    local _, _, _, hints_vis, cur_rev = icon_state_info()
+    self.icon_rev = cur_rev
+    self.view_model = build_context_view_model(self.current_tab, self.profile_override, self.pad_family)
+
+    -- Шапка вкладок без текстовых скобок >> <<: подсветка золотым цветом и нижней линией tab_underline
+    local w_title = tr("ui_gp_ctrl_tab_world")
+    local m_title = tr("ui_gp_ctrl_tab_menu")
+    local a_title = tr("ui_gp_ctrl_tab_aim")
+    self.btn_tab_world:TextControl():SetText(w_title)
+    self.btn_tab_menu:TextControl():SetText(m_title)
+    self.btn_tab_aim:TextControl():SetText(a_title)
+
+    if _G.GetARGB then
+        local active_clr   = _G.GetARGB(255, 240, 200, 112)
+        local inactive_clr = _G.GetARGB(255, 155, 148, 134)
+        self.btn_tab_world:TextControl():SetTextColor(self.current_tab == "world" and active_clr or inactive_clr)
+        self.btn_tab_menu:TextControl():SetTextColor(self.current_tab == "menu" and active_clr or inactive_clr)
+        self.btn_tab_aim:TextControl():SetTextColor(inactive_clr)
+    end
+    if self.tab_underline then
+        if self.current_tab == "menu" then
+            self.tab_underline:SetWndPos(vector2():set(324, 41))
+            self.tab_underline:SetWndSize(vector2():set(164, 3))
+        else
+            self.tab_underline:SetWndPos(vector2():set(196, 41))
+            self.tab_underline:SetWndSize(vector2():set(120, 3))
+        end
+    end
+
+    local t_now = now_ms()
+    local blink_bright = (math.floor(t_now / FLASH_BLINK_PERIOD_MS) % 2) == 0
+
+    for idx, sdata in ipairs(self.view_model.slots) do
+        local w = self.slot_widgets[idx]
+        if w then
+            local is_sel = (idx == self.selected_slot_idx)
+            local is_capturing_this = (self.remap_state == "capturing" and self.capture_slot_id == sdata.id)
+            local is_flashing = self:IsSlotFlashing(sdata.id, t_now)
+            local highlight = is_capturing_this or is_flashing
+
+            -- Обновляем текстуру карточки (XAG 113: заливка + золотой маркер при выборе/захвате) и глиф кнопки
+            if w.frame and w.frame.InitTexture then
+                local card_tex = (is_sel or highlight) and 'ui_gp_card_focus' or 'ui_gp_card_flat'
+                pcall(w.frame.InitTexture, w.frame, card_tex)
+            end
+            if w.icon_glyph and w.icon_glyph.InitTexture then
+                local g_tex = slot_glyph_tex(sdata.id, self.pad_family)
+                pcall(w.icon_glyph.InitTexture, w.icon_glyph, g_tex)
+                fit_slot_icon_glyph(w.icon_glyph, w.rx_rel, w.ry_rel, sdata.id, self.pad_family)
+            end
+
+            local has_hold = (sdata.hold_Full_text and sdata.hold_Full_text ~= "") or (is_capturing_this and self.capture_sub_kind == "hold")
+            if has_hold then
+                -- Двухъярусная вёрстка на всю ширину карточки: сверху основное действие, снизу [Удерж.] без обрезаний
+                w.lbl_hdr:SetWndPos(vector2():set(w.rx_rel + 168, w.ry_rel + 5))
+                w.lbl_hdr:SetWndSize(vector2():set(70, 18))
+                if w.lbl_hdr.SetTextAlignment then w.lbl_hdr:SetTextAlignment(1) end
+                w.lbl_hdr:SetText(sdata.button_title or sdata.header_text)
+
+                w.lbl_tap:SetWndPos(vector2():set(w.rx_rel + 34, w.ry_rel + 5))
+                w.lbl_tap:SetWndSize(vector2():set(164, 20))
+                apply_font_and_color(w.lbl_tap, "GetFontLetterica16Russian", 255, 236, 230, 216, 0)
+
+                w.lbl_hold:SetWndPos(vector2():set(w.rx_rel + 34, w.ry_rel + 28))
+                w.lbl_hold:SetWndSize(vector2():set(204, 20))
+                if w.lbl_hold.SetTextAlignment then w.lbl_hold:SetTextAlignment(0) end
+                w.lbl_hold:Show(true)
+            else
+                -- Одиночное действие: сверху спокойная подпись кнопки, снизу крупно основное действие
+                w.lbl_hdr:SetWndPos(vector2():set(w.rx_rel + 34, w.ry_rel + 6))
+                w.lbl_hdr:SetWndSize(vector2():set(204, 18))
+                if w.lbl_hdr.SetTextAlignment then w.lbl_hdr:SetTextAlignment(0) end
+                w.lbl_hdr:SetText(sdata.header_text)
+
+                w.lbl_tap:SetWndPos(vector2():set(w.rx_rel + 34, w.ry_rel + 24))
+                w.lbl_tap:SetWndSize(vector2():set(204, 22))
+                apply_font_and_color(w.lbl_tap, "GetFontLetterica18Russian", 255, 236, 230, 216, 0)
+
+                w.lbl_hold:SetText("")
+                w.lbl_hold:Show(false)
+            end
+
+            if is_capturing_this then
+                local prompt_lbl = blink_bright and tr("ui_gp_ctrl_capture_slot") or ("   " .. tr("ui_gp_ctrl_capture_slot"))
+                if self.capture_sub_kind == "hold" then
+                    w.lbl_tap:SetText(sdata.tap_text)
+                    w.lbl_hold:SetText(tr("ui_gp_ctrl_hold_prefix") .. prompt_lbl)
+                else
+                    w.lbl_tap:SetText(prompt_lbl)
+                    w.lbl_hold:SetText(sdata.hold_Full_text or "")
+                end
+            else
+                w.lbl_tap:SetText(sdata.tap_text)
+                w.lbl_hold:SetText(sdata.hold_Full_text or "")
+            end
+
+            if _G.GetARGB then
+                local hdr_clr, tap_clr, hold_clr, line_clr, dot_clr
+                if highlight then
+                    if blink_bright then
+                        hdr_clr  = _G.GetARGB(255, 255, 210, 122)
+                        tap_clr  = _G.GetARGB(255, 255, 235, 160)
+                        hold_clr = _G.GetARGB(255, 255, 225, 140)
+                        line_clr = _G.GetARGB(255, 255, 210, 122)
+                        dot_clr  = _G.GetARGB(255, 255, 225, 130)
+                    else
+                        hdr_clr  = _G.GetARGB(255, 180, 135, 50)
+                        tap_clr  = _G.GetARGB(255, 212, 166, 74)
+                        hold_clr = _G.GetARGB(255, 195, 150, 65)
+                        line_clr = _G.GetARGB(255, 180, 135, 50)
+                        dot_clr  = _G.GetARGB(255, 212, 166, 74)
+                    end
+                else
+                    hdr_clr  = is_sel and _G.GetARGB(255, 212, 166, 74) or _G.GetARGB(255, 143, 136, 122)
+                    tap_clr  = (is_sel and self.selected_sub_kind ~= "hold") and _G.GetARGB(255, 255, 240, 185) or _G.GetARGB(255, 236, 230, 216)
+                    hold_clr = (is_sel and self.selected_sub_kind == "hold") and _G.GetARGB(255, 255, 235, 160) or _G.GetARGB(255, 232, 192, 110)
+                    line_clr = is_sel and _G.GetARGB(255, 240, 200, 112) or _G.GetARGB(120, 138, 116, 68)
+                    dot_clr  = is_sel and _G.GetARGB(255, 255, 215, 110) or _G.GetARGB(220, 212, 166, 74)
+                end
+                w.lbl_hdr:SetTextColor(hdr_clr)
+                w.lbl_tap:SetTextColor(tap_clr)
+                w.lbl_hold:SetTextColor(hold_clr)
+                if w.seg_h and w.seg_h.SetTextureColor then w.seg_h:SetTextureColor(line_clr) end
+                if w.seg_v and w.seg_v.SetTextureColor then w.seg_v:SetTextureColor(line_clr) end
+                if w.seg_h2 and w.seg_h2.SetTextureColor then w.seg_h2:SetTextureColor(line_clr) end
+                if w.dot and w.dot.SetTextureColor then w.dot:SetTextureColor(dot_clr) end
+            end
+        end
+    end
+
+    local chords = self.view_model.chords or {}
+    for i = 1, #self.chord_widgets do
+        local cw = self.chord_widgets[i]
+        local cdata = chords[i]
+        if cdata then
+            cw.frame:Show(true)
+            cw.lbl:Show(true)
+            cw.lbl:SetText(cdata.chip_text)
+        else
+            cw.frame:Show(false)
+            cw.lbl:Show(false)
+            cw.lbl:SetText("")
+        end
+    end
+    if self.reset_modal and self.lbl_reset_modal then
+        if self.remap_state == "confirm_reset" then
+            self.reset_modal:Show(true)
+            self.lbl_reset_modal:SetText(tr("ui_gp_ctrl_reset_confirm"))
+        else
+            self.reset_modal:Show(false)
+        end
+    end
+    if self.lbl_footer then
+        if self.remap_state == "capturing" then
+            self.lbl_footer:SetText(tr("ui_gp_ctrl_capture_prompt"))
+            self.lbl_footer:Show(true)
+        elseif self.remap_state == "confirm_reset" then
+            self.lbl_footer:SetText(tr("ui_gp_ctrl_reset_confirm"))
+            self.lbl_footer:Show(true)
+        elseif type(self.status_message) == "string" and self.status_message ~= "" then
+            self.lbl_footer:SetText(self.status_message)
+            self.lbl_footer:Show(true)
+        else
+            self.lbl_footer:SetText(tr("ui_gp_ctrl_footer_hint"))
+            self.lbl_footer:Show(hints_vis)
+        end
+    end
+end
+function UIGpControlsWnd:SelectSlotByIndex(idx)
+    local n = #SLOTS
+    if n == 0 then return false end
+    local clamped = tonumber(idx) or 1
+    if clamped < 1 then clamped = 1 end
+    if clamped > n then clamped = n end
+    self.selected_slot_idx = clamped
+    self.selected_sub_kind = "tap"
+    self.status_message = nil
+    self.status_is_error = false
+    self:RefreshView()
+    return true
+end
+function UIGpControlsWnd:SelectSlotById(slot_id)
+    local s = SLOT_BY_ID[tostring(slot_id or "")]
+    if not s then
+        return false
+    end
+    return self:SelectSlotByIndex(s.index)
+end
+function UIGpControlsWnd:ToggleSelectedSubKind()
+    if self.selected_sub_kind == "tap" then
+        self.selected_sub_kind = "hold"
+    else
+        self.selected_sub_kind = "tap"
+    end
+    self:RefreshView()
+    return self.selected_sub_kind
+end
+function UIGpControlsWnd:GetSelectedSlot()
+    if self.view_model and self.view_model.slots then
+        return self.view_model.slots[self.selected_slot_idx]
+    end
+    return SLOTS[self.selected_slot_idx]
+end
+-- Определяет, какое действие на выбранной подписи будет переназначено при нажатии A (K5b п.1)
+function UIGpControlsWnd:ResolveTargetActionForSlot(sdata, preferred_sub_kind)
+    if not sdata or sdata.locked then
+        return nil, nil
+    end
+    local sub = preferred_sub_kind or self.selected_sub_kind or "tap"
+    if sub == "hold" and sdata.hold_action_id then
+        return sdata.hold_action_id, "hold"
+    end
+    if sdata.tap_action_id and sdata.tap_action_id ~= "NavigateCells" then
+        return sdata.tap_action_id, "tap"
+    end
+    if sdata.hold_action_id then
+        return sdata.hold_action_id, "hold"
+    end
+    return nil, nil
+end
+-- K5b п.1: Вход в режим «нажмите кнопку» (подпись мигает) по нажатию A на выбранной подписи
+function UIGpControlsWnd:BeginCaptureOnSelectedSlot(preferred_sub_kind)
+    local sdata = self:GetSelectedSlot()
+    if not sdata then
+        return false, "no_slot"
+    end
+    if sdata.locked or LOCKED_SLOTS[sdata.id] then
+        self.status_message = tr("ui_gp_ctrl_err_locked")
+        self.status_is_error = true
+        self:RefreshView()
+        return false, "locked_stick"
+    end
+    local act_id, sub_kind = self:ResolveTargetActionForSlot(sdata, preferred_sub_kind)
+    if not act_id then
+        return false, "no_action_on_slot"
+    end
+    self.remap_state = "capturing"
+    self.capture_slot_id = sdata.id
+    self.capture_action_id = act_id
+    self.capture_sub_kind = sub_kind or "tap"
+    self.capture_start_ms = now_ms()
+    self.capture_primary_btn = nil
+    self.capture_press_ms = 0
+    self.capture_second_btn = nil
+    self.status_message = nil
+    self.status_is_error = false
+    self:RefreshView()
+    return true, act_id
+end
+function UIGpControlsWnd:CancelCapture()
+    if self.remap_state ~= "capturing" then
+        return false
+    end
+    self.remap_state = "browse"
+    self.capture_slot_id = nil
+    self.capture_action_id = nil
+    self.capture_primary_btn = nil
+    self.capture_press_ms = 0
+    self.capture_second_btn = nil
+    self.status_message = nil
+    self.status_is_error = false
+    self:RefreshView()
+    return true
+end
+-- K5b п.1, 2, 4, 5: Применение захваченного триггера ("button:Y", "hold:Y:220", "chord:LT+X")
+function UIGpControlsWnd:CompleteCaptureWithTrigger(trigger_spec, timestamp_ms)
+    if self.remap_state ~= "capturing" or not self.capture_action_id then
+        return false, "not_capturing"
+    end
+    local act_id = self.capture_action_id
+    local res = apply_remap_action(self.current_tab, act_id, trigger_spec, self.profile_override)
+    self.remap_state = "browse"
+    self.capture_slot_id = nil
+    self.capture_action_id = nil
+    self.capture_primary_btn = nil
+    self.capture_press_ms = 0
+    self.capture_second_btn = nil
+    if not res.ok then
+        if res.reason == "locked_stick" then
+            self.status_message = tr("ui_gp_ctrl_err_locked")
+        elseif res.reason == "missing_pause" then
+            self.status_message = tr("ui_gp_ctrl_err_pause")
+        elseif res.reason == "missing_back" then
+            self.status_message = tr("ui_gp_ctrl_err_back")
+        else
+            self.status_message = tostring(res.reason)
+        end
+        self.status_is_error = true
+        self:RefreshView()
+        return false, res.reason
+    end
+    if type(self.profile_override) == "string" then
+        self.profile_override = res.profile_text
+    end
+    self.status_message = nil
+    self.status_is_error = false
+    self:TriggerFlashSlots(res.flashed_slots, FLASH_DURATION_MS, timestamp_ms)
+    return true, res
+end
+-- Обработка нажатия и отпускания кнопок геймпада во время захвата (K5b п.1):
+-- - короткое нажатие (< CAPTURE_HOLD_THRESHOLD_MS) = «нажать» (button:<Btn>)
+-- - удержание (>= CAPTURE_HOLD_THRESHOLD_MS) = «удерживать» (hold:<Btn>:<ms>)
+-- - две кнопки одновременно = «сочетание» (chord:<Mod>+<Btn>)
+-- - B — отмена захвата
+function UIGpControlsWnd:OnCaptureButtonDown(btn_name, timestamp_ms)
+    if self.remap_state ~= "capturing" then
+        return false
+    end
+    local norm = normalize_button_id(btn_name)
+    if not norm then
+        return false
+    end
+    if LOCKED_SLOTS[norm] then
+        self.status_message = tr("ui_gp_ctrl_err_locked")
+        self.status_is_error = true
+        self:CancelCapture()
+        self.status_message = tr("ui_gp_ctrl_err_locked")
+        self.status_is_error = true
+        self:RefreshView()
+        return false, "locked_stick"
+    end
+    -- B отменяет режим захвата (кроме случая, когда зажата первая кнопка для сочетания типа LT + B)
+    if norm == "B" and not self.capture_primary_btn then
+        self:CancelCapture()
+        return true, "cancelled"
+    end
+    local t = tonumber(timestamp_ms) or now_ms()
+    if not self.capture_primary_btn then
+        self.capture_primary_btn = norm
+        self.capture_press_ms = t
+        return true, "primary_down"
+    elseif self.capture_primary_btn ~= norm then
+        -- Вторая кнопка при удерживаемой первой = сочетание (chord)
+        self.capture_second_btn = norm
+        local mod_eng = slot_to_engine_button_name(self.capture_primary_btn)
+        local btn_eng = slot_to_engine_button_name(norm)
+        return self:CompleteCaptureWithTrigger("chord:" .. mod_eng .. "+" .. btn_eng, t)
+    end
+    return true, "repeat_down"
+end
+function UIGpControlsWnd:OnCaptureButtonUp(btn_name, timestamp_ms)
+    if self.remap_state ~= "capturing" or not self.capture_primary_btn then
+        return false
+    end
+    local norm = normalize_button_id(btn_name)
+    if norm ~= self.capture_primary_btn then
+        return false
+    end
+    local t = tonumber(timestamp_ms) or now_ms()
+    local held_ms = math.max(0, t - (self.capture_press_ms or t))
+    local btn_eng = slot_to_engine_button_name(self.capture_primary_btn)
+    local act_id = self.capture_action_id
+    if held_ms >= CAPTURE_HOLD_THRESHOLD_MS and act_id ~= "PauseMenu" and act_id ~= "Back" and act_id ~= "Confirm" then
+        local def_ms = (act_id and DEFAULT_ACTION_HOLD_MS[act_id]) or 300
+        return self:CompleteCaptureWithTrigger(string.format("hold:%s:%d", btn_eng, def_ms), t)
+    else
+        return self:CompleteCaptureWithTrigger("button:" .. btn_eng, t)
+    end
+end
+-- K5b п.3: Запрос сброса к стандартным (с подтверждением) и подтверждение / отмена
+function UIGpControlsWnd:RequestResetCurrentTab()
+    if self.remap_state == "capturing" then
+        self:CancelCapture()
+    end
+    self.remap_state = "confirm_reset"
+    self.status_message = nil
+    self.status_is_error = false
+    self:RefreshView()
+    return true
+end
+function UIGpControlsWnd:ConfirmResetCurrentTab()
+    if self.remap_state ~= "confirm_reset" then
+        return false
+    end
+    local res = reset_context_bindings(self.current_tab, self.profile_override)
+    if type(self.profile_override) == "string" then
+        self.profile_override = res.profile_text
+    end
+    self.remap_state = "browse"
+    self.status_message = tr("ui_gp_ctrl_reset_done")
+    self.status_is_error = false
+    self:TriggerFlashSlots(res.flashed_slots, FLASH_DURATION_MS)
+    return true, res
+end
+function UIGpControlsWnd:CancelResetCurrentTab()
+    if self.remap_state ~= "confirm_reset" then
+        return false
+    end
+    self.remap_state = "browse"
+    self.status_message = nil
+    self.status_is_error = false
+    self:RefreshView()
+    return true
+end
+function UIGpControlsWnd:OnWishWheelOnYClicked()
+    if self.remap_state ~= "browse" then
+        self.remap_state = "browse"
+    end
+    self.current_tab = "world"
+    local res = apply_preset_wheel_on_y(self.profile_override)
+    if res.ok and type(self.profile_override) == "string" then
+        self.profile_override = res.profile_text
+    end
+    self:TriggerFlashSlots(res.flashed_slots, FLASH_DURATION_MS)
+    return res.ok
+end
+function UIGpControlsWnd:Update()
+    CUIScriptWnd.Update(self)
+    local t_now = now_ms()
+    if self.remap_state == "capturing" then
+        if self.capture_start_ms > 0 and (t_now - self.capture_start_ms) >= CAPTURE_TIMEOUT_MS then
+            self:CancelCapture()
+            return
+        end
+        self:RefreshView()
+        return
+    end
+    -- Набор глифов или стиль/масштаб значков мог смениться в настройках, пока экран открыт.
+    local cur_family = resolve_pad_family("auto")
+    local _, _, _, _, cur_rev = icon_state_info()
+    if cur_family ~= self.pad_family or cur_rev ~= self.icon_rev then
+        self:RefreshView()
+        return
+    end
+    local any_flashing = false
+    for sid, exp in pairs(self.flashing_slots) do
+        if t_now <= exp then
+            any_flashing = true
+        else
+            self.flashing_slots[sid] = nil
+        end
+    end
+    if any_flashing then
+        self:RefreshView()
+    end
+end
+-- Навигация крестовиной / стиком между левой (1..9) и правой (10..18) колонками подписей
+function UIGpControlsWnd:NavigateSlots(dir)
+    if self.remap_state ~= "browse" then
+        return false
+    end
+    local cur = SLOTS[self.selected_slot_idx] or SLOTS[1]
+    local side = cur.side
+    local row = cur.row
+    if dir == "up" then
+        row = (row > 1) and (row - 1) or 9
+    elseif dir == "down" then
+        row = (row < 9) and (row + 1) or 1
+    elseif dir == "left" then
+        side = "L"
+    elseif dir == "right" then
+        side = "R"
+    else
+        return false
+    end
+    local target_idx = (side == "L") and row or (9 + row)
+    return self:SelectSlotByIndex(target_idx)
+end
+function UIGpControlsWnd:SwitchTab(tab_id)
+    if self.remap_state == "capturing" then
+        self:CancelCapture()
+    elseif self.remap_state == "confirm_reset" then
+        self:CancelResetCurrentTab()
+    end
+    local target = tostring(tab_id or "world")
+    if target == "aim" then
+        if _G.ui_gp_aim and type(_G.ui_gp_aim.open) == "function" then
+            self:CloseWindow()
+            pcall(_G.ui_gp_aim.open)
+            return true
+        elseif _G.ui_gp_aim and type(_G.ui_gp_aim.open_aim_window) == "function" then
+            self:CloseWindow()
+            pcall(_G.ui_gp_aim.open_aim_window)
+            return true
+        elseif _G.ui_gp_aim and type(_G.ui_gp_aim.start_gamepad_aim_ui) == "function" then
+            self:CloseWindow()
+            pcall(_G.ui_gp_aim.start_gamepad_aim_ui)
+            return true
+        end
+        return false
+    end
+    if target ~= "menu" then
+        target = "world"
+    end
+    self.current_tab = target
+    self:RefreshView()
+    return true
+end
+function UIGpControlsWnd:CycleTab(delta)
+    local step = (tonumber(delta) and tonumber(delta) < 0) and -1 or 1
+    local cur_i = 1
+    for i, tid in ipairs(TAB_IDS) do
+        if tid == self.current_tab then
+            cur_i = i
+            break
+        end
+    end
+    local next_i = ((cur_i - 1 + step) % #TAB_IDS) + 1
+    local next_tab = TAB_IDS[next_i]
+    if next_tab == "aim" then
+        if not self:SwitchTab("aim") then
+            next_tab = (self.current_tab == "world") and "menu" or "world"
+            return self:SwitchTab(next_tab)
+        end
+        return true
+    end
+    return self:SwitchTab(next_tab)
+end
+function UIGpControlsWnd:OnTabWorldClicked()
+    self:SwitchTab("world")
+end
+function UIGpControlsWnd:OnTabMenuClicked()
+    self:SwitchTab("menu")
+end
+function UIGpControlsWnd:OnTabAimClicked()
+    self:SwitchTab("aim")
+end
+function UIGpControlsWnd:OnResetClicked()
+    self:RequestResetCurrentTab()
+end
+function UIGpControlsWnd:OnCloseClicked()
+    self:CloseWindow()
+end
+function UIGpControlsWnd:OpenWindow(tab_id)
+    if tab_id == "world" or tab_id == "menu" then
+        self.current_tab = tab_id
+    end
+    self.remap_state = "browse"
+    self:RefreshView()
+    if not self:IsShown() then
+        self:ShowDialog(true)
+    end
+    if type(_G.Register_UI) == "function" then
+        pcall(_G.Register_UI, "UIGpControlsWnd", "ui_gp_controls")
+    end
+    return true
+end
+function UIGpControlsWnd:CloseWindow()
+    self.remap_state = "browse"
+    if self:IsShown() then
+        self:HideDialog()
+    end
+    if type(_G.Unregister_UI) == "function" then
+        pcall(_G.Unregister_UI, "UIGpControlsWnd")
+    end
+    return true
+end
+function UIGpControlsWnd:OnKeyboard(dik, keyboard_action)
+    local res = CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+    if keyboard_action ~= ui_events.WINDOW_KEY_PRESSED then
+        return res
+    end
+    local k_esc   = (DIK_keys and DIK_keys.DIK_ESCAPE) or 1
+    local k_back  = (DIK_keys and DIK_keys.DIK_BACK) or 14
+    local k_ret   = (DIK_keys and DIK_keys.DIK_RETURN) or 28
+    local k_space = (DIK_keys and DIK_keys.DIK_SPACE) or 57
+    local k_y     = (DIK_keys and DIK_keys.DIK_Y) or 21
+    local k_x     = (DIK_keys and DIK_keys.DIK_X) or 45
+    local k_up    = (DIK_keys and DIK_keys.DIK_UP) or 200
+    local k_w     = (DIK_keys and DIK_keys.DIK_W) or 17
+    local k_down  = (DIK_keys and DIK_keys.DIK_DOWN) or 208
+    local k_s     = (DIK_keys and DIK_keys.DIK_S) or 31
+    local k_left  = (DIK_keys and DIK_keys.DIK_LEFT) or 203
+    local k_a     = (DIK_keys and DIK_keys.DIK_A) or 30
+    local k_right = (DIK_keys and DIK_keys.DIK_RIGHT) or 205
+    local k_d     = (DIK_keys and DIK_keys.DIK_D) or 32
+    local k_q     = (DIK_keys and DIK_keys.DIK_Q) or 16
+    local k_lbr   = (DIK_keys and DIK_keys.DIK_LBRACKET) or 26
+    local k_e     = (DIK_keys and DIK_keys.DIK_E) or 18
+    local k_rbr   = (DIK_keys and DIK_keys.DIK_RBRACKET) or 27
+    local k_tab   = (DIK_keys and DIK_keys.DIK_TAB) or 15
+    -- 1. В режиме подтверждения сброса (K5b п.3): A/Enter = подтвердить, B/Esc = отменить
+    if self.remap_state == "confirm_reset" then
+        if dik == k_ret or dik == k_space then
+            self:ConfirmResetCurrentTab()
+            return true
+        elseif dik == k_esc or dik == k_back then
+            self:CancelResetCurrentTab()
+            return true
+        end
+        return true
+    end
+    -- 2. В режиме «нажмите кнопку» (K5b п.1): B/Esc = отмена захвата
+    if self.remap_state == "capturing" then
+        if dik == k_esc or dik == k_back then
+            self:CancelCapture()
+            return true
+        end
+        return true
+    end
+    -- 3. Обычный режим просмотра и выбора подписи
+    if dik == k_esc or dik == k_back then
+        self:CloseWindow()
+        return true
+    elseif dik == k_ret or dik == k_space then
+        self:BeginCaptureOnSelectedSlot()
+        return true
+    elseif dik == k_y then
+        self:RequestResetCurrentTab()
+        return true
+    elseif dik == k_x then
+        self:ToggleSelectedSubKind()
+        return true
+    elseif dik == k_up or dik == k_w then
+        self:NavigateSlots("up")
+        return true
+    elseif dik == k_down or dik == k_s then
+        self:NavigateSlots("down")
+        return true
+    elseif dik == k_left or dik == k_a then
+        self:NavigateSlots("left")
+        return true
+    elseif dik == k_right or dik == k_d then
+        self:NavigateSlots("right")
+        return true
+    elseif dik == k_q or dik == k_lbr then
+        self:CycleTab(-1)
+        return true
+    elseif dik == k_e or dik == k_rbr or dik == k_tab then
+        self:CycleTab(1)
+        return true
+    end
+    return res
+end
+-- ---------------------------------------------------------------------------
+-- 5. Точки входа для ui_options_gamepad.script, диспетчера геймпада и тестов
+-- ---------------------------------------------------------------------------
+function get_controls_window(initial_tab)
+    if not singleton_wnd then
+        singleton_wnd = UIGpControlsWnd(initial_tab)
+    elseif initial_tab == "world" or initial_tab == "menu" then
+        singleton_wnd.current_tab = initial_tab
+        singleton_wnd:RefreshView()
+    end
+    return singleton_wnd
+end
+function open_controls_window(initial_tab)
+    local wnd = get_controls_window(initial_tab)
+    wnd:OpenWindow(initial_tab)
+    return wnd
+end
+function open(initial_tab)
+    return open_controls_window(initial_tab)
+end
+function open_tab(initial_tab)
+    return open_controls_window(initial_tab)
+end
+function close_controls_window()
+    if singleton_wnd and singleton_wnd:IsShown() then
+        singleton_wnd:CloseWindow()
+        return true
+    end
+    return false
+end
+function is_controls_window_open()
+    return singleton_wnd ~= nil and singleton_wnd:IsShown() == true
+end
+-- Обработчик кнопок геймпада для окна «Управление» (поддерживает фазы "down"/"up"/"tap" для K5b)
+function on_gamepad_button(btn_name, phase, timestamp_ms)
+    if not is_controls_window_open() or not singleton_wnd then
+        return false
+    end
+    local wnd = singleton_wnd
+    local p = string.lower(tostring(phase or "tap"))
+    local norm = normalize_button_id(btn_name)
+    if wnd.remap_state == "confirm_reset" then
+        if p == "up" then return true end
+        if norm == "A" then
+            wnd:ConfirmResetCurrentTab()
+            return true
+        elseif norm == "B" then
+            wnd:CancelResetCurrentTab()
+            return true
+        end
+        return true
+    end
+    if wnd.remap_state == "capturing" then
+        if p == "down" then
+            wnd:OnCaptureButtonDown(btn_name, timestamp_ms)
+            return true
+        elseif p == "up" then
+            wnd:OnCaptureButtonUp(btn_name, timestamp_ms)
+            return true
+        else
+            local t0 = tonumber(timestamp_ms) or now_ms()
+            if norm == "B" and not wnd.capture_primary_btn then
+                wnd:CancelCapture()
+                return true
+            end
+            wnd:OnCaptureButtonDown(btn_name, t0)
+            wnd:OnCaptureButtonUp(btn_name, t0 + 50)
+            return true
+        end
+    end
+    if p == "up" then
+        return false
+    end
+    if norm == "A" then
+        return wnd:BeginCaptureOnSelectedSlot()
+    elseif norm == "B" then
+        return wnd:CloseWindow()
+    elseif norm == "Y" then
+        return wnd:RequestResetCurrentTab()
+    elseif norm == "X" then
+        wnd:ToggleSelectedSubKind()
+        return true
+    elseif norm == "LB" then
+        return wnd:CycleTab(-1)
+    elseif norm == "RB" then
+        return wnd:CycleTab(1)
+    elseif norm == "DU" then
+        return wnd:NavigateSlots("up")
+    elseif norm == "DD" then
+        return wnd:NavigateSlots("down")
+    elseif norm == "DL" then
+        return wnd:NavigateSlots("left")
+    elseif norm == "DR" then
+        return wnd:NavigateSlots("right")
+    end
+    return false
+end
+function start_gamepad_controls_ui(self_opt)
+    if self_opt and type(self_opt.On_Cancel) == "function" then
+        pcall(self_opt.On_Cancel, self_opt)
+    end
+    return open_controls_window("world")
+end
+-- ---------------------------------------------------------------------------
+-- 6. Встроенная самопроверка (selftest)
+-- ---------------------------------------------------------------------------
+function selftest()
+    local vm_world = build_context_view_model("world", "", "xbox")
+    if not vm_world or #vm_world.slots ~= 18 then
+        return "FAIL:slots_count_world"
+    end
+    if vm_world.slot_by_id.RB.hold_action_id ~= "KnifeDraw" then
+        return "FAIL:default_rb_knife"
+    end
+    local clean_4res = dump_controls_layout_4res(100)
+    if not clean_4res then
+        return "FAIL:layout_4res"
+    end
+    return "PASS"
+end
+function on_game_start()
+end

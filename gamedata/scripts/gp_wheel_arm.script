@@ -1,0 +1,762 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+--[[
+    Quick Action Wheel - Abstract Radial Menu (ARM) base framework
+    Adapted for G.A.M.M.A. Gamepad Mod (Step E5.1, Decisions D45, D58, FIX-Wheel1)
+
+    Original authors & credits:
+      - HarukaSai (Original Quick Action Wheel & Abstract Radial Menu)
+      - Aoldri, RavenAscendant, demonized
+      - Original addon: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheel
+
+    Namespace: gp_wheel_arm
+    Compatibility alias: _G.haru_arm = gp_wheel_arm (replaces Haru QAW + Balance per D58; preserves Wearable Devices wd_qaw_preview)
+
+    Key Features (FIX-Wheel1):
+      - 16:9 Widescreen aspect ratio geometry compensation (aspect = (H/W) / (768/1024) = 0.75 on 16:9)
+        * Perfect circular physical wheel ring (Rx == Ry, ratio = 1.0)
+        * Isotropic stick/cursor polar angle calculation without angular oval distortion
+        * Physical circular deadzone and nearest-cell metric
+      - Native Haru UICellContainer / UICellItem integration (CreateItemCell / ItemCell)
+        * Correct Anomaly inventory shaders (no black silhouettes)
+        * Item-anchored counter badge (no detached x1/x2 counters)
+        * Safe offline/test fallback when utils_ui is unavailable
+]]
+
+local cursor_alpha = 200
+
+local function get_anim_clock_ms()
+    if game and game.get_time_continual then
+        return game.get_time_continual()
+    end
+    if time_continual then
+        return time_continual()
+    end
+    return time_global()
+end
+
+function rotate_point(point, angle)
+    local rad = math.rad(angle)
+    return vector2():set(
+        math.cos(rad) * point.x - math.sin(rad) * point.y,
+        math.sin(rad) * point.x + math.cos(rad) * point.y
+    )
+end
+
+-- Simple Kahan summation for tracking truncation errors
+KahanAccumulator = {
+    sum = 0,
+    err = 0,
+    new = function(self)
+        return setmetatable({ sum = 0, err = 0 }, { __index = self })
+    end,
+    add = function(self, n)
+        local y = n - self.err
+        local t = self.sum + y
+        self.err = (t - self.sum) - y
+        self.sum = t
+        return self.sum
+    end,
+    sub = function(self, n)
+        return self:add(-n)
+    end,
+    reset = function(self)
+        self.sum = 0
+        self.err = 0
+        return self.sum
+    end
+}
+setmetatable(KahanAccumulator, {
+    __call = function(cls)
+        return cls:new()
+    end
+})
+
+-- Fix the displacement after scaling of UI element
+function ScaleElement(elem, elem_base, scale_x, scale_y, scale_type, point, err_x, err_y)
+    scale_y = scale_y or scale_x
+    scale_type = scale_type or 0
+    point = point or vector2():set(elem_base.pos)
+    local pos = elem_base.pos
+    local width = elem_base.width
+    local height = elem_base.height
+    elem:SetWndSize(vector2():set(width * scale_x, height * scale_y))
+    if scale_type == 0 then
+        local new_x = point.x - (elem:GetWidth() / 2)
+        local new_y = point.y - (elem:GetHeight() / 2)
+        if err_x then
+            err_x:reset()
+            err_x:add(new_x)
+            err_x:sub(math.floor(new_x))
+        end
+        if err_y then
+            err_y:reset()
+            err_y:add(new_y)
+            err_y:sub(math.floor(new_y))
+        end
+        elem:SetWndPos(vector2():set(
+            math.floor(new_x),
+            math.floor(new_y)
+        ))
+    elseif scale_type == 1 then
+        local new_width = width * scale_x
+        local new_height = height * scale_y
+        local new_x = pos.x + (width - new_width) / 2
+        local new_y = pos.y + (height - new_height) / 2
+        if err_x then
+            new_x = err_x:add(new_x)
+            err_x:sub(math.floor(new_x))
+        end
+        if err_y then
+            new_y = err_y:add(new_y)
+            err_y:sub(math.floor(new_y))
+        end
+        elem:SetWndPos(vector2():set(
+            math.floor(new_x),
+            math.floor(new_y)
+        ))
+    end
+end
+
+function CreateElementBase(elem, scale_x, scale_y)
+    scale_x = scale_x or 1
+    scale_y = scale_y or scale_x
+    local elem_base = {
+        pos = vector2():set(elem:GetWndPos()),
+        width = elem:GetWidth() * scale_x,
+        height = elem:GetHeight() * scale_y
+    }
+    return elem_base
+end
+
+function ScaleToRect(elem, rect, mult)
+    mult = mult or 0.75
+    local width = elem:GetWidth()
+    local height = elem:GetHeight()
+    local rect_width = rect:GetWidth()
+    local rect_height = rect:GetHeight()
+    local ratio = (rect_width / width)
+    if height * ratio > rect_height then
+        ratio = (rect_height / height)
+    end
+    elem:SetWndSize(vector2():set(width * ratio * mult, height * ratio * mult))
+end
+
+local _arm_xml = nil
+local function get_arm_xml()
+    if not _arm_xml then
+        _arm_xml = CScriptXmlInit()
+        _arm_xml:ParseFile("ui_gp_wheel_arm.xml")
+    end
+    return _arm_xml
+end
+
+local XML_OPTION = nil
+local function get_option_xml()
+    if not XML_OPTION then
+        XML_OPTION = CScriptXmlInit()
+        XML_OPTION:ParseFile("ui_gp_wheel_option.xml")
+    end
+    return XML_OPTION
+end
+
+local MAX_SHOWN = 12
+local RADIUS = 160
+local SCREEN = {
+    width = 1024,
+    height = 768
+}
+local CENTER = vector2():set(SCREEN.width / 2, SCREEN.height / 2)
+
+function get_ui_aspect_ratio()
+    local dev = device and device() or nil
+    local w_px = (dev and dev.width and dev.width > 0) and dev.width or SCREEN.width
+    local h_px = (dev and dev.height and dev.height > 0) and dev.height or SCREEN.height
+    return (h_px / w_px) / (SCREEN.height / SCREEN.width)
+end
+
+function scale_ui(ele, adjust_x, anchor, anchor_point, parent_width)
+    local p_width = parent_width or 1024
+    local p_center = p_width / 2
+    local width = ele:GetWidth()
+    local pos = ele:GetWndPos()
+    local anchorpos = {}
+    anchorpos.left = pos.x
+    anchorpos.right = anchorpos.left + width
+    anchorpos.center = anchorpos.left + width / 2
+    local ratio = get_ui_aspect_ratio()
+    local xadjust = anchorpos.left
+    if adjust_x then
+        if anchor_point == "right" then
+            xadjust = p_width - (p_width - (anchor and anchorpos[anchor] or anchorpos.left)) * ratio
+        elseif anchor_point == "center" then
+            xadjust = p_center - (p_center - (anchor and anchorpos[anchor] or anchorpos.left)) * ratio
+        else
+            xadjust = ratio * (anchor and anchorpos[anchor] or anchorpos.left)
+        end
+    end
+    ele:SetWndSize(vector2():set(ele:GetWidth() * ratio, ele:GetHeight()))
+    ele:SetWndPos(vector2():set(xadjust, pos.y))
+end
+
+function move_and_center_element(element, x, y)
+    local pos = vector2()
+    pos.x = x - element:GetWidth() / 2
+    pos.y = y - element:GetHeight() / 2
+    element:SetWndPos(pos)
+end
+
+function InitEx(xml, type_name, path, parent, scale, offset)
+    local element = xml["Init" .. type_name](xml, path, parent)
+    local pos = element:GetWndPos()
+    scale = scale or { w = 1, h = 1 }
+    offset = offset or { x = 0, y = 0 }
+    local ratio = get_ui_aspect_ratio()
+    element:SetWndSize(vector2():set(
+        element:GetWidth() * ratio * (scale.w or 1),
+        element:GetHeight() * (scale.h or 1)
+    ))
+    element:SetWndPos(vector2():set(
+        pos.x * ratio * (scale.w or 1) + (offset.x or 0),
+        pos.y * (scale.h or 1) + (offset.y or 0)
+    ))
+    return element
+end
+
+States = {
+    ENABLED = 1,
+    HOVERED = 2,
+    SELECTED = 3,
+    DISABLED = 4,
+    TOUCHED = 2, -- Haru compatibility alias
+}
+
+StateToScale = {
+    [States.ENABLED] = 0.8,
+    [States.HOVERED] = 1,
+    [States.SELECTED] = 0.9,
+    [States.DISABLED] = 0.8
+}
+
+StateToZoom = {
+    [States.ENABLED] = false,
+    [States.HOVERED] = true,
+    [States.SELECTED] = true,
+    [States.DISABLED] = false
+}
+
+StateToColor = {
+    [States.ENABLED] = GetARGB(0, 255, 255, 255),
+    [States.HOVERED] = GetARGB(255, 255, 255, 255),
+    [States.SELECTED] = GetARGB(255, 255, 255, 255),
+    [States.DISABLED] = GetARGB(0, 255, 255, 255)
+}
+
+State2Colour = {
+    [States.ENABLED] = GetARGB(70, 255, 255, 255),
+    [States.DISABLED] = GetARGB(70, 255, 255, 255),
+    [States.SELECTED] = GetARGB(255, 255, 255, 255),
+    [States.HOVERED] = GetARGB(255, 255, 255, 255),
+}
+
+function lerp(a, b, f)
+    if a > b then
+        a, b = b, a
+        f = 1 - f
+    end
+    return a + f * (b - a)
+end
+
+--=============================================================================
+-- ItemCell: Native Haru UICellContainer / UICellItem renderer with safe fallback
+--=============================================================================
+class "ItemCell"
+
+function ItemCell:__init(parent, section, count, custom_xml)
+    self.parent = parent
+    self.section = tostring(section or "")
+    self.count = tonumber(count) or 0
+    self.xml = custom_xml or get_option_xml()
+    self.use_uicell = false
+    self.item_cont = nil
+    self.ci = nil
+    self.cnt = nil
+    self.fallback_icon = nil
+    self.fallback_cnt = nil
+    self.scale_factor = 1.0
+    self.is_destroyed = false
+
+    self:build()
+end
+
+function ItemCell:build()
+    if not self.parent then return end
+    local success = false
+    local container_cls = (utils_ui and utils_ui.UICellContainer) or _G.UICellContainer
+    if container_cls then
+        local ok, _ = pcall(function()
+            local owner = { xml = self.xml }
+            local cont_name = "gp_arm_item_" .. self.section .. "_" .. tostring(math.random(1000, 9999))
+            self.item_cont = container_cls(cont_name, owner, "cont_item", "cont_item", self.parent, true)
+            if self.item_cont then
+                self.item_cont.Callback = function() end
+                self.item_cont.disable_drag = true
+                self.item_cont.disable_info = true
+                self.item_cont.showcase = true
+                if self.item_cont.AddItemManual then
+                    self.item_cont:AddItemManual(nil, self.section, 1)
+                end
+                self.ci = self.item_cont.cell and self.item_cont.cell[1]
+                if self.ci then
+                    self.use_uicell = true
+                    if not self.ci.cnt and self.ci.cell then
+                        pcall(function()
+                            if InitEx then
+                                self.ci.cnt = InitEx(self.xml, "Static", "cont_item:cell:cnt", self.ci.cell)
+                            else
+                                self.ci.cnt = self.xml:InitStatic("cont_item:cell:cnt", self.ci.cell)
+                            end
+                        end)
+                    end
+                    self.cnt = self.ci.cnt
+                    self:center()
+                    self:update_count(self.count)
+                    success = true
+                end
+            end
+        end)
+        if not ok then success = false end
+    end
+
+    if not success then
+        -- Fallback rendering: use native CUIStatic with aspect ratio compensation
+        self.use_uicell = false
+        pcall(function()
+            if not self.fallback_icon then
+                self.fallback_icon = get_arm_xml():InitStatic("wheel:icon", self.parent)
+            end
+            if not self.fallback_cnt then
+                self.fallback_cnt = get_arm_xml():InitStatic("wheel:counter", self.parent)
+            end
+            self.cnt = self.fallback_cnt
+            if self.fallback_icon and utils_xml and utils_xml.get_item_axis and utils_xml.get_icons_texture then
+                local axis = utils_xml.get_item_axis(self.section)
+                if axis then
+                    self.fallback_icon:InitTexture(utils_xml.get_icons_texture(self.section))
+                    self.fallback_icon:SetTextureRect(Frect():set(axis.x1, axis.y1, axis.x2, axis.y2))
+                    local aspect = get_ui_aspect_ratio()
+                    self.fallback_icon:SetWndSize(vector2():set(axis.w * aspect, axis.h))
+                    ScaleToRect(self.fallback_icon, self.parent, 0.75)
+                end
+            end
+            self:center()
+            self:update_count(self.count)
+        end)
+    end
+end
+
+function ItemCell:center()
+    if not self.parent then return end
+    local aspect = get_ui_aspect_ratio()
+    local p_w = self.parent:GetWidth()
+    local p_h = self.parent:GetHeight()
+
+    if self.use_uicell and self.ci and self.ci.cell then
+        local ci = self.ci
+        local w = (ci.W or 41) * aspect * self.scale_factor
+        local h = (ci.H or 41) * self.scale_factor
+        ci.cell:SetWndSize(vector2():set(w, h))
+        local st_x = (p_w * 0.5) - (w * 0.5)
+        local st_y = (p_h * 0.5) - (h * 0.5)
+        ci.cell:SetWndPos(vector2():set(st_x, st_y))
+    elseif self.fallback_icon then
+        local icon_w = self.fallback_icon:GetWidth()
+        local icon_h = self.fallback_icon:GetHeight()
+        local st_x = (p_w * 0.5) - (icon_w * 0.5)
+        local st_y = (p_h * 0.5) - (icon_h * 0.5)
+        self.fallback_icon:SetWndPos(vector2():set(st_x, st_y))
+        if self.fallback_cnt then
+            local cnt_w = self.fallback_cnt:GetWidth()
+            local cnt_h = self.fallback_cnt:GetHeight()
+            self.fallback_cnt:SetWndPos(vector2():set(p_w - cnt_w - 2, p_h - cnt_h - 2))
+        end
+    end
+end
+
+function ItemCell:update(section, count)
+    if section and section ~= self.section then
+        self.section = tostring(section)
+        self.count = tonumber(count) or self.count
+        self:destroy()
+        self.is_destroyed = false
+        self:build()
+    else
+        self:update_count(count)
+    end
+end
+
+function ItemCell:update_count(count)
+    self.count = tonumber(count) or 0
+    local show_badge = (self.count > 0)
+    if self.cnt then
+        self.cnt:Show(show_badge)
+        if show_badge and self.cnt.TextControl then
+            self.cnt:TextControl():SetText("x" .. tostring(self.count))
+        end
+    end
+end
+
+function ItemCell:colorize(mode)
+    if self.use_uicell and self.ci and self.ci.Colorize then
+        self.ci:Colorize(mode)
+    elseif self.fallback_icon then
+        if mode == "hide" or mode == false then
+            self.fallback_icon:SetTextureColor(GetARGB(120, 255, 255, 255))
+        else
+            self.fallback_icon:SetTextureColor(GetARGB(255, 255, 255, 255))
+        end
+    end
+end
+
+function ItemCell:scale(scale_val)
+    self.scale_factor = tonumber(scale_val) or 1.0
+    self:center()
+end
+
+function ItemCell:show(bool)
+    local is_shown = (bool == true)
+    if self.item_cont and self.item_cont.prof then
+        self.item_cont.prof:Show(is_shown)
+    end
+    if self.ci and self.ci.cell then
+        self.ci.cell:Show(is_shown)
+    end
+    if self.fallback_icon then
+        self.fallback_icon:Show(is_shown)
+    end
+    if not is_shown and self.cnt then
+        self.cnt:Show(false)
+    elseif is_shown then
+        self:update_count(self.count)
+    end
+end
+
+function ItemCell:destroy()
+    if self.is_destroyed then return end
+    self.is_destroyed = true
+    if self.item_cont and self.parent and self.item_cont.prof then
+        pcall(function() self.parent:DetachChild(self.item_cont.prof) end)
+    end
+    if self.fallback_icon and self.parent then
+        pcall(function() self.parent:DetachChild(self.fallback_icon) end)
+    end
+    if self.fallback_cnt and self.parent then
+        pcall(function() self.parent:DetachChild(self.fallback_cnt) end)
+    end
+    self.item_cont = nil
+    self.ci = nil
+    self.fallback_icon = nil
+    self.fallback_cnt = nil
+    self.cnt = nil
+end
+
+function ItemCell:get_cell_item()
+    return self.ci
+end
+
+function ItemCell:is_uicell()
+    return self.use_uicell
+end
+
+function CreateItemCell(parent, section, count, custom_xml)
+    return ItemCell(parent, section, count, custom_xml)
+end
+
+--=============================================================================
+-- Haru ARM WheelOption base class (Preserving compatibility)
+--=============================================================================
+class "WheelOption"
+
+function WheelOption:__init(xml, parent)
+    self.idx = 0
+    self.xml = xml
+    self.parent = parent
+    self.state = States.ENABLED
+    self.x = (xml and xml.ReadAttribute) and tonumber(xml:ReadAttribute("container", 0, "x")) or 0
+    self.y = (xml and xml.ReadAttribute) and tonumber(xml:ReadAttribute("container", 0, "y")) or 0
+    self.angle = 0
+end
+
+function WheelOption:Draw(x, y)
+    self.x = x
+    self.y = y
+    if self.xml and self.xml.InitStatic and self.parent then
+        self.container = self.xml:InitStatic("container", self.parent)
+        move_and_center_element(self.container, x, y)
+        scale_ui(self.container, true, true, "center")
+        self.w = self.container:GetWidth()
+        self.h = self.container:GetHeight()
+    end
+end
+
+function WheelOption:Update() end
+function WheelOption:OnState(prev_state, state) end
+
+function WheelOption:Destroy()
+    if self.container and self.parent then
+        pcall(function() self.parent:DetachChild(self.container) end)
+    end
+end
+
+function WheelOption:OnClick() end
+
+function WheelOption:Click()
+    if self.state == States.DISABLED then
+        return false
+    end
+    self:OnClick()
+    return true
+end
+
+function WheelOption:CenterElement(element)
+    local w = element:GetWidth()
+    local h = element:GetHeight()
+    element:SetWndPos(vector2():set(((self.w * 0.5) - (w * 0.5)), (self.h * 0.5) - (h * 0.5)))
+end
+
+function WheelOption:SetState(state)
+    if state ~= self.state then
+        local prev_state = self.state
+        self.state = state
+        self:OnState(prev_state, state)
+    end
+end
+
+function WheelOption:GetState()
+    return self.state
+end
+
+function WheelOption:IsState(state)
+    return self.state == state
+end
+
+--=============================================================================
+-- AbstractRadialMenu: Widescreen-corrected Radial Menu Window
+--=============================================================================
+class "AbstractRadialMenu" (CUIScriptWnd)
+
+function AbstractRadialMenu:__init() super()
+    self.hovered_idx = nil
+    self.selected_idx = nil
+    self.cells = {}
+    self.cell_bases = {}
+    self.cell_points = {}
+    self.cell_states = {}
+    self.anim_timers = {}
+    self:InitControls()
+    self:InitCallBacks()
+end
+
+function AbstractRadialMenu:InitControls()
+    self:SetWndRect(Frect():set(0, 0, SCREEN.width, SCREEN.height))
+    self:SetAutoDelete(true)
+
+    self.dialog = get_arm_xml():InitStatic("wheel", self)
+
+    local aspect = get_ui_aspect_ratio()
+
+    self.bg = get_arm_xml():InitStatic("bg", self.dialog)
+    self.bg_base = CreateElementBase(self.bg, aspect, 1)
+    ScaleElement(self.bg, self.bg_base, 1, 1, 0, CENTER)
+
+    self.tab_category = get_arm_xml():InitStatic("tab_category", self.bg)
+    self.tab_category_base = CreateElementBase(self.tab_category, aspect, 1)
+    ScaleElement(self.tab_category, self.tab_category_base, 1, 1, 1)
+
+    self.title = get_arm_xml():InitTextWnd("title", self.bg)
+    self.title_base = CreateElementBase(self.title)
+    ScaleElement(self.title, self.title_base, 1, 1, 1)
+
+    self.cursor = get_arm_xml():InitStatic("wheel:cursor", self.dialog)
+    self.cursor_base = CreateElementBase(self.cursor, aspect, 1)
+    ScaleElement(self.cursor, self.cursor_base, 1, 1, 0, vector2():set(CENTER.x, CENTER.y - (self.cursor:GetHeight() / 2)))
+    self.cursor:SetTextureColor(GetARGB(cursor_alpha, 255, 255, 255))
+
+    self.cursor_text = get_arm_xml():InitTextWnd("cursor_text", self.dialog)
+    self.cursor_text_base = CreateElementBase(self.cursor_text)
+    ScaleElement(self.cursor_text, self.cursor_text_base, 1, 1, nil, CENTER)
+    self.cursor_text:Show(false)
+end
+
+function AbstractRadialMenu:InitCallBacks()
+end
+
+function AbstractRadialMenu:SetCellState(i, state, no_anim)
+    if not self.cells[i] then return end
+    self.cell_states[i] = state
+    self.cells[i]:SetTextureColor(StateToColor[state] or StateToColor[States.ENABLED])
+    if no_anim then
+        self.anim_timers[i] = nil
+        self:AnimateCell(i, 1)
+        return
+    end
+    self.anim_timers[i] = get_anim_clock_ms()
+    self:AnimateCell(i)
+end
+
+function AbstractRadialMenu:Reset()
+    local angle_step = 360 / MAX_SHOWN
+    local scale = lerp(0.55, 1.3, 1 - (MAX_SHOWN / 12))
+    local point = vector2():set(0, -RADIUS)
+    local aspect = get_ui_aspect_ratio()
+    for i = 1, MAX_SHOWN do
+        local angle = angle_step * (i - 1)
+        local rotated = rotate_point(point, angle)
+        rotated.x = rotated.x * aspect
+        local cell_pos = vector2():set(CENTER.x + rotated.x, CENTER.y + rotated.y)
+        self.cell_points[i] = cell_pos
+        if not self.cells[i] then
+            self.cells[i] = get_arm_xml():InitStatic("wheel:cell", self.dialog)
+        else
+            self.cells[i]:SetWndPos(vector2():set(0, 0))
+            self.cells[i]:SetWndSize(vector2():set(100, 100))
+        end
+        self.cell_bases[i] = CreateElementBase(self.cells[i], aspect, 1)
+        self.cell_bases[i].width = self.cell_bases[i].width * scale
+        self.cell_bases[i].height = self.cell_bases[i].height * scale
+        self.cell_states[i] = States.ENABLED
+        self.cells[i]:SetTextureColor(StateToColor[States.ENABLED])
+        self.anim_timers[i] = nil
+        ScaleElement(self.cells[i], self.cell_bases[i], StateToScale[States.ENABLED], StateToScale[States.ENABLED], 0, cell_pos)
+    end
+end
+
+function AbstractRadialMenu:Update()
+    CUIScriptWnd.Update(self)
+    local cursor_pos = GetCursorPosition and GetCursorPosition() or nil
+    if not cursor_pos then return end
+    local aspect = get_ui_aspect_ratio()
+    local dx_center = (cursor_pos.x - CENTER.x) / aspect
+    local dy_center = cursor_pos.y - CENTER.y
+    local dist = math.sqrt(dx_center * dx_center + dy_center * dy_center)
+    if dist < 50 then
+        self.cursor:Show(false)
+        if self.hovered_idx then
+            self:SetCellState(self.hovered_idx, self.selected_idx == self.hovered_idx and States.SELECTED or States.ENABLED)
+            self.hovered_idx = nil
+        end
+        self.cursor_text:SetText("")
+    else
+        self.cursor:Show(true)
+        local angle = math.atan2(dy_center, dx_center) + (math.pi / 2)
+        if angle < 0 then
+            angle = (math.pi * 2) + angle
+        end
+        local point = vector2():set(0, -self.cursor:GetHeight() / 2)
+        local rotated = rotate_point(point, math.deg(angle))
+        rotated.x = rotated.x * aspect
+        ScaleElement(self.cursor, self.cursor_base, 1, 1, 0, vector2():set(CENTER.x + rotated.x, CENTER.y + rotated.y))
+        self.cursor:SetHeading((math.pi * 2) - angle)
+        local closest_idx = nil
+        local closest_dist = math.huge
+        for i = 1, MAX_SHOWN do
+            local pos = self.cell_points[i]
+            if pos then
+                local dx = (cursor_pos.x - pos.x) / aspect
+                local dy = cursor_pos.y - pos.y
+                local d = dx * dx + dy * dy
+                if d < closest_dist then
+                    closest_idx = i
+                    closest_dist = d
+                end
+            end
+        end
+        if closest_idx and (closest_idx ~= self.hovered_idx) then
+            if self.hovered_idx then
+                self:SetCellState(self.hovered_idx, self.selected_idx == self.hovered_idx and States.SELECTED or States.ENABLED)
+            end
+            self.hovered_idx = closest_idx
+            self:SetCellState(closest_idx, States.HOVERED)
+        end
+    end
+    for i = 1, MAX_SHOWN do
+        self:AnimateCell(i)
+    end
+    if self.UpdateCallback then
+        self:UpdateCallback()
+    end
+end
+
+local anim_duration = 75
+function AbstractRadialMenu:AnimateCell(i, force_factor)
+    local state = self.cell_states[i]
+    if not (state and self.cells[i] and self.cell_bases[i] and self.cell_points[i]) then return end
+    local scale_Target = StateToScale[state] or 1
+    local scale
+    if force_factor then
+        scale = scale_Target * force_factor
+        self.anim_timers[i] = nil
+    else
+        local timer = self.anim_timers[i]
+        if not timer then
+            return
+        end
+        local time = get_anim_clock_ms() - timer
+        if time >= anim_duration then
+            scale = scale_Target
+            self.anim_timers[i] = nil
+        else
+            local zoom = StateToZoom[state]
+            local scale_Start = zoom and StateToScale[States.ENABLED] or StateToScale[States.HOVERED]
+            local factor = zoom and (time / anim_duration) or (1 - (time / anim_duration))
+            scale = lerp(scale_Start, scale_Target, factor)
+        end
+    end
+    ScaleElement(self.cells[i], self.cell_bases[i], scale, scale, 0, self.cell_points[i])
+end
+
+function AbstractRadialMenu:UpdateCallback()
+end
+
+function AbstractRadialMenu:OnKeyboard(dik, keyboard_action)
+    local res = CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+    if (res == false) then
+        if self:OnKeyboardCallback(dik, keyboard_action) then
+            return res
+        end
+        if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+            if dik == DIK_keys.DIK_ESCAPE then
+                self:Close()
+            elseif dik == DIK_keys.MOUSE_1 then
+                self:OnClick()
+            end
+        end
+    end
+    return res
+end
+
+function AbstractRadialMenu:OnKeyboardCallback(dik, keyboard_action)
+    return false
+end
+
+function AbstractRadialMenu:OnClick()
+    if (not self.hovered_idx) or (self.selected_idx == self.hovered_idx) then
+        return
+    end
+    if self.selected_idx then
+        self:SetCellState(self.selected_idx, States.ENABLED)
+    end
+    self.selected_idx = self.hovered_idx
+    self:SetCellState(self.selected_idx, States.SELECTED, true)
+end
+
+function AbstractRadialMenu:Close()
+    pcall(function()
+        if not self.IsShown or self:IsShown() then
+            self:HideDialog()
+        end
+    end)
+    if Unregister_UI then
+        pcall(Unregister_UI, "AbstractRadialMenu")
+    end
+end
+

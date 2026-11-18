@@ -1,0 +1,536 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+--[[
+    gp_error_log.script  --  Step S3b: Structured Error Report Writer (`gamepad_last_error.log`)
+
+    Purpose:
+      Writes a human-readable + technical structured diagnostic report (`gamepad_last_error.log`)
+      whenever an unexpected error is caught by `gp_safe_guard` (Step S1) or when emergency
+      failover is triggered by `gp_failover` (Step S2).
+      1. At the top of the file in clear Russian ("1. ЧТО ПРОИЗОШЛО:", "2. В КАКОЙ МОМЕНТ ИГРЫ:",
+         "3. ЧТО СДЕЛАЛА ЗАЩИТА:") provides a plain-language explanation of the issue.
+      2. Below it writes structured technical details (`stage_tag`, `origin_layer`, `error_detail`,
+         `gamepad_context`, timestamp/frame, repeat counter).
+      3. Invokes `game.gp_write_last_error_log(stage_tag, error_detail, context_name, recovery_action)`
+         when available in the engine AND writes the report directly to `appdata\gamepad_last_error.log`
+         and `gamepad_last_error.log` in the stand root (with anti-spam throttling for repeated errors).
+--]]
+
+local LOG_FILE_NAME = "gamepad_last_error.log"
+local ANTI_SPAM_WRITE_WINDOW_MS = 5000
+local ANTI_SPAM_WRITE_STEP = 50
+
+local function tr(id, fb)
+    if game and type(game.translate_string) == "function" then
+        local ok, s = pcall(game.translate_string, id)
+        if ok and type(s) == "string" and s ~= "" and s ~= id then
+            return s
+        end
+    end
+    return fb
+end
+
+local CONTEXT_DESC_MAP = {
+    World_Gameplay             = { "ui_gp_err_ctx_world",    "During normal gameplay (walking, combat, or exploring)" },
+    Field_OnFoot               = { "ui_gp_err_ctx_world",    "During normal gameplay (walking, combat, or exploring)" },
+    MenuUI_Modal               = { "ui_gp_err_ctx_menu",     "In an open inventory, loot, trade, PDA, or menu screen" },
+    RadialWheel                = { "ui_gp_err_ctx_wheel",    "While the quick item or ammo radial wheel is open" },
+    Sleep                      = { "ui_gp_err_ctx_sleep",    "Sleep screen" },
+    Cutscene_InputBlock        = { "ui_gp_err_ctx_cutscene", "During a cutscene or item use animation" },
+    TextEntry                  = { "ui_gp_err_ctx_text",     "During text entry or key binding" },
+    Placement_HideoutFurniture = { "ui_gp_err_ctx_place",    "While placing hideout furniture" },
+}
+
+local MODULE_DESC_MAP = {
+    gp_wheel     = { "ui_gp_err_mod_wheel",     "Error in quick item or ammo wheel" },
+    gp_wheel_arm = { "ui_gp_err_mod_wheel_arm", "Error while drawing radial menu" },
+    gp_bridge    = { "ui_gp_err_mod_bridge",    "Error in cursor control or inventory item action" },
+    gp_weapon    = { "ui_gp_err_mod_weapon",    "Error while reloading, checking mag, or handling weapon" },
+    gp_field     = { "ui_gp_err_mod_field",     "Error in quick field action (headlamp, NVG, detector, grenade, or pickup)" },
+    gp_compat    = { "ui_gp_err_mod_compat",    "Error while interacting with external weapon or mag mod" },
+    gp_pda       = { "ui_gp_err_mod_pda",       "Error in gamepad PDA controls" },
+    gp_screens   = { "ui_gp_err_mod_screens",   "Error in dialog, repair, sleep, or main menu controls" },
+    gp_inv_pause = { "ui_gp_err_mod_inv_pause", "Error in inventory pause controls" },
+    gp_lifecycle = { "ui_gp_err_mod_lifecycle", "Error checking pause state or hand animation" },
+    gp_toasts    = { "ui_gp_err_mod_toasts",    "Error displaying on-screen toast notification" },
+    gp_testkit   = { "ui_gp_err_mod_testkit",   "Error in built-in test scenario" },
+    gp_failover  = { "ui_gp_err_mod_failover",  "Gamepad emergency failover triggered" },
+}
+
+local state = {
+    enabled                = true,
+    in_record              = false,
+    reentrant_skips        = 0,
+    total_recorded         = 0,
+    files_written_count    = 0,
+    cpp_calls_count        = 0,
+    suppressed_writes      = 0,
+    last_stage_tag         = "",
+    last_origin_layer      = "",
+    last_error_detail      = "",
+    last_gamepad_context   = "",
+    last_recovery_action   = "",
+    last_report_text       = "",
+    last_record_ms         = -1,
+    last_record_frame      = -1,
+    custom_output_paths    = nil,
+    error_buckets          = {},
+}
+
+function get_now_ms()
+    if game and type(game.get_time_continual) == "function" then
+        local ok, v = pcall(game.get_time_continual)
+        if ok and type(v) == "number" then return v end
+    end
+    if type(_G.time_continual) == "function" then
+        local ok, v = pcall(_G.time_continual)
+        if ok and type(v) == "number" then return v end
+    end
+    if type(_G.time_global) == "function" then
+        local ok, v = pcall(_G.time_global)
+        if ok and type(v) == "number" then return v end
+    end
+    return 0
+end
+
+function get_now_frame()
+    if type(_G.device) == "function" then
+        local ok, dev = pcall(_G.device)
+        if ok and dev and type(dev.frame) == "number" then
+            return dev.frame
+        end
+    end
+    return 0
+end
+
+function resolve_gamepad_context()
+    if game and type(game.get_gamepad_context_name) == "function" then
+        local ok, ctx = pcall(game.get_gamepad_context_name)
+        if ok and type(ctx) == "string" and ctx ~= "" then
+            return ctx
+        end
+    end
+    return "World_Gameplay"
+end
+
+function split_stage_tag(stage_tag)
+    local s = tostring(stage_tag or "unknown")
+    local mod_name, rest = string.match(s, "^([^%.]+)%.(.+)$")
+    if not mod_name then
+        mod_name = string.match(s, "^([^:]+)") or s
+        rest = s
+    end
+    return mod_name, rest
+end
+
+function resolve_origin_layer(stage_tag, info)
+    if type(info) == "table" and type(info.origin_layer) == "string" and info.origin_layer ~= "" then
+        return info.origin_layer
+    end
+    local s = tostring(stage_tag or "")
+    if string.sub(s, 1, 9) == "failover:" then
+        return "lua:gp_failover"
+    elseif string.sub(s, 1, 6) == "timer:" then
+        return "lua:timer_guard"
+    end
+    local mod_name = split_stage_tag(s)
+    if string.sub(mod_name, 1, 3) == "gp_" then
+        return "lua:" .. mod_name
+    end
+    return "lua:gp_safe_guard"
+end
+
+function resolve_human_what_happened(stage_tag, error_detail)
+    local s = tostring(stage_tag or "unknown")
+    if string.sub(s, 1, 9) == "failover:" then
+        s = string.sub(s, 10)
+    end
+    local mod_name = split_stage_tag(s)
+    local me = MODULE_DESC_MAP[mod_name]
+    local base_desc = me and tr(me[1], me[2]) or tr("ui_gp_err_mod_default", "Internal error in gamepad control handler")
+    return string.format(tr("ui_gp_err_what_fmt", "%s (node: %s; detail: %s)."), base_desc, tostring(stage_tag or "unknown"), tostring(error_detail or "unknown"))
+end
+
+function resolve_human_when_happened(gamepad_context)
+    local ctx = tostring(gamepad_context or "World_Gameplay")
+    local ce = CONTEXT_DESC_MAP[ctx]
+    local desc = ce and tr(ce[1], ce[2]) or tr("ui_gp_err_ctx_default", "During gameplay")
+    return string.format(tr("ui_gp_err_when_fmt", "%s (mode: %s)."), desc, ctx)
+end
+
+function resolve_recovery_action(info)
+    if type(info) == "table" and type(info.recovery_action) == "string" and info.recovery_action ~= "" then
+        return info.recovery_action
+    end
+    local failed_over = false
+    if type(_G.gp_failover) == "table" and type(_G.gp_failover.is_failed_over) == "function" then
+        local ok, fo = pcall(_G.gp_failover.is_failed_over)
+        failed_over = (ok and fo == true)
+    end
+    if failed_over or (type(info) == "table" and info.from_failover == true) then
+        return tr("ui_gp_err_rec_failover", "Failed action skipped without crash; held buttons, sticks, haptics, and pause reset; switched to keyboard & mouse")
+    end
+    return tr("ui_gp_err_rec_normal", "Failed step safely skipped without crash; game continues normally")
+end
+
+function format_error_report(rec)
+    local lines = {
+        "================================================================================",
+        tr("ui_gp_err_rep_title", "GAMEPAD GUARD REPORT (gamepad_last_error.log)"),
+        "================================================================================",
+        tr("ui_gp_err_rep_s1", "1. WHAT HAPPENED:"),
+        "   " .. tostring(rec.human_what),
+        "",
+        tr("ui_gp_err_rep_s2", "2. GAME CONTEXT:"),
+        "   " .. tostring(rec.human_when),
+        "",
+        tr("ui_gp_err_rep_s3", "3. RECOVERY ACTION:"),
+        "   " .. tostring(rec.recovery_action),
+        "--------------------------------------------------------------------------------",
+        tr("ui_gp_err_rep_tech", "TECHNICAL DETAILS:"),
+        string.format("stage_tag       : %s", tostring(rec.stage_tag)),
+        string.format("origin_layer    : %s", tostring(rec.origin_layer)),
+        string.format("error_detail    : %s", tostring(rec.error_detail)),
+        string.format("gamepad_context : %s", tostring(rec.gamepad_context)),
+        string.format("time_ms         : %d (first_ms=%d)", tonumber(rec.time_ms) or 0, tonumber(rec.first_ms) or 0),
+        string.format("frame           : %d", tonumber(rec.frame) or 0),
+        string.format("repeat_count    : %d (suppressed=%d)", tonumber(rec.repeat_count) or 1, tonumber(rec.suppressed_count) or 0),
+        "================================================================================",
+        "",
+    }
+    return table.concat(lines, "\n")
+end
+
+function resolve_output_paths()
+    if type(state.custom_output_paths) == "table" and #state.custom_output_paths > 0 then
+        return state.custom_output_paths
+    end
+
+    local paths = {}
+    local seen = {}
+    local function add_path(p)
+        if type(p) == "string" and p ~= "" then
+            local norm = string.lower(string.gsub(p, "/", "\\"))
+            if not seen[norm] then
+                seen[norm] = true
+                table.insert(paths, p)
+            end
+        end
+    end
+
+    if type(_G.getFS) == "function" then
+        local ok_fs, fs = pcall(_G.getFS)
+        if ok_fs and fs and type(fs.update_path) == "function" then
+            local ok_u1, p_app = pcall(fs.update_path, fs, "$app_data_root$", LOG_FILE_NAME)
+            if ok_u1 and type(p_app) == "string" and p_app ~= "" then
+                add_path(p_app)
+            end
+            local ok_u2, p_root = pcall(fs.update_path, fs, "$fs_root$", LOG_FILE_NAME)
+            if ok_u2 and type(p_root) == "string" and p_root ~= "" then
+                add_path(p_root)
+            end
+        end
+    end
+
+    add_path("appdata\\" .. LOG_FILE_NAME)
+    add_path(LOG_FILE_NAME)
+    return paths
+end
+
+function write_report_files(report_text)
+    if type(io) ~= "table" or type(io.open) ~= "function" then
+        return 0
+    end
+    local paths = resolve_output_paths()
+    local written = 0
+    for _, path in ipairs(paths) do
+        local ok_open, f = pcall(io.open, path, "w")
+        if ok_open and f then
+            local ok_w = pcall(function()
+                f:write(report_text)
+                f:flush()
+                f:close()
+            end)
+            if ok_w then
+                written = written + 1
+            end
+        end
+    end
+    state.files_written_count = state.files_written_count + written
+    return written
+end
+
+function notify_engine_error_log(stage_tag, error_detail, gamepad_context, recovery_action)
+    if game and type(game.gp_write_last_error_log) == "function" then
+        local ok, res = pcall(
+            game.gp_write_last_error_log,
+            tostring(stage_tag or "unknown"),
+            tostring(error_detail or "unknown_error"),
+            tostring(gamepad_context or "World_Gameplay"),
+            tostring(recovery_action or "safe_guard_skip")
+        )
+        if ok and res ~= false then
+            state.cpp_calls_count = state.cpp_calls_count + 1
+            return true
+        end
+    end
+    return false
+end
+
+function sanitize_single_line(s)
+    local str = tostring(s or "")
+    str = string.gsub(str, "[\r\n]+", " ")
+    return str
+end
+
+function record_error(tag, err_str, info)
+    if not state.enabled then
+        return false, nil
+    end
+    if state.in_record then
+        state.total_recorded = state.total_recorded + 1
+        state.reentrant_skips = state.reentrant_skips + 1
+        return false, "reentrant_skip"
+    end
+    state.in_record = true
+
+    local stage_tag = sanitize_single_line(tag ~= nil and tag or "unknown_stage")
+    if stage_tag == "" then stage_tag = "unknown_stage" end
+
+    local error_detail = sanitize_single_line(err_str ~= nil and err_str or (type(info) == "table" and info.err) or "unknown_error")
+    if error_detail == "" then error_detail = "unknown_error" end
+
+    local now_ms = (type(info) == "table" and type(info.time_ms) == "number" and info.time_ms) or get_now_ms()
+    local now_frame = (type(info) == "table" and type(info.frame) == "number" and info.frame) or get_now_frame()
+    local gamepad_context = (type(info) == "table" and type(info.gamepad_context) == "string" and info.gamepad_context ~= "" and info.gamepad_context)
+        or resolve_gamepad_context()
+    local origin_layer = resolve_origin_layer(stage_tag, info)
+    local recovery_action = resolve_recovery_action(info)
+
+    local key = stage_tag .. "|" .. error_detail
+    local b = state.error_buckets[key]
+    if not b then
+        b = {
+            stage_tag = stage_tag,
+            error_detail = error_detail,
+            count = 0,
+            suppressed = 0,
+            first_ms = now_ms,
+            last_ms = now_ms,
+            last_write_ms = -100000,
+            last_frame = now_frame,
+        }
+        state.error_buckets[key] = b
+    end
+
+    b.count = b.count + 1
+    b.last_ms = now_ms
+    b.last_frame = now_frame
+
+    local repeat_count = (type(info) == "table" and type(info.count) == "number" and info.count > b.count) and info.count or b.count
+
+    state.total_recorded = state.total_recorded + 1
+    state.last_stage_tag = stage_tag
+    state.last_origin_layer = origin_layer
+    state.last_error_detail = error_detail
+    state.last_gamepad_context = gamepad_context
+    state.last_recovery_action = recovery_action
+    state.last_record_ms = now_ms
+    state.last_record_frame = now_frame
+
+    local should_write = false
+    if b.count == 1 then
+        should_write = true
+    elseif (now_ms - b.last_write_ms) >= ANTI_SPAM_WRITE_WINDOW_MS then
+        should_write = true
+    elseif (b.count % ANTI_SPAM_WRITE_STEP) == 0 then
+        should_write = true
+    elseif type(info) == "table" and info.force_write == true then
+        should_write = true
+    end
+
+    local rec = {
+        stage_tag        = stage_tag,
+        origin_layer     = origin_layer,
+        error_detail     = error_detail,
+        gamepad_context  = gamepad_context,
+        recovery_action  = recovery_action,
+        human_what       = resolve_human_what_happened(stage_tag, error_detail),
+        human_when       = resolve_human_when_happened(gamepad_context),
+        time_ms          = now_ms,
+        first_ms         = b.first_ms,
+        frame            = now_frame,
+        repeat_count     = repeat_count,
+        suppressed_count = b.suppressed,
+        written_to_disk  = false,
+    }
+
+    local report_text = format_error_report(rec)
+    state.last_report_text = report_text
+
+    if should_write then
+        b.last_write_ms = now_ms
+        b.suppressed = 0
+        notify_engine_error_log(stage_tag, error_detail, gamepad_context, recovery_action)
+        local written_cnt = write_report_files(report_text)
+        rec.written_to_disk = (written_cnt > 0 or state.cpp_calls_count > 0)
+    else
+        b.suppressed = b.suppressed + 1
+        state.suppressed_writes = state.suppressed_writes + 1
+    end
+
+    state.in_record = false
+    return true, rec
+end
+
+function on_error(tag, err_str, info)
+    return record_error(tag, err_str, info)
+end
+
+function write_error(tag, err_str, info)
+    return record_error(tag, err_str, info)
+end
+
+function on_failover(reason, context_info, rec_opt)
+    local tag = "failover:" .. tostring(reason or "unexpected_gamepad_error")
+    local detail = ""
+    if type(context_info) == "table" then
+        local parts = {}
+        if context_info.mod_name then table.insert(parts, "mod=" .. tostring(context_info.mod_name)) end
+        if context_info.fn_name then table.insert(parts, "fn=" .. tostring(context_info.fn_name)) end
+        if context_info.err then table.insert(parts, "err=" .. tostring(context_info.err)) end
+        detail = (#parts > 0) and table.concat(parts, ";") or tostring(reason or "failover")
+    elseif type(context_info) == "string" and context_info ~= "" then
+        detail = context_info
+    else
+        detail = tostring(reason or "failover")
+    end
+
+    -- Avoid duplicate disk overwrite within the exact same millisecond if gp_safe_guard already logged the underlying handler error
+    if type(context_info) == "table" and type(context_info.info) == "table" and state.last_record_ms == get_now_ms() and state.total_recorded > 0 then
+        return true, { skipped_duplicate_from_safe_guard = true }
+    end
+
+    local info = {
+        origin_layer    = "lua:gp_failover",
+        from_failover   = true,
+        force_write     = true,
+        gamepad_context = (type(rec_opt) == "table" and rec_opt.gamepad_context) or nil,
+        time_ms         = (type(rec_opt) == "table" and rec_opt.time_ms) or get_now_ms(),
+    }
+    return record_error(tag, detail, info)
+end
+
+function set_output_paths(paths_tbl)
+    if type(paths_tbl) == "table" then
+        state.custom_output_paths = paths_tbl
+    else
+        state.custom_output_paths = nil
+    end
+end
+
+function set_enabled(flag)
+    state.enabled = (flag ~= false)
+    return state.enabled
+end
+
+function is_enabled()
+    return state.enabled == true
+end
+
+function get_state()
+    return state
+end
+
+function get_last_report()
+    return state.last_report_text
+end
+
+function get_status_summary()
+    return string.format(
+        "enabled=%s;recorded=%d;files_written=%d;cpp_calls=%d;suppressed=%d;last_tag=%s;last_ctx=%s",
+        state.enabled and "1" or "0",
+        state.total_recorded,
+        state.files_written_count,
+        state.cpp_calls_count,
+        state.suppressed_writes,
+        state.last_stage_tag ~= "" and state.last_stage_tag or "none",
+        state.last_gamepad_context ~= "" and state.last_gamepad_context or "none"
+    )
+end
+
+function reset_state()
+    state.enabled              = true
+    state.in_record            = false
+    state.reentrant_skips      = 0
+    state.total_recorded       = 0
+    state.files_written_count  = 0
+    state.cpp_calls_count      = 0
+    state.suppressed_writes    = 0
+    state.last_stage_tag       = ""
+    state.last_origin_layer    = ""
+    state.last_error_detail    = ""
+    state.last_gamepad_context = ""
+    state.last_recovery_action = ""
+    state.last_report_text     = ""
+    state.last_record_ms       = -1
+    state.last_record_frame    = -1
+    state.error_buckets        = {}
+    return true
+end
+
+function on_game_start()
+    reset_state()
+end
+
+--===========================================================================
+-- Self-Test (`gp_error_log.selftest()`)
+--===========================================================================
+function selftest()
+    local saved_paths = state.custom_output_paths
+    reset_state()
+
+    local fail_reasons = {}
+    local function check(cond, reason_str)
+        if not cond then
+            table.insert(fail_reasons, reason_str)
+        end
+    end
+
+    -- 1. Record a simulated error via record_error and verify report structure & sections
+    local ok1, rec1 = record_error("gp_wheel.Update", "simulated_wheel_nil_index", {
+        time_ms = 1500,
+        frame = 42,
+        gamepad_context = "RadialWheel",
+    })
+    check(ok1 == true and type(rec1) == "table", "record_error_ok")
+    local rep = get_last_report()
+    check(string.find(rep, tr("ui_gp_err_rep_s1", "1. WHAT HAPPENED:"), 1, true) ~= nil, "section_1_present")
+    check(string.find(rep, tr("ui_gp_err_rep_s2", "2. GAME CONTEXT:"), 1, true) ~= nil, "section_2_present")
+    check(string.find(rep, tr("ui_gp_err_rep_s3", "3. RECOVERY ACTION:"), 1, true) ~= nil, "section_3_present")
+    check(string.find(rep, "stage_tag%s*:%s*gp_wheel%.Update") ~= nil, "stage_tag_present")
+    check(string.find(rep, "origin_layer%s*:%s*lua:gp_wheel") ~= nil, "origin_layer_present")
+    check(string.find(rep, "error_detail%s*:%s*simulated_wheel_nil_index") ~= nil, "error_detail_present")
+    check(string.find(rep, "gamepad_context%s*:%s*RadialWheel") ~= nil, "gamepad_context_present")
+    check(string.find(rep, "repeat_count%s*:%s*1") ~= nil, "repeat_count_present")
+
+    -- 2. Verify anti-spam throttling on rapid identical errors
+    for _ = 1, 5 do
+        record_error("gp_wheel.Update", "simulated_wheel_nil_index", { time_ms = 1500, frame = 43 })
+    end
+    check(state.total_recorded == 6, "six_errors_recorded")
+    check(state.suppressed_writes == 5, "five_rapid_writes_suppressed")
+
+    -- 3. Verify synonym entry points (on_error, write_error, on_failover)
+    local ok_syn1 = on_error("gp_bridge.cursor_dpad_snap", "snap_err", { time_ms = 8000 })
+    local ok_syn2 = write_error("gp_weapon.x_reload", "reload_err", { time_ms = 9000 })
+    local ok_fo = on_failover("manual_failover_test", { mod_name = "gp_pda", fn_name = "on_pda_a_extra", err = "pda_err" })
+    check(ok_syn1 == true and ok_syn2 == true and ok_fo == true, "synonyms_work")
+
+    state.custom_output_paths = saved_paths
+    reset_state()
+
+    if #fail_reasons > 0 then
+        return "FAIL:" .. table.concat(fail_reasons, ",")
+    end
+    return "PASS"
+end

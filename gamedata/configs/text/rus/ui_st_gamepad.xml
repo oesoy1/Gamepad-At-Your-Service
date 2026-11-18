@@ -1,0 +1,1190 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<string_table>
+	<string id="ui_mm_menu_gamepad">
+		<text>Геймпад</text>
+	</string>
+	<string id="ui_mm_title_gamepad">
+		<text>Настройки, калибровка и раскладка геймпада</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_calib">
+		<text>Нативный экран живой калибровки стиков (LS/RS/UI) и триггеров (LT/RT): мёртвые зоны, пороги насыщения, кривые отклика и угловые скорости камеры. Профиль сохраняется в appdata\gamepad\profile.ltx.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_open_calibration">
+		<text>Открыть экран живой калибровки геймпада</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reset_calibration">
+		<text>Сбросить калибровку геймпада по умолчанию</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_remap">
+		<text>Контекстное переназначение кнопок (нажатие, удержание, аккорд), детектор конфликтов, защита навигации MenuUI, экспорт/импорт раскладки и мастер привязки для устройств Уровня C (сохраняется в appdata\gamepad\user_mappings.txt).</text>
+	</string>
+	<string id="ui_mm_control_gamepad_open_remap">
+		<text>Открыть экран переназначения кнопок геймпада</text>
+	</string>
+	<string id="ui_mm_control_gamepad_open_wizard_class_c">
+		<text>Открыть мастер привязки устройства Уровня C</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reset_bindings">
+		<text>Аварийный сброс раскладки геймпада (или Start + Back 5 с)</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_glyphs">
+		<text>Набор глифов кнопок (Авто по типу SDL3, Xbox ABXY, PlayStation Крест/Круг/Квадрат/Треугольник, Nintendo Switch BAYX или Generic B1-B4). Сохраняется в appdata\gamepad\profile.ltx [glyphs].</text>
+	</string>
+	<string id="ui_mm_control_gamepad_cycle_glyph_style">
+		<text>Переключить стиль глифов кнопок (Авто / Xbox / PlayStation / Nintendo / Generic)</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_wheel">
+		<text>Быстрое колесо (удержание LB вне ADS, вкладки LT/RT, выбор сектора правым стиком RS, подтверждение A или отпусканием LB, отмена B). Режим времени (D14): Замедление 0.2x (по умолчанию через диспетчер D43), Полная пауза (токен C4.1) или Реальное время (1.0x).</text>
+	</string>
+	<string id="ui_mm_control_gamepad_cycle_wheel_time_mode">
+		<text>Переключить режим времени быстрого колеса (Замедление 0.2x / Полная пауза / Реальное время 1.0x)</text>
+	</string>
+	<string id="ui_gp_wheel_tab_weapons">
+		<text>Оружие</text>
+	</string>
+	<string id="ui_gp_wheel_tab_meds_food">
+		<text>Медицина и еда</text>
+	</string>
+	<string id="ui_gp_wheel_tab_devices">
+		<text>Устройства и свет</text>
+	</string>
+	<string id="ui_gp_wheel_tab_companions">
+		<text>Напарники</text>
+	</string>
+	<string id="ui_gp_wheel_mode_slowmo">
+		<text>Время: Замедление 0.2x</text>
+	</string>
+	<string id="ui_gp_wheel_mode_pause">
+		<text>Время: Полная пауза</text>
+	</string>
+	<string id="ui_gp_wheel_mode_realtime">
+		<text>Время: Реальное 1.0x</text>
+	</string>
+	<string id="ui_gp_wheel_hint_select">
+		<text>Выбор</text>
+	</string>
+	<string id="ui_gp_wheel_hint_cancel">
+		<text>Отмена</text>
+	</string>
+	<string id="ui_gp_wheel_act_detector">
+		<text>Детектор (достать / убрать)</text>
+	</string>
+	<string id="ui_gp_wheel_act_torch">
+		<text>Налобный фонарь (вкл / выкл)</text>
+	</string>
+	<string id="ui_gp_wheel_act_nvg">
+		<text>ПНВ (вкл / выкл)</text>
+	</string>
+	<string id="ui_gp_wheel_act_nvg_bright">
+		<text>Шаг яркости ПНВ</text>
+	</string>
+	<string id="ui_gp_wheel_act_mask">
+		<text>Протереть маску</text>
+	</string>
+	<string id="ui_gp_wheel_act_pda">
+		<text>3D-КПК</text>
+	</string>
+	<string id="ui_gp_wheel_comp_point">
+		<text>Идти в точку прицела</text>
+	</string>
+	<string id="ui_gp_wheel_comp_idiots">
+		<text>Тактическое меню отряда (IDIOTS)</text>
+	</string>
+	<string id="ui_gp_wheel_hint_assign">
+		<text>Назначить</text>
+	</string>
+	<string id="ui_gp_wheel_slot_empty">
+		<text>пусто</text>
+	</string>
+	<string id="ui_gp_wheel_slot_weapon_slot">
+		<text>Слот оружия</text>
+	</string>
+	<string id="ui_gp_wheel_assign_pick">
+		<text>Сначала наведите стик на сектор</text>
+	</string>
+	<string id="ui_gp_wheel_assign_failed">
+		<text>Не сохранено</text>
+	</string>
+	<string id="ui_gp_wheel_assign_nosave">
+		<text>не записано в профиль</text>
+	</string>
+	<string id="ui_mm_control_gamepad_x_target_angle">
+		<text>X: радиус подсказок (градусы)</text>
+	</string>
+	<string id="ui_mm_control_gamepad_x_target_angle_desc">
+		<text>Насколько близко к подсказке (тайник, труп, НПС, дверь) должен быть прицел, чтобы короткое X не перезаряжало оружие. 0 = только точно на подсказке. Только для геймпада: в этом радиусе подсказка игры и Dot Marks уже показывают объект, X/F его используют без точного наведения. С мышью и клавиатурой всё как в оригинале.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_ammo_wheel_max_types">
+		<text>Колесо патронов: максимум видов патронов</text>
+	</string>
+	<string id="ui_mm_control_gamepad_ammo_wheel_max_types_desc">
+		<text>Сколько подходящих видов патронов показывать в колесе патронов для текущего оружия (от 1 до 6, по умолчанию 3). Колесо патронов включено по умолчанию. Если подходящих патронов больше этого числа, сначала показывается сейчас заряженный тип, а затем патроны из рюкзака и снаряжённых магазинов по убыванию количества.</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_qaw_warn">
+		<text>Предупреждение при установке: наше колесо быстрого доступа заменяет Quick Action Wheel от HarukaSai и G.A.M.M.A. Quick Action Wheel Balance. Выключите оба внешних мода колеса в Mod Organizer 2.</text>
+	</string>
+	<string id="ui_mm_desc_gamepad_mod_status_header">
+		<text>Совместимость модов (возможность -> мод -> состояние):</text>
+	</string>
+	<string id="ui_gp_wheel_tab_ammo">
+		<text>Патроны</text>
+	</string>
+	<string id="ui_gp_wheel_ammo_loaded">
+		<text>заряжено</text>
+	</string>
+	<string id="ui_gp_wheel_ammo_empty">
+		<text>Нет подходящих патронов</text>
+	</string>
+	<string id="ui_gp_wheel_hint_confirm">
+		<text>Выбрать</text>
+	</string>
+	<string id="ui_gp_comp_follow_me">
+		<text>Следовать за мной</text>
+	</string>
+	<string id="ui_gp_comp_wait_here">
+		<text>Ждать здесь</text>
+	</string>
+	<string id="ui_gp_comp_attack_all">
+		<text>Атаковать всех</text>
+	</string>
+	<string id="ui_gp_comp_ignore_combat">
+		<text>Не вступать в бой</text>
+	</string>
+	<string id="ui_gp_comp_stop_stealth">
+		<text>Выйти из скрытности</text>
+	</string>
+	<string id="ui_gp_comp_start_stealth">
+		<text>Скрытный режим</text>
+	</string>
+	<string id="ui_gp_comp_dist_far">
+		<text>Держать дистанцию: далеко</text>
+	</string>
+	<string id="ui_gp_comp_dist_near">
+		<text>Держать дистанцию: близко</text>
+	</string>
+	<string id="ui_gp_comp_stop_looting">
+		<text>Не обыскивать тела</text>
+	</string>
+	<string id="ui_gp_comp_start_looting">
+		<text>Обыскивать тела</text>
+	</string>
+	<string id="ui_gp_compat_cap_mags">
+		<text>Магазины</text>
+	</string>
+	<string id="ui_gp_compat_cap_ammo_check">
+		<text>Проверка патронов</text>
+	</string>
+	<string id="ui_gp_compat_cap_fast_reload">
+		<text>Быстрый сброс</text>
+	</string>
+	<string id="ui_gp_compat_cap_jamming">
+		<text>Клин оружия</text>
+	</string>
+	<string id="ui_gp_compat_cap_bullet_time">
+		<text>Замедление времени</text>
+	</string>
+	<string id="ui_gp_compat_cap_qaw_ext">
+		<text>Внешнее колесо QAW</text>
+	</string>
+	<string id="ui_gp_compat_st_ok">
+		<text>ок</text>
+	</string>
+	<string id="ui_gp_compat_st_absent">
+		<text>нет (запасной вариант)</text>
+	</string>
+	<string id="ui_gp_compat_st_partial">
+		<text>запасной вариант</text>
+	</string>
+	<string id="ui_gp_compat_st_broken">
+		<text>сломан (запасной вариант)</text>
+	</string>
+	<string id="ui_gp_compat_st_reserved">
+		<text>место в списке (кнопка не назначена)</text>
+	</string>
+	<string id="ui_gp_compat_st_conflict">
+		<text>выключите внешний мод!</text>
+	</string>
+	<string id="ui_gp_compat_mod_none">
+		<text>нет</text>
+	</string>
+	<string id="ui_gp_compat_mod_none_std_reload">
+		<text>нет (стандартная перезарядка)</text>
+	</string>
+	<string id="ui_gp_compat_mod_stub_winchester">
+		<text>пустая заглушка (Winchester 1892)</text>
+	</string>
+	<!-- K5a (D61): Меню «Управление» (схема геймпада, выноски с действиями, вкладки, сочетания) -->
+	<string id="ui_mm_control_gamepad_open_controls">
+		<text>Открыть меню «Управление» (схема кнопок и прицеливание)</text>
+	</string>
+	<string id="ui_gp_ctrl_title">
+		<text>УПРАВЛЕНИЕ</text>
+	</string>
+	<string id="ui_gp_ctrl_tab_world">
+		<text>В мире</text>
+	</string>
+	<string id="ui_gp_ctrl_tab_menu">
+		<text>Инвентарь и меню</text>
+	</string>
+	<string id="ui_gp_ctrl_tab_aim">
+		<text>Прицеливание</text>
+	</string>
+	<string id="ui_gp_ctrl_btn_reset">
+		<text>[Y] Сбросить</text>
+	</string>
+	<string id="ui_gp_ctrl_btn_close">
+		<text>[B] Закрыть</text>
+	</string>
+	<string id="ui_gp_ctrl_hold_prefix">
+		<text>[Удерж.] </text>
+	</string>
+	<string id="ui_gp_ctrl_locked_suffix">
+		<text> · не переназначается</text>
+	</string>
+	<string id="ui_gp_ctrl_unbound">
+		<text>Не назначено</text>
+	</string>
+	<string id="ui_gp_ctrl_footer_hint">
+		<text>A — изменить  ·  X — нажать/удерж.  ·  Y — сброс  ·  LB/RB — вкладка  ·  B — закрыть</text>
+	</string>
+	<string id="ui_gp_ctrl_pad_xbox">
+		<text>Схема геймпада: Xbox Series</text>
+	</string>
+	<string id="ui_gp_ctrl_pad_playstation">
+		<text>Схема геймпада: DualSense / PlayStation</text>
+	</string>
+	<string id="ui_gp_ctrl_pad_generic">
+		<text>Схема геймпада: Стандартный (Generic)</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_LT">
+		<text>LT</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_LB">
+		<text>LB</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_View">
+		<text>View</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_LS">
+		<text>Левый стик</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_L3">
+		<text>L3 (нажать)</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_DU">
+		<text>Крестовина вверх</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_DL">
+		<text>Крестовина влево</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_DR">
+		<text>Крестовина вправо</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_DD">
+		<text>Крестовина вниз</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_RT">
+		<text>RT</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_RB">
+		<text>RB</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_Menu">
+		<text>Menu</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_Y">
+		<text>Y</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_B">
+		<text>B</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_X">
+		<text>X</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_A">
+		<text>A</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_RS">
+		<text>Правый стик</text>
+	</string>
+	<string id="ui_gp_btn_name_xbox_R3">
+		<text>R3 (нажать)</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_LT">
+		<text>L2</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_LB">
+		<text>L1</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_View">
+		<text>Create / Share</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_LS">
+		<text>Левый стик</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_L3">
+		<text>L3 (нажать)</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_DU">
+		<text>Крестовина вверх</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_DL">
+		<text>Крестовина влево</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_DR">
+		<text>Крестовина вправо</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_DD">
+		<text>Крестовина вниз</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_RT">
+		<text>R2</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_RB">
+		<text>R1</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_Menu">
+		<text>Options</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_Y">
+		<text>Треугольник</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_B">
+		<text>Круг</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_X">
+		<text>Квадрат</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_A">
+		<text>Крест</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_RS">
+		<text>Правый стик</text>
+	</string>
+	<string id="ui_gp_btn_name_ps_R3">
+		<text>R3 (нажать)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_LT">
+		<text>LT / L2</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_LB">
+		<text>LB / L1</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_View">
+		<text>Back / Select</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_LS">
+		<text>Левый стик</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_L3">
+		<text>L3 (нажать)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_DU">
+		<text>Крестовина вверх</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_DL">
+		<text>Крестовина влево</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_DR">
+		<text>Крестовина вправо</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_DD">
+		<text>Крестовина вниз</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_RT">
+		<text>RT / R2</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_RB">
+		<text>RB / R1</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_Menu">
+		<text>Start</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_Y">
+		<text>B4 (верхняя)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_B">
+		<text>B2 (правая)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_X">
+		<text>B3 (левая)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_A">
+		<text>B1 (нижняя)</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_RS">
+		<text>Правый стик</text>
+	</string>
+	<string id="ui_gp_btn_name_gen_R3">
+		<text>R3 (нажать)</text>
+	</string>
+	<string id="ui_gp_act_Jump">
+		<text>Прыжок</text>
+	</string>
+	<string id="ui_gp_act_Crouch">
+		<text>Присесть</text>
+	</string>
+	<string id="ui_gp_act_LowCrouch">
+		<text>Низкий присед</text>
+	</string>
+	<string id="ui_gp_act_Sprint">
+		<text>Бег</text>
+	</string>
+	<string id="ui_gp_act_MeleeQuick">
+		<text>Удар ножом</text>
+	</string>
+	<string id="ui_gp_act_Freelook">
+		<text>Свободный обзор</text>
+	</string>
+	<string id="ui_gp_act_Fire">
+		<text>Огонь</text>
+	</string>
+	<string id="ui_gp_act_Aim">
+		<text>Прицелиться</text>
+	</string>
+	<string id="ui_gp_act_ContextUseReload">
+		<text>Перезарядка / действие</text>
+	</string>
+	<string id="ui_gp_act_AmmoCheck">
+		<text>Проверка магазина</text>
+	</string>
+	<string id="ui_gp_act_FastReload">
+		<text>Быстрая перезарядка</text>
+	</string>
+	<string id="ui_gp_act_NextWeapon">
+		<text>Смена ствола</text>
+	</string>
+	<string id="ui_gp_act_WeaponWheel">
+		<text>Колесо оружия</text>
+	</string>
+	<string id="ui_gp_act_GrenadeQuick">
+		<text>Быстрая граната</text>
+	</string>
+	<string id="ui_gp_act_LeanLeft">
+		<text>Наклон влево</text>
+	</string>
+	<string id="ui_gp_act_LeanRight">
+		<text>Наклон вправо</text>
+	</string>
+	<string id="ui_gp_act_TorchToggle">
+		<text>Фонарик</text>
+	</string>
+	<string id="ui_gp_act_NightVision">
+		<text>ПНВ</text>
+	</string>
+	<string id="ui_gp_act_DetectorToggle">
+		<text>Детектор</text>
+	</string>
+	<string id="ui_gp_act_FireModeNext">
+		<text>Режим огня</text>
+	</string>
+	<string id="ui_gp_act_Pda3DToggle">
+		<text>3D-КПК</text>
+	</string>
+	<string id="ui_gp_act_AmmoTypeNext">
+		<text>Следующий тип патронов</text>
+	</string>
+	<string id="ui_gp_act_MaskClean">
+		<text>Протереть маску</text>
+	</string>
+	<string id="ui_gp_act_UnderbarrelToggle">
+		<text>Подствольник</text>
+	</string>
+	<string id="ui_gp_act_PauseMenu">
+		<text>Пауза</text>
+	</string>
+	<string id="ui_gp_act_PdaFullToggle">
+		<text>Инвентарь</text>
+	</string>
+	<string id="ui_gp_act_MoveStick">
+		<text>Движение</text>
+	</string>
+	<string id="ui_gp_act_LookStick">
+		<text>Обзор</text>
+	</string>
+	<string id="ui_gp_act_Confirm">
+		<text>Выбрать / перетащить</text>
+	</string>
+	<string id="ui_gp_act_Back">
+		<text>Назад</text>
+	</string>
+	<string id="ui_gp_act_ContextMenu">
+		<text>Контекстное меню</text>
+	</string>
+	<string id="ui_gp_act_QuickAction">
+		<text>Быстрое действие</text>
+	</string>
+	<string id="ui_gp_act_TabPrev">
+		<text>Сочетания с LB</text>
+	</string>
+	<string id="ui_gp_act_TabNext">
+		<text>Фильтр: медицина</text>
+	</string>
+	<string id="ui_gp_act_PagePrev">
+		<text>Предыдущая категория</text>
+	</string>
+	<string id="ui_gp_act_PageNext">
+		<text>Следующая категория</text>
+	</string>
+	<string id="ui_gp_act_PanelSwitch">
+		<text>Рюкзак / экипировка</text>
+	</string>
+	<string id="ui_gp_act_CancelQueue">
+		<text>Убрать последнее из очереди</text>
+	</string>
+	<string id="ui_gp_act_CursorStick">
+		<text>Курсор</text>
+	</string>
+	<string id="ui_gp_act_ScrollStick">
+		<text>Прокрутка списка</text>
+	</string>
+	<string id="ui_gp_act_NavigateCells">
+		<text>Навигация по ячейкам</text>
+	</string>
+	<string id="ui_gp_act_Menu">
+		<text>—</text>
+	</string>
+	<string id="ui_gp_act_MoveStack">
+		<text>Переложить пачку</text>
+	</string>
+	<string id="ui_gp_act_InspectItem">
+		<text>Осмотр</text>
+	</string>
+	<string id="ui_gp_act_QuickSlotAssign">
+		<text>В слот F1–F4</text>
+	</string>
+	<string id="ui_gp_chord_lb_dpad">
+		<text>LB + крестовина</text>
+	</string>
+	<string id="ui_gp_ctrl_btn_wish">
+		<text>Колесо на Y</text>
+	</string>
+	<string id="ui_gp_ctrl_capture_prompt">
+		<text>Нажмите кнопку (коротко — нажать, удерж. — удерживать, 2 кнопки — сочетание; B — отмена)</text>
+	</string>
+	<string id="ui_gp_ctrl_capture_slot">
+		<text>Нажмите кнопку...</text>
+	</string>
+	<string id="ui_gp_ctrl_reset_confirm">
+		<text>Сбросить вкладку к стандартным настройкам?  [A] Да   [B] Отмена</text>
+	</string>
+	<string id="ui_gp_ctrl_reset_done">
+		<text>Стандартные настройки вкладки восстановлены</text>
+	</string>
+	<string id="ui_gp_ctrl_err_locked">
+		<text>Стики движения и обзора не переназначаются</text>
+	</string>
+	<string id="ui_gp_ctrl_err_pause">
+		<text>Нельзя оставить управление без кнопки «Пауза»</text>
+	</string>
+	<string id="ui_gp_ctrl_err_back">
+		<text>Нельзя оставить меню без кнопки «Назад»</text>
+	</string>
+	<string id="ui_gp_act_QuickBoltOrSlot">
+		<text>Быстрые расходники (позже)</text>
+	</string>
+	<string id="ui_gp_act_SwitchPanel">
+		<text>Рюкзак / экипировка</text>
+	</string>
+	<string id="ui_gp_act_AmmoWheel">
+		<text>Колесо патронов</text>
+	</string>
+	<string id="ui_gp_act_DialogSelect">
+		<text>Выбрать реплику</text>
+	</string>
+	<string id="ui_gp_act_DialogExit">
+		<text>Выйти из диалога</text>
+	</string>
+	<string id="ui_gp_act_WheelConfirm">
+		<text>Выбрать в колесе</text>
+	</string>
+	<string id="ui_gp_act_WheelCancel">
+		<text>Закрыть колесо</text>
+	</string>
+	<string id="ui_gp_act_WheelTabPrev">
+		<text>Пред. вкладка колеса</text>
+	</string>
+	<string id="ui_gp_act_WheelTabNext">
+		<text>След. вкладка колеса</text>
+	</string>
+	<string id="ui_gp_act_PdaInteractiveToggle">
+		<text>Курсор КПК</text>
+	</string>
+	<string id="ui_gp_act_PdaClose">
+		<text>Закрыть КПК</text>
+	</string>
+	<string id="ui_gp_act_PlacementConfirm">
+		<text>Установить предмет</text>
+	</string>
+	<string id="ui_gp_act_PlacementCancel">
+		<text>Отменить установку</text>
+	</string>
+	<string id="ui_gp_act_PlacementRotate">
+		<text>Повернуть предмет</text>
+	</string>
+	<string id="ui_gp_tab_world">
+		<text>В мире</text>
+	</string>
+	<string id="ui_gp_tab_menu">
+		<text>Инвентарь и меню</text>
+	</string>
+	<string id="ui_gp_tab_aim">
+		<text>Прицеливание</text>
+	</string>
+	<string id="ui_gp_btn_reset">
+		<text>[Y] Сбросить</text>
+	</string>
+	<string id="ui_gp_btn_close">
+		<text>[B] Закрыть</text>
+	</string>
+	<string id="ui_gp_aim_grp_look">
+		<text>ЧУВСТВИТЕЛЬНОСТЬ И ОТКЛИК</text>
+	</string>
+	<string id="ui_gp_aim_grp_dz">
+		<text>МЁРТВЫЕ ЗОНЫ</text>
+	</string>
+	<string id="ui_gp_aim_grp_aa">
+		<text>ПОМОЩЬ В ПРИЦЕЛИВАНИИ</text>
+	</string>
+	<string id="ui_gp_aim_grp_curve">
+		<text>КРИВАЯ ОТКЛИКА</text>
+	</string>
+	<string id="ui_gp_aim_grp_stick">
+		<text>СТИК</text>
+	</string>
+	<string id="ui_gp_aim_sx">
+		<text>Чувствительность по горизонтали</text>
+	</string>
+	<string id="ui_gp_aim_sy">
+		<text>Чувствительность по вертикали</text>
+	</string>
+	<string id="ui_gp_aim_ads">
+		<text>Множитель в прицеле (LT)</text>
+	</string>
+	<string id="ui_gp_aim_acc">
+		<text>Ускорение на краю хода</text>
+	</string>
+	<string id="ui_gp_aim_curve">
+		<text>Кривая отклика</text>
+	</string>
+	<string id="ui_gp_aim_inv">
+		<text>Инверсия по вертикали</text>
+	</string>
+	<string id="ui_gp_aim_dzi">
+		<text>Внутренняя (анти-дрейф)</text>
+	</string>
+	<string id="ui_gp_aim_dzo">
+		<text>Внешняя (полный ход)</text>
+	</string>
+	<string id="ui_gp_aim_assist">
+		<text>Режим</text>
+	</string>
+	<string id="ui_gp_aim_fric">
+		<text>Замедление на цели</text>
+	</string>
+	<string id="ui_gp_aim_mag">
+		<text>Подтягивание при вскидывании</text>
+	</string>
+	<string id="ui_gp_aim_scope">
+		<text>Отключать в оптике и 3D-прицелах</text>
+	</string>
+	<string id="ui_gp_aim_curve_lin">
+		<text>Линейная</text>
+	</string>
+	<string id="ui_gp_aim_curve_exp">
+		<text>Степенная</text>
+	</string>
+	<string id="ui_gp_aim_curve_s">
+		<text>S-кривая</text>
+	</string>
+	<string id="ui_gp_aim_off">
+		<text>Выкл</text>
+	</string>
+	<string id="ui_gp_aim_on">
+		<text>Вкл</text>
+	</string>
+	<string id="ui_gp_aim_yes">
+		<text>Да</text>
+	</string>
+	<string id="ui_gp_aim_no">
+		<text>Нет</text>
+	</string>
+	<string id="ui_gp_aim_aa_off">
+		<text>Выкл</text>
+	</string>
+	<string id="ui_gp_aim_aa_low">
+		<text>Слабая</text>
+	</string>
+	<string id="ui_gp_aim_aa_mid">
+		<text>Средняя</text>
+	</string>
+	<string id="ui_gp_aim_aa_high">
+		<text>Сильная</text>
+	</string>
+	<string id="ui_gp_aim_cap_curve">
+		<text>В начале хода стик двигает камеру мягко, а к краю выходит на полную скорость. Серые зоны по краям — мёртвые зоны.</text>
+	</string>
+	<string id="ui_gp_aim_cap_stick">
+		<text>Отклоните правый стик — точка покажет его живое положение, а круги — внутреннюю и внешнюю границы.</text>
+	</string>
+	<string id="ui_gp_aim_k6b_locked">
+		<text>недоступно</text>
+	</string>
+	<string id="ui_gp_aim_info_curve">
+		<text>Гориз.: %d%%  |  Верт.: %d%%  |  Мёртвая зона: %d%%–%d%%</text>
+	</string>
+	<string id="ui_gp_aim_info_stick">
+		<text>Наклон стика: %d%%   ->   Отклик камеры: %d%%</text>
+	</string>
+	<string id="ui_gp_aim_footer_hint">
+		<text>Вверх/Вниз: выбор строки  |  Влево/Вправо: изменить (автосохранение)  |  LB/RB: вкладки  |  Y: сброс  |  B: закрыть</text>
+	</string>
+	<string id="st_gp_no_apply_targets">
+		<text>Нет подходящих предметов в инвентаре</text>
+	</string>
+	<string id="ui_gp_ctrl_pad_nintendo">
+		<text>Схема геймпада: Nintendo Switch</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_LT">
+		<text>ZL</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_LB">
+		<text>L</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_View">
+		<text>Minus</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_LS">
+		<text>Левый стик</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_L3">
+		<text>L3 (нажать)</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_DU">
+		<text>Крестовина вверх</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_DL">
+		<text>Крестовина влево</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_DR">
+		<text>Крестовина вправо</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_DD">
+		<text>Крестовина вниз</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_RT">
+		<text>ZR</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_RB">
+		<text>R</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_Menu">
+		<text>Plus</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_Y">
+		<text>Y</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_B">
+		<text>A</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_X">
+		<text>X</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_A">
+		<text>B</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_RS">
+		<text>Правый стик</text>
+	</string>
+	<string id="ui_gp_btn_name_nin_R3">
+		<text>R3 (нажать)</text>
+	</string>
+	<string id="ui_mm_control_gamepad_inv_hl_deep">
+		<text>Инвентарь: глубокий синий цвет выделения</text>
+	</string>
+	<string id="ui_mm_control_gamepad_inv_hl_deep_desc">
+		<text>Выключено: выделение везде (рюкзак и слоты снаряжения) как в рюкзаке — светлое бирюзовое. Включено: везде чуть более глубокий синий, как на слотах снаряжения в прошлой сборке. Только для геймпада.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_ui_editor">
+		<text>Редактор интерфейса</text>
+	</string>
+	<string id="ui_mm_control_gamepad_ui_editor_desc">
+		<text>Скрытая функция: открывает «Редактор интерфейса» в оверлее (F10, меню Debug). Позволяет двигать, растягивать и перекрашивать элементы экранов. Правки хранятся в appdata\gamepad\ui-layout\user.ltx.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reset_ui_layout">
+		<text>Сбросить интерфейс</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reset_ui_layout_desc">
+		<text>Возвращает интерфейс к виду по умолчанию. Текущие правки сохраняются копией user.bak.ltx.</text>
+	</string>
+	<string id="ui_gp_act_KnifeDraw">
+		<text>Достать нож / бинокль</text>
+	</string>
+	<string id="ui_gp_act_WeaponLower">
+		<text>Опустить оружие</text>
+	</string>
+	<string id="ui_gp_act_PdaFlat">
+		<text>КПК</text>
+	</string>
+	<string id="ui_gp_act_BoltThrow">
+		<text>Болт</text>
+	</string>
+	<string id="ui_gp_act_WeaponSelect">
+		<text>Выбор ствола</text>
+	</string>
+	<string id="ui_gp_act_ForceReload">
+		<text>Перезарядка (принудительно)</text>
+	</string>
+	<string id="ui_gp_act_TutorialPrompt">
+		<text>Учебник</text>
+	</string>
+	<string id="ui_gp_wheel_act_fast_reload">
+		<text>Быстрая перезарядка</text>
+	</string>
+	<string id="ui_gp_wheel_weapons_empty">
+		<text>В слотах нет огнестрельного оружия</text>
+	</string>
+	<!-- GPSET-2_START -->
+	<string id="ui_gp_oth_grp_haptics">
+		<text>Вибрация</text>
+	</string>
+	<string id="ui_gp_oth_grp_icons">
+		<text>Значки и подсказки</text>
+	</string>
+	<string id="ui_gp_oth_grp_control">
+		<text>Управление</text>
+	</string>
+	<string id="ui_gp_oth_grp_pad">
+		<text>Геймпад</text>
+	</string>
+	<string id="ui_gp_oth_grp_debug">
+		<text>Дебаг</text>
+	</string>
+	<string id="ui_gp_oth_hap_master">
+		<text>Общая сила</text>
+	</string>
+	<string id="ui_gp_oth_hap_master_desc">
+		<text>Общий уровень вибрации геймпада для всех игровых событий (0% — полностью выключено). Нажмите X, чтобы проверить текущую силу.</text>
+	</string>
+	<string id="ui_gp_oth_hap_recoil">
+		<text>Стрельба и отдача</text>
+	</string>
+	<string id="ui_gp_oth_hap_recoil_desc">
+		<text>Отдача при выстрелах, передёргивании затвора и перезарядке оружия (0% — выключено). Нажмите X для пробы.</text>
+	</string>
+	<string id="ui_gp_oth_hap_damage">
+		<text>Ранения</text>
+	</string>
+	<string id="ui_gp_oth_hap_damage_desc">
+		<text>Вибрация при попаданиях по персонажу, падениях и ударах мутантов (0% — выключено). Нажмите X для пробы.</text>
+	</string>
+	<string id="ui_gp_oth_hap_anomaly">
+		<text>Аномалии рядом</text>
+	</string>
+	<string id="ui_gp_oth_hap_anomaly_desc">
+		<text>Нарастающая вибрация при опасном сближении с аномалиями и разрядами (0% — выключено). Нажмите X для пробы.</text>
+	</string>
+	<string id="ui_gp_oth_hap_jam">
+		<text>Клин оружия</text>
+	</string>
+	<string id="ui_gp_oth_hap_jam_desc">
+		<text>Короткий отчётливый толчок при осечке или заклинивании оружия (0% — выключено). Нажмите X для пробы.</text>
+	</string>
+	<string id="ui_gp_oth_hap_explosion">
+		<text>Взрывы</text>
+	</string>
+	<string id="ui_gp_oth_hap_explosion_desc">
+		<text>Глубокая низкочастотная вибрация от гранат, подрывов и выброса (0% — выключено). Нажмите X для пробы.</text>
+	</string>
+	<string id="ui_gp_oth_glyph_type">
+		<text>Тип геймпада</text>
+	</string>
+	<string id="ui_gp_oth_glyph_type_desc">
+		<text>Какие обозначения кнопок показывать в игре. В режиме «Авто» тип определяется по подключённому геймпаду автоматически.</text>
+	</string>
+	<string id="ui_gp_oth_pad_auto">
+		<text>Авто</text>
+	</string>
+	<string id="ui_gp_oth_pad_xbox">
+		<text>Xbox</text>
+	</string>
+	<string id="ui_gp_oth_pad_ps">
+		<text>PlayStation</text>
+	</string>
+	<string id="ui_gp_oth_pad_nintendo">
+		<text>Nintendo</text>
+	</string>
+	<string id="ui_gp_oth_pad_generic">
+		<text>Обычный</text>
+	</string>
+	<string id="ui_gp_oth_icon_style">
+		<text>Вид значков</text>
+	</string>
+	<string id="ui_gp_oth_icon_style_desc">
+		<text>Оформление значков кнопок геймпада в стиле клавиш игры: светлые, тёмные потёртые или с цветными буквами и символами.</text>
+	</string>
+	<string id="ui_gp_oth_style_white">
+		<text>Светлые</text>
+	</string>
+	<string id="ui_gp_oth_style_dark">
+		<text>Тёмные</text>
+	</string>
+	<string id="ui_gp_oth_style_color">
+		<text>Цветные</text>
+	</string>
+	<string id="ui_gp_oth_icon_scale">
+		<text>Размер значков</text>
+	</string>
+	<string id="ui_gp_oth_icon_scale_desc">
+		<text>Масштаб значков кнопок геймпада в мире, инвентаре и меню (от 50% до 150% от базового размера).</text>
+	</string>
+	<string id="ui_gp_oth_hint_mode">
+		<text>Подсказки кнопок на экране</text>
+	</string>
+	<string id="ui_gp_oth_hint_mode_desc">
+		<text>Где показывать значки кнопок геймпада: всегда, только в инвентаре и меню (без подсказок в мире) или полностью скрыть.</text>
+	</string>
+	<string id="ui_gp_oth_hints_always">
+		<text>Всегда</text>
+	</string>
+	<string id="ui_gp_oth_hints_menu">
+		<text>Только в меню</text>
+	</string>
+	<string id="ui_gp_oth_hints_off">
+		<text>Скрыть</text>
+	</string>
+	<string id="ui_gp_oth_crouch_mode">
+		<text>Присед</text>
+	</string>
+	<string id="ui_gp_oth_crouch_mode_desc">
+		<text>Как работает кнопка приседания: пока кнопка удерживается или переключением по одному нажатию.</text>
+	</string>
+	<string id="ui_gp_oth_sprint_mode">
+		<text>Бег</text>
+	</string>
+	<string id="ui_gp_oth_sprint_mode_desc">
+		<text>Как работает кнопка бега: пока удерживается или включением бега по одному нажатию стика.</text>
+	</string>
+	<string id="ui_gp_oth_mode_hold">
+		<text>Удерживать</text>
+	</string>
+	<string id="ui_gp_oth_mode_toggle">
+		<text>Нажать</text>
+	</string>
+	<string id="ui_gp_oth_btn_test">
+		<text>Проверка кнопок</text>
+	</string>
+	<string id="ui_gp_oth_btn_test_desc">
+		<text>Открывает схему геймпада, где каждая нажатая кнопка, курок, крестовина и стик сразу подсвечиваются белым. Выход — удержание B 1 секунду.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_calib_open">
+		<text>Калибровка стиков и курков</text>
+	</string>
+	<string id="ui_gp_oth_dbg_calib_open_desc">
+		<text>Пошаговая калибровка центра и мёртвых зон стиков и хода курков для геймпадов с уводом оси.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_calib_reset">
+		<text>Сброс калибровки</text>
+	</string>
+	<string id="ui_gp_oth_dbg_calib_reset_desc">
+		<text>Возвращает заводские пороги стиков и курков по умолчанию и сразу сохраняет их в профиль.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_remap_open">
+		<text>Отладочное переназначение</text>
+	</string>
+	<string id="ui_gp_oth_dbg_remap_open_desc">
+		<text>Открывает служебное окно низкоуровневого переназначения входов движка (для диагностики нестандартных устройств).</text>
+	</string>
+	<string id="ui_gp_oth_dbg_wizard_c">
+		<text>Мастер настройки (Уровень C)</text>
+	</string>
+	<string id="ui_gp_oth_dbg_wizard_c_desc">
+		<text>Пошаговая разметка осей и кнопок для редких геймпадов DirectInput без готового профиля SDL.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_bind_reset">
+		<text>Аварийный сброс раскладки</text>
+	</string>
+	<string id="ui_gp_oth_dbg_bind_reset_desc">
+		<text>Полностью сбрасывает все назначения кнопок геймпада во всех режимах к стандартным значениям мода.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_wheel_open">
+		<text>Настройка колеса быстрого доступа</text>
+	</string>
+	<string id="ui_gp_oth_dbg_wheel_open_desc">
+		<text>Открывает экран настройки секторов и вкладок радиального колеса оружия, патронов и приборов.</text>
+	</string>
+	<string id="ui_gp_oth_wheel_time">
+		<text>Время в радиальном колесе</text>
+	</string>
+	<string id="ui_gp_oth_wheel_time_desc">
+		<text>Ход игрового времени при открытом радиальном колесе: обычная скорость, замедление времени или полная пауза.</text>
+	</string>
+	<string id="ui_gp_oth_wheel_realtime">
+		<text>Без замедления</text>
+	</string>
+	<string id="ui_gp_oth_wheel_slowmo">
+		<text>Замедление</text>
+	</string>
+	<string id="ui_gp_oth_wheel_pause">
+		<text>Пауза</text>
+	</string>
+	<string id="ui_gp_oth_x_angle">
+		<text>Угол захвата подсказки</text>
+	</string>
+	<string id="ui_gp_oth_x_angle_desc">
+		<text>Допустимый угол отклонения взгляда от предмета (в градусах, от 0 до 30), при котором срабатывает кнопка взаимодействия X.</text>
+	</string>
+	<string id="ui_gp_oth_unit_deg">
+		<text>°</text>
+	</string>
+	<string id="ui_gp_oth_inv_hl">
+		<text>Выделение клетки в инвентаре</text>
+	</string>
+	<string id="ui_gp_oth_inv_hl_desc">
+		<text>Цвет подсветки выбранной ячейки в инвентаре: стандартный серый тон G.A.M.M.A. или контрастный глубокий синий.</text>
+	</string>
+	<string id="ui_gp_oth_inv_hl_std">
+		<text>Стандартное</text>
+	</string>
+	<string id="ui_gp_oth_inv_hl_blue">
+		<text>Глубокий синий</text>
+	</string>
+	<string id="ui_gp_oth_ui_editor">
+		<text>Редактор интерфейса</text>
+	</string>
+	<string id="ui_gp_oth_ui_editor_desc">
+		<text>Разрешает отладочную панель подгонки положения элементов интерфейса в оверлее F10.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_ui_reset">
+		<text>Сброс правок интерфейса</text>
+	</string>
+	<string id="ui_gp_oth_dbg_ui_reset_desc">
+		<text>Сохраняет резервную копию пользовательских сдвигов интерфейса и возвращает все элементы на штатные места.</text>
+	</string>
+	<string id="ui_gp_oth_dbg_compat">
+		<text>Совместимость с модами</text>
+	</string>
+	<string id="ui_gp_oth_dbg_compat_desc">
+		<text>Показывает сводку обнаруженных оружейных и интерфейсных модов G.A.M.M.A. Нажмите A или Y для просмотра полного отчёта.</text>
+	</string>
+	<string id="ui_gp_oth_reload_guard">
+		<text>Защита от случайной перезарядки</text>
+	</string>
+	<string id="ui_gp_oth_reload_guard_desc">
+		<text>Включено: если прицел наведён на предмет или место с меткой (даже далёкой и пока недоступной), X не перезаряжает оружие — геймпад слегка толкнёт. Перезарядить всё равно можно сочетанием LT + X. Выключено: X перезаряжает как обычно.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reload_guard">
+		<text>Защита от случайной перезарядки</text>
+	</string>
+	<string id="ui_mm_control_gamepad_reload_guard_desc">
+		<text>X не перезаряжает, пока прицел наведён на предмет с меткой. LT + X перезаряжает всегда.</text>
+	</string>
+	<string id="ui_gp_oth_off">
+		<text>Выкл.</text>
+	</string>
+	<string id="ui_gp_oth_on">
+		<text>Вкл.</text>
+	</string>
+	<string id="ui_gp_oth_act_open">
+		<text>Открыть</text>
+	</string>
+	<string id="ui_gp_oth_act_reset">
+		<text>Сбросить</text>
+	</string>
+	<string id="ui_gp_oth_act_report">
+		<text>Показать отчёт</text>
+	</string>
+	<string id="ui_gp_oth_preview_title">
+		<text>Предпросмотр значков</text>
+	</string>
+	<string id="ui_gp_oth_press_a_run">
+		<text>A — выполнить действие</text>
+	</string>
+	<string id="ui_gp_oth_hint_short">
+		<text>Y — подробная справка. Изменения сохраняются по кнопке «Применить».</text>
+	</string>
+	<string id="ui_gp_oth_hint_short_rumble">
+		<text>X — проверить вибрацию на этой строке. Y — подробная справка.</text>
+	</string>
+	<string id="ui_gp_oth_f_test">
+		<text>Проверить</text>
+	</string>
+	<string id="ui_gp_oth_status_rumble_test">
+		<text>Проба вибрации запущена</text>
+	</string>
+	<string id="ui_gp_oth_status_rumble_off">
+		<text>Сила 0% — вибрация этого канала выключена</text>
+	</string>
+	<string id="ui_gp_oth_status_done">
+		<text>Выполнено</text>
+	</string>
+	<string id="ui_gp_btntest_title">
+		<text>Проверка кнопок геймпада</text>
+	</string>
+	<string id="ui_gp_btntest_idle">
+		<text>Нажмите любую кнопку, курок или отклоните стик</text>
+	</string>
+	<string id="ui_gp_btntest_pressed">
+		<text>Нажато:</text>
+	</string>
+	<string id="ui_gp_btntest_sub">
+		<text>Короткое нажатие B проверяет саму кнопку B и не закрывает окно</text>
+	</string>
+	<string id="ui_gp_btntest_exit_hold">
+		<text>Удерживайте B (1 сек) для выхода</text>
+	</string>
+	<string id="ui_gp_btntest_guide">
+		<text>Кнопка Guide</text>
+	</string>
+	<!-- GPSET-2_END -->
+	<!-- CURSOR1_START -->
+	<string id="ui_gp_act_MouseCursor">
+		<text>Курсор-мышь</text>
+	</string>
+	<string id="ui_gp_cursor_hint_move">
+		<text>Курсор</text>
+	</string>
+	<string id="ui_gp_cursor_hint_lclick">
+		<text>ЛКМ</text>
+	</string>
+	<string id="ui_gp_cursor_hint_rclick">
+		<text>ПКМ</text>
+	</string>
+	<string id="ui_gp_cursor_hint_scroll">
+		<text>Прокрутка</text>
+	</string>
+	<string id="ui_gp_cursor_hint_exit">
+		<text>Выйти</text>
+	</string>
+	<string id="ui_gp_cursor_hold_short">
+		<text>Удерж.</text>
+	</string>
+	<!-- CURSOR1_END -->
+	<string id="ui_gp_act_WheelMaskClean">
+		<text>Протереть маску (колесо)</text>
+	</string>
+	<string id="ui_gp_act_WheelLaser">
+		<text>ЛЦУ (колесо)</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle">
+		<text>Метка на карте КПК</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_desc">
+		<text>Форма метки в центре карты КПК. Метка стоит на месте, левый стик двигает карту под ней, правый приближает и отдаляет, рядом с заданием метка прилипает к нему.</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_square">
+		<text>Квадрат</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_circle">
+		<text>Круг</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_cross">
+		<text>Крест</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_size">
+		<text>Размер метки на карте КПК</text>
+	</string>
+	<string id="ui_gp_oth_pda_reticle_size_desc">
+		<text>Размер метки в центре карты КПК. Чем больше метка, тем дальше она замечает задания и прилипает к ним.</text>
+	</string>
+</string_table>

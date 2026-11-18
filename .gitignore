@@ -1,0 +1,13 @@
+# Ignore temporary & local build artifacts
+*.bak
+*.orig
+*.tmp
+*.log
+*.pdb
+*.obj
+*.dmp
+*.mdmp
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

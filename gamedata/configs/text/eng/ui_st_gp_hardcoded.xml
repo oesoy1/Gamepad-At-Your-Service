@@ -1,0 +1,435 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="ui_gp_failover_kbm_toast">
+        <text>Gamepad error: controls switched to keyboard &amp; mouse</text>
+    </string>
+    <string id="ui_gp_queue_badge_fmt">
+        <text>Queue: %d (%s)  %s Cancel</text>
+    </string>
+    <string id="ui_gp_inv_hint_section">
+        <text>Section</text>
+    </string>
+    <string id="ui_gp_inv_act_use">
+        <text>Use</text>
+    </string>
+    <string id="ui_gp_inv_act_equip">
+        <text>Equip</text>
+    </string>
+    <string id="ui_gp_inv_act_unequip">
+        <text>Remove</text>
+    </string>
+    <string id="ui_gp_inv_act_move">
+        <text>Move</text>
+    </string>
+    <string id="ui_gp_inv_act_select">
+        <text>Select</text>
+    </string>
+    <string id="ui_gp_inv_act_action">
+        <text>Action</text>
+    </string>
+    <string id="ui_gp_inv_act_description">
+        <text>Details</text>
+    </string>
+    <string id="ui_gp_inv_act_section">
+        <text>Section</text>
+    </string>
+    <string id="ui_gp_inv_act_menu">
+        <text>Menu</text>
+    </string>
+    <string id="ui_gp_inv_act_replace">
+        <text>Replace</text>
+    </string>
+    <string id="ui_gp_inv_act_install">
+        <text>Install</text>
+    </string>
+    <string id="ui_gp_inv_act_charge">
+        <text>Charge</text>
+    </string>
+    <string id="ui_gp_inv_act_load">
+        <text>Load</text>
+    </string>
+    <string id="ui_gp_inv_act_place">
+        <text>Place</text>
+    </string>
+    <string id="ui_gp_inv_act_apply">
+        <text>Apply</text>
+    </string>
+    <string id="ui_gp_inv_side_transfer">
+        <text>Transfer</text>
+    </string>
+    <string id="ui_gp_inv_side_panel">
+        <text>Panel</text>
+    </string>
+    <string id="ui_gp_inv_side_to_cart">
+        <text>Cart</text>
+    </string>
+    <string id="ui_gp_inv_side_desc">
+        <text>Details</text>
+    </string>
+    <string id="ui_gp_inv_side_desc_short">
+        <text>Info</text>
+    </string>
+    <string id="ui_gp_inv_side_menu">
+        <text>Menu</text>
+    </string>
+    <string id="ui_gp_pda_lbl_tabs">
+        <text>Tabs</text>
+    </string>
+    <string id="ui_gp_pda_lbl_tasks_legend">
+        <text>Tasks / Legend</text>
+    </string>
+    <string id="ui_gp_pda_lbl_select">
+        <text>Select</text>
+    </string>
+    <string id="ui_gp_pda_lbl_toggle">
+        <text>Toggle</text>
+    </string>
+    <string id="ui_gp_pda_lbl_open">
+        <text>Open</text>
+    </string>
+    <string id="ui_gp_pda_lbl_refresh">
+        <text>Refresh</text>
+    </string>
+    <string id="ui_gp_pda_lbl_take">
+        <text>Accept</text>
+    </string>
+    <string id="ui_gp_pda_lbl_orders">
+        <text>Orders</text>
+    </string>
+    <string id="ui_gp_pda_lbl_text_refresh">
+        <text>Text / Refresh</text>
+    </string>
+    <string id="ui_gp_pda_lbl_known_refresh">
+        <text>Known / Refresh</text>
+    </string>
+    <string id="ui_gp_pda_lbl_img_msg">
+        <text>Images / Msg</text>
+    </string>
+    <string id="ui_gp_pda_lbl_press">
+        <text>Press</text>
+    </string>
+    <string id="ui_gp_ws_lbl_select">
+        <text>Select</text>
+    </string>
+    <string id="ui_gp_ws_lbl_parts">
+        <text>Parts</text>
+    </string>
+    <string id="ui_gp_ws_lbl_place">
+        <text>Install</text>
+    </string>
+    <string id="ui_gp_ws_lbl_mark">
+        <text>Mark</text>
+    </string>
+    <string id="ui_gp_ws_lbl_layer">
+        <text>Layer</text>
+    </string>
+    <string id="ui_gp_ws_lbl_instructions">
+        <text>Manuals</text>
+    </string>
+    <string id="ui_gp_ws_lbl_back">
+        <text>Back</text>
+    </string>
+    <string id="ui_gp_ws_lbl_exit">
+        <text>Exit</text>
+    </string>
+    <string id="ui_gp_err_ctx_world">
+        <text>During normal gameplay (walking, combat, or exploring)</text>
+    </string>
+    <string id="ui_gp_err_ctx_menu">
+        <text>In an open inventory, loot, trade, PDA, or menu screen</text>
+    </string>
+    <string id="ui_gp_err_ctx_wheel">
+        <text>While the quick item or ammo radial wheel is open</text>
+    </string>
+    <string id="ui_gp_err_ctx_sleep">
+        <text>Sleep screen</text>
+    </string>
+    <string id="ui_gp_err_ctx_cutscene">
+        <text>During a cutscene or item use animation</text>
+    </string>
+    <string id="ui_gp_err_ctx_text">
+        <text>During text entry or key binding</text>
+    </string>
+    <string id="ui_gp_err_ctx_place">
+        <text>While placing hideout furniture</text>
+    </string>
+    <string id="ui_gp_err_ctx_default">
+        <text>During gameplay</text>
+    </string>
+    <string id="ui_gp_err_when_fmt">
+        <text>%s (mode: %s).</text>
+    </string>
+    <string id="ui_gp_err_mod_wheel">
+        <text>Error in quick item or ammo wheel</text>
+    </string>
+    <string id="ui_gp_err_mod_wheel_arm">
+        <text>Error while drawing radial menu</text>
+    </string>
+    <string id="ui_gp_err_mod_bridge">
+        <text>Error in cursor control or inventory item action</text>
+    </string>
+    <string id="ui_gp_err_mod_weapon">
+        <text>Error while reloading, checking mag, or handling weapon</text>
+    </string>
+    <string id="ui_gp_err_mod_field">
+        <text>Error in quick field action (headlamp, NVG, detector, grenade, or pickup)</text>
+    </string>
+    <string id="ui_gp_err_mod_compat">
+        <text>Error while interacting with external weapon or mag mod</text>
+    </string>
+    <string id="ui_gp_err_mod_pda">
+        <text>Error in gamepad PDA controls</text>
+    </string>
+    <string id="ui_gp_err_mod_screens">
+        <text>Error in dialog, repair, sleep, or main menu controls</text>
+    </string>
+    <string id="ui_gp_err_mod_inv_pause">
+        <text>Error in inventory pause controls</text>
+    </string>
+    <string id="ui_gp_err_mod_lifecycle">
+        <text>Error checking pause state or hand animation</text>
+    </string>
+    <string id="ui_gp_err_mod_toasts">
+        <text>Error displaying on-screen toast notification</text>
+    </string>
+    <string id="ui_gp_err_mod_testkit">
+        <text>Error in built-in test scenario</text>
+    </string>
+    <string id="ui_gp_err_mod_failover">
+        <text>Gamepad emergency failover triggered</text>
+    </string>
+    <string id="ui_gp_err_mod_default">
+        <text>Internal error in gamepad control handler</text>
+    </string>
+    <string id="ui_gp_err_what_fmt">
+        <text>%s (node: %s; detail: %s).</text>
+    </string>
+    <string id="ui_gp_err_rec_failover">
+        <text>Failed action skipped without crash; held buttons, sticks, haptics, and pause reset; switched to keyboard &amp; mouse</text>
+    </string>
+    <string id="ui_gp_err_rec_normal">
+        <text>Failed step safely skipped without crash; game continues normally</text>
+    </string>
+    <string id="ui_gp_err_rep_title">
+        <text>GAMEPAD GUARD REPORT (gamepad_last_error.log)</text>
+    </string>
+    <string id="ui_gp_err_rep_s1">
+        <text>1. WHAT HAPPENED:</text>
+    </string>
+    <string id="ui_gp_err_rep_s2">
+        <text>2. GAME CONTEXT:</text>
+    </string>
+    <string id="ui_gp_err_rep_s3">
+        <text>3. RECOVERY ACTION:</text>
+    </string>
+    <string id="ui_gp_err_rep_tech">
+        <text>TECHNICAL DETAILS:</text>
+    </string>
+    <string id="ui_gp_tk_abort_btn">
+        <text>[End / 0] Stop test</text>
+    </string>
+    <string id="ui_gp_tk_hint">
+        <text>Select: mouse | keys 1-4 | Up/Down + Enter/Space | End - Stop test</text>
+    </string>
+    <string id="ui_gp_tk_yes">
+        <text>Yes</text>
+    </string>
+    <string id="ui_gp_tk_no">
+        <text>No</text>
+    </string>
+    <string id="ui_gp_tk_hdr_fmt">
+        <text>Autotest - Step %d/%d: %s</text>
+    </string>
+    <string id="ui_gp_tk_question_pfx">
+        <text>Question: </text>
+    </string>
+    <string id="ui_gp_tk_why_pfx">
+        <text>Why: </text>
+    </string>
+    <string id="ui_gp_tk_why_default">
+        <text>visual check by tester</text>
+    </string>
+    <string id="ui_gp_tk_wait_ask">
+        <text>[T] Waiting for hand animation before opening question window...</text>
+    </string>
+    <string id="ui_gp_tk_aborted_fmt">
+        <text>[T] TEST STOPPED: scenario aborted (%s)</text>
+    </string>
+    <string id="ui_gp_tk_wait_start">
+        <text>[T] Waiting for hand animation before starting scenario...</text>
+    </string>
+    <string id="ui_gp_tk_step_fmt">
+        <text>Step %d/%d: %s</text>
+    </string>
+    <string id="ui_gp_tk_done_fmt">
+        <text>Test complete (%s): Steps %d, PASS %d, FAIL %d. Safe to exit game.</text>
+    </string>
+    <string id="ui_gp_tk_already_running">
+        <text>[T] Scenario already running (End - Stop test).</text>
+    </string>
+    <string id="ui_gp_toast_sample_1">
+        <text>Modified Duty "Nosorog" Exosuit M2 [Cond: 84%] 14.5 kg</text>
+    </string>
+    <string id="ui_gp_toast_sample_2">
+        <text>Tactical AN-94 "Abakan" Assault Rifle [5.45x39: 30+1] 3.9 kg</text>
+    </string>
+    <string id="ui_gp_toast_sample_3">
+        <text>Armor-piercing bullet resistance (BR Class 4) .. 78% (+12%)</text>
+    </string>
+    <string id="ui_gp_toast_sample_4">
+        <text>Technician repair kit service cost ............. 48 650 RU</text>
+    </string>
+    <string id="ui_gp_toast_test_no_ammo">
+        <text>No suitable ammo</text>
+    </string>
+    <string id="ui_gp_uidbg_title">
+        <text>UI Editor</text>
+    </string>
+    <string id="ui_gp_uidbg_select_el">
+        <text>Select an element from the list or click on screen.</text>
+    </string>
+    <string id="ui_gp_uidbg_grp_layout">
+        <text>Layout</text>
+    </string>
+    <string id="ui_gp_uidbg_dx">
+        <text>Offset X</text>
+    </string>
+    <string id="ui_gp_uidbg_dy">
+        <text>Offset Y</text>
+    </string>
+    <string id="ui_gp_uidbg_dw">
+        <text>Width +</text>
+    </string>
+    <string id="ui_gp_uidbg_dh">
+        <text>Height +</text>
+    </string>
+    <string id="ui_gp_uidbg_offscreen">
+        <text>Element is not on screen.</text>
+    </string>
+    <string id="ui_gp_uidbg_grp_style">
+        <text>Style</text>
+    </string>
+    <string id="ui_gp_uidbg_bg_color">
+        <text>Back Color</text>
+    </string>
+    <string id="ui_gp_uidbg_txt_color">
+        <text>Text Color</text>
+    </string>
+    <string id="ui_gp_uidbg_reset_el">
+        <text>Reset element</text>
+    </string>
+    <string id="ui_gp_uidbg_no_screen">
+        <text>- no screen detected -</text>
+    </string>
+    <string id="ui_gp_uidbg_auto_sfx">
+        <text> (auto)</text>
+    </string>
+    <string id="ui_gp_uidbg_screen">
+        <text>Screen</text>
+    </string>
+    <string id="ui_gp_uidbg_auto_opt">
+        <text>Auto-detect</text>
+    </string>
+    <string id="ui_gp_uidbg_undo">
+        <text>Undo</text>
+    </string>
+    <string id="ui_gp_uidbg_reset_scr">
+        <text>Reset screen</text>
+    </string>
+    <string id="ui_gp_uidbg_save_prof">
+        <text>Save profile</text>
+    </string>
+    <string id="ui_gp_uidbg_save_err">
+        <text>Failed to save profile</text>
+    </string>
+    <string id="ui_gp_uidbg_dirty">
+        <text>Unsaved changes pending</text>
+    </string>
+    <string id="ui_gp_uidbg_frames">
+        <text>Frames</text>
+    </string>
+    <string id="ui_gp_uidbg_click_pick">
+        <text>Click to pick</text>
+    </string>
+    <string id="ui_gp_uidbg_dbl_hint">
+        <text>Double-click outside returns control.</text>
+    </string>
+    <string id="ui_gp_uidbg_open_hint">
+        <text>Open a game screen (e.g. "Settings" from pause menu).</text>
+    </string>
+    <string id="ui_gp_uidbg_tip_enable">
+        <text>Enable "UI Editor" in gamepad settings.</text>
+    </string>
+    <string id="ui_gp_uidbg_scr_options">
+        <text>Settings</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_bg">
+        <text>Backdrop</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_dialog">
+        <text>Full settings dialog</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_accept">
+        <text>"Apply" button</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_reset">
+        <text>"Reset" button</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_cancel">
+        <text>"Cancel" button</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_pending">
+        <text>Unsaved changes notice</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_scroll">
+        <text>Options list</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_preset_cap">
+        <text>"Preset" label</text>
+    </string>
+    <string id="ui_gp_uidbg_opt_preset">
+        <text>Preset box</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_panel">
+        <text>Gamepad: buttons page panel</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_pad">
+        <text>Gamepad: controller image</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_card">
+        <text>Gamepad: hint card</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_title">
+        <text>Gamepad: hint title</text>
+    </string>
+    <string id="ui_gp_uidbg_gpc_long">
+        <text>Gamepad: long hint</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_panel">
+        <text>Gamepad: aiming panel</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_title">
+        <text>Aiming: info header</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_line">
+        <text>Aiming: limits line</text>
+    </string>
+    <string id="ui_gp_uidbg_gpa_long">
+        <text>Aiming: long hint</text>
+    </string>
+    <string id="ui_gp_uidbg_page_buttons">
+        <text>buttons</text>
+    </string>
+    <string id="ui_gp_uidbg_page_aiming">
+        <text>aiming</text>
+    </string>
+    <string id="ui_gp_uidbg_foot_icon_fmt">
+        <text>Bottom bar (%s): icons %d</text>
+    </string>
+    <string id="ui_gp_uidbg_foot_label_fmt">
+        <text>Bottom bar (%s): label %d</text>
+    </string>
+	<string id="st_gp_open_site_confirm">
+		<text>Open the mod authors' website in your browser (the game may minimize)?</text>
+	</string>
+</string_table>

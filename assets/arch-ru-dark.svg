@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="106" viewBox="0 0 880 106" role="img" aria-label="Architecture">
+  <rect x="0.5" y="0.5" width="879" height="105" rx="8" fill="#13181E" stroke="#28323E" stroke-width="1"/>
+  <rect x="16" y="13" width="264" height="80" rx="6" fill="#182028" stroke="#28323E" stroke-width="1"/>
+  <text x="30" y="35" fill="#E6EDF3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="13.5" font-weight="600">SDL3 + xrEngine</text>
+  <text x="30" y="55" fill="#43B5A8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" font-weight="600">GamepadDeviceManager</text>
+  <text x="30" y="75" fill="#95A5B5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="12">Опрос стиков, кривые, вибрация</text>
+  <rect x="308" y="13" width="264" height="80" rx="6" fill="#182028" stroke="#28323E" stroke-width="1"/>
+  <text x="322" y="35" fill="#E6EDF3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="13.5" font-weight="600">Маршрутизатор xrGame</text>
+  <text x="322" y="55" fill="#43B5A8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" font-weight="600">GamepadContextDispatcher</text>
+  <text x="322" y="75" fill="#95A5B5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="12">360°-ход, помощь в прицеле, фокус</text>
+  <rect x="600" y="13" width="264" height="80" rx="6" fill="#182028" stroke="#28323E" stroke-width="1"/>
+  <text x="614" y="35" fill="#E6EDF3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="13.5" font-weight="600">Экранные скрипты Lua</text>
+  <text x="614" y="55" fill="#43B5A8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" font-weight="600">gamedata/scripts/gp_*.script</text>
+  <text x="614" y="75" fill="#95A5B5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="12">Инвентарь, КПК, верстак, MCM</text>
+  <path d="M284,53 h18 m-4,-4 l4,4 l-4,4" fill="none" stroke="#95A5B5" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M576,53 h18 m-4,-4 l4,4 l-4,4" fill="none" stroke="#95A5B5" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

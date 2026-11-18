@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<!-- MENU-FOCUS P16: pause menu hints, save messages; "zz_" so the load confirmation text wins over ui_st_other.xml -->
+<string_table>
+	<string id="st_gp_game_saved">
+		<text>Гру збережено</text>
+	</string>
+	<string id="st_gp_autosave">
+		<text>Автозбереження</text>
+	</string>
+	<string id="st_gp_save_denied">
+		<text>Зберігатися можна лише біля багаття або бази</text>
+	</string>
+	<string id="st_gp_hint_select">
+		<text>Вибрати</text>
+	</string>
+	<string id="st_gp_hint_to_game">
+		<text>У гру</text>
+	</string>
+	<string id="st_gp_hint_exit">
+		<text>Вихід</text>
+	</string>
+	<string id="st_gp_hint_quicksave">
+		<text>Швидке збереження</text>
+	</string>
+	<string id="st_gp_hint_columns">
+		<text>Колонки</text>
+	</string>
+	<string id="st_gp_hint_to_buttons">
+		<text>До кнопок</text>
+	</string>
+	<string id="ui_st_load_game_confirm">
+		<text>Незбережений прогрес буде втрачено. Завантажити?</text>
+	</string>
+	<!-- FIX-LIVE1: нижняя полоса окна «Создание персонажа» (gp_new_game) -->
+	<string id="st_gp_hint_back">
+		<text>Назад</text>
+	</string>
+	<string id="st_gp_hint_panel">
+		<text>Панель</text>
+	</string>
+	<string id="st_gp_hint_to_panels">
+		<text>До панелей</text>
+	</string>
+	<string id="st_gp_hint_start_game">
+		<text>Почати</text>
+	</string>
+</string_table>

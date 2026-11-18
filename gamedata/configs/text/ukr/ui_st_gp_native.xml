@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+	<string id="ui_gp_n_tab_world">
+		<text>У світі</text>
+	</string>
+	<string id="ui_gp_n_tab_menu">
+		<text>Інвентар і меню</text>
+	</string>
+	<string id="ui_gp_n_tab_aim">
+		<text>Прицілювання</text>
+	</string>
+	<string id="ui_gp_n_tab_other">
+		<text>Інші налаштування</text>
+	</string>
+	<string id="ui_gp_n_cap">
+		<text>Налаштування геймпада</text>
+	</string>
+	<string id="ui_gp_n_col_btn">
+		<text>Кнопка</text>
+	</string>
+	<string id="ui_gp_n_col_tap">
+		<text>Натискання</text>
+	</string>
+	<string id="ui_gp_n_col_hold">
+		<text>Утримання</text>
+	</string>
+	<string id="ui_gp_n_col_param">
+		<text>Параметр</text>
+	</string>
+	<string id="ui_gp_n_col_value">
+		<text>Значення</text>
+	</string>
+	<string id="ui_gp_n_grp_move">
+		<text>Рух</text>
+	</string>
+	<string id="ui_gp_n_grp_weapon">
+		<text>Зброя</text>
+	</string>
+	<string id="ui_gp_n_grp_inv">
+		<text>Інвентар</text>
+	</string>
+	<string id="ui_gp_n_grp_pda">
+		<text>КПК</text>
+	</string>
+	<string id="ui_gp_n_grp_common">
+		<text>Загальне</text>
+	</string>
+	<string id="ui_gp_n_grp_nav">
+		<text>Навігація</text>
+	</string>
+	<string id="ui_gp_n_grp_act">
+		<text>Дії</text>
+	</string>
+	<string id="ui_gp_n_grp_tabs">
+		<text>Вкладки та категорії</text>
+	</string>
+	<string id="ui_gp_n_grp_aim_look">
+		<text>Огляд</text>
+	</string>
+	<string id="ui_gp_n_grp_aim_ads">
+		<text>Прицілювання</text>
+	</string>
+	<string id="ui_gp_n_grp_aim_stick">
+		<text>Правий стік</text>
+	</string>
+	<string id="ui_gp_n_grp_aim_assist">
+		<text>Допомога</text>
+	</string>
+	<string id="ui_gp_n_none">
+		<text>---</text>
+	</string>
+	<string id="ui_gp_n_fixed">
+		<text>Закріплено</text>
+	</string>
+	<string id="ui_gp_n_dpad">
+		<text>Хрестовина</text>
+	</string>
+	<string id="ui_gp_n_tap">
+		<text>Натискання</text>
+	</string>
+	<string id="ui_gp_n_hold">
+		<text>Утримання</text>
+	</string>
+	<string id="ui_gp_n_locked_why">
+		<text>Стік керує рухом та оглядом напряму, тому не перепризначається.</text>
+	</string>
+	<string id="ui_gp_n_help_slot">
+		<text>A - призначити іншу кнопку. Вліво і вправо або X - вибрати натискання чи утримання. Сполучення задається двома кнопками одночасно. View - повернути стандартну розкладку вкладки.</text>
+	</string>
+	<string id="ui_gp_n_help_aim">
+		<text>Вліво і вправо - змінити значення. Нові значення починають діяти після кнопки «Застосувати». View - стандартні значення.</text>
+	</string>
+	<string id="ui_gp_n_f_change">
+		<text>Змінити</text>
+	</string>
+	<string id="ui_gp_n_f_help">
+		<text>Довідка</text>
+	</string>
+	<string id="ui_gp_n_f_hold">
+		<text>Утримання</text>
+	</string>
+	<string id="ui_gp_n_f_tab">
+		<text>Вкладка</text>
+	</string>
+	<string id="ui_gp_n_f_close">
+		<text>Закрити</text>
+	</string>
+	<string id="ui_gp_n_aim_sx">
+		<text>Чутливість по горизонталі</text>
+	</string>
+	<string id="ui_gp_n_aim_sy">
+		<text>Чутливість по вертикалі</text>
+	</string>
+	<string id="ui_gp_n_aim_inv">
+		<text>Інверсія по вертикалі</text>
+	</string>
+	<string id="ui_gp_n_aim_acc">
+		<text>Прискорення на краю</text>
+	</string>
+	<string id="ui_gp_n_aim_ads">
+		<text>Чутливість у прицілі</text>
+	</string>
+	<string id="ui_gp_n_aim_dzi">
+		<text>Мертва зона</text>
+	</string>
+	<string id="ui_gp_n_aim_dzo">
+		<text>Зовнішній поріг</text>
+	</string>
+	<string id="ui_gp_n_aim_curve">
+		<text>Крива відгуку</text>
+	</string>
+	<string id="ui_gp_n_aim_assist">
+		<text>Режим допомоги</text>
+	</string>
+	<string id="ui_gp_n_aim_fric">
+		<text>Сповільнення біля цілі</text>
+	</string>
+	<string id="ui_gp_n_aim_mag">
+		<text>Доведення прицілу</text>
+	</string>
+	<string id="ui_gp_n_aim_scope">
+		<text>Вимикати з оптикою</text>
+	</string>
+	<string id="ui_gp_n_graph_title">
+		<text>Відгук правого стіка</text>
+	</string>
+	<string id="ui_gp_n_graph_x">
+		<text>Нахил стіка</text>
+	</string>
+	<string id="ui_gp_n_graph_y">
+		<text>Швидкість повороту</text>
+	</string>
+	<!-- CURSOR1_START -->
+	<string id="ui_gp_oth_cursor_size">
+		<text>Розмір курсора</text>
+	</string>
+	<string id="ui_gp_oth_cursor_size_desc">
+		<text>Масштаб курсора геймпада у вікнах і режимі курсора-миші (50-200%, база 100%).</text>
+	</string>
+	<string id="ui_gp_oth_cursor_speed">
+		<text>Швидкість курсора</text>
+	</string>
+	<string id="ui_gp_oth_cursor_speed_desc">
+		<text>Швидкість руху курсора лівим стіком у сторонніх вікнах без підтримки геймпада.</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn">
+		<text>Кнопка курсора-миші</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_desc">
+		<text>Кнопка ввімкнення режиму миші у вікнах інших модів (синхронізована з вкладкою розкладки).</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_r3">
+		<text>Натиснути R3</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_hold_l3">
+		<text>Утримати L3</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_lb_l3">
+		<text>Поєднання LB + L3</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_hold_view">
+		<text>Утримати View</text>
+	</string>
+	<string id="ui_gp_oth_cursor_btn_custom">
+		<text>Власна (з розкладки)</text>
+	</string>
+	<!-- CURSOR1_END -->
+</string_table>

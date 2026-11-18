@@ -1,0 +1,30 @@
+<w>
+	<!-- GPSET-2 (BRIEF 11.4): Gamepad button test modal window. Stock grey/white palette, no green/gold. -->
+	<card_frame x="272" y="114" width="480" height="540">
+		<texture>ui_inGame2_servers_list_frame</texture>
+	</card_frame>
+	<cap_bar x="0" y="0" width="480" height="22">
+		<texture a="170">ui_inGame2_servers_list_button</texture>
+	</cap_bar>
+	<t_title x="12" y="1" width="456" height="20">
+		<text r="240" g="240" b="240" font="letterica18" align="l" vert_align="c" complex_mode="0"/>
+	</t_title>
+	<t_status x="16" y="426" width="448" height="24">
+		<text r="235" g="235" b="235" font="letterica18" align="c" vert_align="c" complex_mode="0"/>
+	</t_status>
+	<t_sub x="16" y="454" width="448" height="20">
+		<text r="165" g="165" b="165" font="letterica16" align="c" vert_align="c" complex_mode="0"/>
+	</t_sub>
+	<t_footer x="0" y="0" width="360" height="20">
+		<text r="205" g="205" b="205" font="letterica16" align="l" vert_align="c" complex_mode="0"/>
+	</t_footer>
+	<pad_img x="90" y="48" width="300" height="360" stretch="1">
+		<texture>ui_gp_pad_xbox</texture>
+	</pad_img>
+	<hl_ring x="0" y="0" width="26" height="26" stretch="1">
+		<texture>ui_gp_circle_ring</texture>
+	</hl_ring>
+	<hl_disc x="0" y="0" width="16" height="16" stretch="1">
+		<texture>ui_gp_circle_disc</texture>
+	</hl_disc>
+</w>

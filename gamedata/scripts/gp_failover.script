@@ -1,0 +1,645 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+--[[
+    gp_failover.script  --  Step S2: Single-Tick Emergency Failover to Keyboard & Mouse ("Core Armor")
+
+    Purpose:
+      Provides an isolated, fault-tolerant emergency failover mechanism (`gp_failover.trigger(reason, context_info)`).
+      When an unexpected error occurs in gamepad logic, within a single tick it:
+        1. Resets all held gamepad buttons, sticks, and triggers to neutral and stops all vibration.
+        2. Force-releases all gamepad-held pauses and closes open gamepad wheels/overlays so the game
+           never remains stuck on an infinite pause or frozen modal.
+        3. Switches the active input source to "Keyboard and Mouse" ("kbm").
+        4. Displays a short, clear on-screen notification (via `gp_toasts` and/or `actor_menu.set_msg` /
+           `news_manager.send_tip`) informing the player that a gamepad error occurred and control has
+           been switched to keyboard and mouse.
+--]]
+
+local DEFAULT_TOAST_KEY = "ui_gp_failover_kbm_toast"
+local DEFAULT_TOAST_FALLBACK = "Gamepad error: controls switched to keyboard & mouse"
+local DEFAULT_TOAST_DURATION_MS = 5000
+
+local ACTIONS_TO_RELEASE = {
+    "kWPN_FIRE",
+    "kWPN_ZOOM",
+    "kFWD",
+    "kBACK",
+    "kL_STRAFE",
+    "kR_STRAFE",
+    "kSPRINT_TOGGLE",
+    "kCROUCH",
+    "kUSE",
+}
+
+local EXTERNAL_WHEEL_GLOBALS = {
+    "haru_quick_action_wheel_mcm",
+    "ui_radial_menu",
+    "ui_wheel_ammo",
+    "ui_wheel_companion",
+}
+
+local state = {
+    failed_over              = false,
+    in_progress              = false,
+    in_handler_error         = false,
+    reentrant_skips          = 0,
+    auto_failover_on_error   = true,
+    trigger_count            = 0,
+    suppressed_auto_triggers = 0,
+    last_reason              = "",
+    last_context_info        = "",
+    last_trigger_ms          = -1,
+    last_toast_text          = "",
+    last_prev_source         = "kbm",
+    controls_reset_count     = 0,
+    pauses_released_count    = 0,
+    overlays_closed_count    = 0,
+    kbm_switch_count         = 0,
+    notifications_sent_count = 0,
+    history                  = {},
+}
+
+function get_now_ms()
+    if game and type(game.get_time_continual) == "function" then
+        local ok, v = pcall(game.get_time_continual)
+        if ok and type(v) == "number" then return v end
+    end
+    if type(_G.time_continual) == "function" then
+        local ok, v = pcall(_G.time_continual)
+        if ok and type(v) == "number" then return v end
+    end
+    if type(_G.time_global) == "function" then
+        local ok, v = pcall(_G.time_global)
+        if ok and type(v) == "number" then return v end
+    end
+    return 0
+end
+
+function run_console_cmd(cmd)
+    if type(cmd) ~= "string" or cmd == "" then
+        return false
+    end
+    if type(_G.exec_console_cmd) == "function" then
+        local ok = pcall(_G.exec_console_cmd, cmd)
+        if ok then return true end
+    end
+    if type(_G.get_console) == "function" then
+        local ok_c, con = pcall(_G.get_console)
+        if ok_c and con and type(con.execute) == "function" then
+            local ok_e = pcall(con.execute, con, cmd)
+            if ok_e then return true end
+        end
+    end
+    return false
+end
+
+function emit_failover_log(reason, context_str, prev_src)
+    local msg = string.format(
+        "! [gp_failover] S2 emergency KBM failover triggered (reason='%s', context='%s', prev_source='%s')",
+        tostring(reason or "unknown"),
+        tostring(context_str or ""),
+        tostring(prev_src or "unknown")
+    )
+    if type(_G.printf) == "function" then
+        pcall(_G.printf, "%s", msg)
+    elseif type(_G.log) == "function" then
+        pcall(_G.log, msg)
+    end
+    return msg
+end
+
+--===========================================================================
+-- Step 1: Reset all held gamepad buttons, sticks, triggers & stop vibration
+--===========================================================================
+function reset_controls_and_vibration(reason)
+    local tag = "failover_" .. tostring(reason or "error")
+
+    -- 1. Consume all held gamepad buttons and triggers in C++ dispatcher
+    if game and type(game.consume_all_gamepad_buttons) == "function" then
+        pcall(game.consume_all_gamepad_buttons)
+    end
+    run_console_cmd("gp_ctx barrier")
+
+    -- 2. Reset radial wheel right-stick deflection & active sector state
+    if game and type(game.reset_wheel_sector_state) == "function" then
+        pcall(game.reset_wheel_sector_state)
+    end
+
+    -- 3. Zero synthetic left/right stick vectors and stop all gamepad vibration/trigger haptics
+    run_console_cmd("gp_synth_move off")
+    run_console_cmd("gp_synth_look off")
+    run_console_cmd("gp_rumble_test stop")
+
+    -- 4. Release held game actions so actor does not keep firing, aiming, or walking
+    if level and type(level.release_action) == "function" and type(_G.key_bindings) == "table" then
+        for _, act_name in ipairs(ACTIONS_TO_RELEASE) do
+            local act_id = _G.key_bindings[act_name]
+            if act_id ~= nil then
+                pcall(level.release_action, act_id)
+            end
+        end
+    end
+
+    -- 5. Clear LB inventory modifier and re-enable blocked player input
+    if _G.gp_bridge and type(_G.gp_bridge.inv_set_lb_modifier) == "function" then
+        pcall(_G.gp_bridge.inv_set_lb_modifier, false)
+    end
+    if level and type(level.enable_input) == "function" then
+        pcall(level.enable_input)
+    end
+    if game and type(game.only_allow_movekeys) == "function" then
+        pcall(game.only_allow_movekeys, false)
+    end
+    if game and type(game.set_actor_allow_ladder) == "function" then
+        pcall(game.set_actor_allow_ladder, true)
+    end
+    if type(_G.liz_fdda_input_manager) == "table" and _G.liz_fdda_input_manager.is_input_disabled then
+        _G.liz_fdda_input_manager.is_input_disabled = false
+    end
+    if _G.gp_lifecycle and type(_G.gp_lifecycle.recover_stuck_hands) == "function" then
+        pcall(_G.gp_lifecycle.recover_stuck_hands, tag)
+    end
+
+    state.controls_reset_count = state.controls_reset_count + 1
+    return true
+end
+
+--===========================================================================
+-- Step 2: Force-release all gamepad-held pauses & close open wheels/overlays
+--===========================================================================
+function is_wheel_open()
+    if gp_wheel and type(gp_wheel.is_open) == "function" and gp_wheel.is_open() then return true end
+    if type(_G.gp_wheel) == "table" and type(_G.gp_wheel.GUI) == "table" and type(_G.gp_wheel.GUI.IsShown) == "function" then
+        local ok, shown = pcall(_G.gp_wheel.GUI.IsShown, _G.gp_wheel.GUI)
+        if ok and shown == true then
+            return true
+        end
+    end
+    return false
+end
+
+function release_pauses_and_close_overlays(reason)
+    local tag = "failover_" .. tostring(reason or "error")
+    local closed_any = 0
+
+    -- 1. Close gamepad Quick Action Wheel / Ammo Wheel (`gp_wheel`) if open
+    if type(_G.gp_wheel) == "table" then
+        local wheel_was_open = is_wheel_open()
+        if type(_G.gp_wheel.close) == "function" then
+            pcall(_G.gp_wheel.close, tag)
+        elseif type(_G.gp_wheel.GUI) == "table" and type(_G.gp_wheel.GUI.Close) == "function" then
+            pcall(_G.gp_wheel.GUI.Close, _G.gp_wheel.GUI, tag)
+        end
+        if type(_G.gp_wheel.reset_time_factors) == "function" then
+            pcall(_G.gp_wheel.reset_time_factors, tag)
+        end
+        if wheel_was_open then
+            closed_any = closed_any + 1
+        end
+    end
+
+    -- Clear WheelMenuOpen info portion and UIHaruQAW registration if left behind
+    if type(_G.has_alife_info) == "function" and type(_G.disable_info) == "function" then
+        local ok_i, has_i = pcall(_G.has_alife_info, "WheelMenuOpen")
+        if ok_i and has_i then
+            pcall(_G.disable_info, "WheelMenuOpen")
+            closed_any = closed_any + 1
+        end
+    end
+    if type(_G._GUIs) == "table" and _G._GUIs["UIHaruQAW"] ~= nil and type(_G.Unregister_UI) == "function" then
+        pcall(_G.Unregister_UI, "UIHaruQAW")
+    end
+
+    -- 2. Close any external radial wheels or PAW modal
+    for _, gname in ipairs(EXTERNAL_WHEEL_GLOBALS) do
+        local mod = rawget(_G, gname)
+        if type(mod) == "table" and type(mod.GUI) == "table" then
+            local shown = false
+            if type(mod.GUI.IsShown) == "function" then
+                local ok_s, res_s = pcall(mod.GUI.IsShown, mod.GUI)
+                shown = (ok_s and res_s == true)
+            end
+            if shown then
+                if type(mod.GUI.Close) == "function" then
+                    pcall(mod.GUI.Close, mod.GUI)
+                elseif type(mod.GUI.HideDialog) == "function" then
+                    pcall(mod.GUI.HideDialog, mod.GUI)
+                end
+                closed_any = closed_any + 1
+            end
+        end
+    end
+    if type(_G.gp_pda) == "table" and type(_G.gp_pda.close_paw_modal_if_open) == "function" then
+        local ok_p, closed_paw = pcall(_G.gp_pda.close_paw_modal_if_open)
+        if ok_p and closed_paw then
+            closed_any = closed_any + 1
+        end
+    end
+
+    -- 3. Close engine gamepad overlays (OSK, Calibration, Remap, Focus Test)
+    run_console_cmd("gp_osk cancel")
+    run_console_cmd("gp_calib close")
+    run_console_cmd("gp_remap close")
+    run_console_cmd("gp_focus_test emergency_reset")
+
+    -- 4. Release inventory pause token (`gp_inv_pause`)
+    if type(_G.gp_inv_pause) == "table" and type(_G.gp_inv_pause.release_token) == "function" then
+        pcall(_G.gp_inv_pause.release_token, tag)
+    end
+
+    -- 5. Release all pause tokens via `gp_lifecycle` and direct C++ fallback
+    if type(_G.gp_lifecycle) == "table" and type(_G.gp_lifecycle.release_all_pause_tokens) == "function" then
+        pcall(_G.gp_lifecycle.release_all_pause_tokens, tag)
+    end
+    for _ = 1, 8 do
+        run_console_cmd("gp_pause_pop")
+    end
+    if game and type(game.reset_time_factors) == "function" then
+        pcall(game.reset_time_factors, tag)
+    end
+    if level and type(level.set_time_factor) == "function" then
+        pcall(level.set_time_factor, 1.0)
+    end
+    if type(_G.device) == "function" then
+        local ok_d, dev = pcall(_G.device)
+        if ok_d and dev and type(dev.pause) == "function" then
+            pcall(dev.pause, dev, false)
+        end
+    end
+
+    -- 6. Cancel any pending inventory transaction & reset Lua context hints
+    if type(_G.gp_bridge) == "table" then
+        if type(_G.gp_bridge.txn_begin) == "function" then
+            pcall(_G.gp_bridge.txn_begin, "D", tag)
+        end
+    end
+    run_console_cmd("gp_ctx lua reset")
+    if game and type(game.set_gamepad_lua_hints) == "function" then
+        pcall(game.set_gamepad_lua_hints, false, false, false, false, 0, 0, "")
+    end
+    if type(_G.gp_bridge) == "table" and type(_G.gp_bridge.sync_context_hints) == "function" then
+        pcall(_G.gp_bridge.sync_context_hints, true)
+    end
+
+    state.overlays_closed_count = state.overlays_closed_count + closed_any
+    state.pauses_released_count = state.pauses_released_count + 1
+    return true
+end
+
+--===========================================================================
+-- Step 3: Switch active input source to Keyboard and Mouse ("kbm")
+--===========================================================================
+function switch_to_kbm(reason)
+    local prev_src = "gamepad"
+    if game and type(game.get_active_input_source) == "function" then
+        local ok_s, s = pcall(game.get_active_input_source)
+        if ok_s and type(s) == "string" and s ~= "" then
+            prev_src = s
+        end
+    elseif type(_G.gp_bridge) == "table" and type(_G.gp_bridge.get_active_source) == "function" then
+        local ok_b, s = pcall(_G.gp_bridge.get_active_source)
+        if ok_b and type(s) == "string" and s ~= "" then
+            prev_src = s
+        end
+    end
+
+    state.last_prev_source = prev_src
+
+    -- Switch C++ active input source to KBM (`xr_ioc_cmd.cpp:1189-1192`)
+    run_console_cmd("gp_source kbm")
+
+    -- Ensure `gp_bridge` Lua cache immediately reflects "kbm" within the same tick
+    if type(_G.gp_bridge) == "table" and type(_G.gp_bridge.on_input_source_changed) == "function" then
+        pcall(_G.gp_bridge.on_input_source_changed, "kbm", prev_src, "failover:" .. tostring(reason or "error"), get_now_ms())
+    end
+
+    state.kbm_switch_count = state.kbm_switch_count + 1
+    return prev_src
+end
+
+--===========================================================================
+-- Step 4: Show a short, clear on-screen notification to the player
+--===========================================================================
+function resolve_notification_text()
+    if game and type(game.translate_string) == "function" then
+        local ok, tr = pcall(game.translate_string, DEFAULT_TOAST_KEY)
+        if ok and type(tr) == "string" and tr ~= "" and tr ~= DEFAULT_TOAST_KEY then
+            return tr
+        end
+    end
+    return DEFAULT_TOAST_FALLBACK
+end
+
+function notify_player(reason)
+    local msg = resolve_notification_text()
+    state.last_toast_text = msg
+    local delivered = false
+
+    -- 1. Primary notification via `gp_toasts.push_toast(text, source_tag, ttl_ms)`
+    if type(_G.gp_toasts) == "table" and type(_G.gp_toasts.push_toast) == "function" then
+        local ok_t, res_t = pcall(_G.gp_toasts.push_toast, msg, "failover", DEFAULT_TOAST_DURATION_MS)
+        if ok_t and res_t ~= nil then
+            delivered = true
+        end
+    end
+
+    -- 2. Standard HUD message via `actor_menu.set_msg` so player sees it even if HUD toast widget is hidden
+    if type(_G.actor_menu) == "table" and type(_G.actor_menu.set_msg) == "function" then
+        local ok_m = pcall(_G.actor_menu.set_msg, 1, msg, 5)
+        if ok_m then
+            delivered = true
+        end
+    end
+
+    -- 3. Fallback PDA tip via `news_manager.send_tip` if neither `gp_toasts` nor `actor_menu` handled it
+    if not delivered and type(_G.news_manager) == "table" and type(_G.news_manager.send_tip) == "function" then
+        local actor = (_G.db and _G.db.actor) or nil
+        local ok_n = pcall(_G.news_manager.send_tip, actor, msg, nil, nil, DEFAULT_TOAST_DURATION_MS)
+        if ok_n then
+            delivered = true
+        end
+    end
+
+    state.notifications_sent_count = state.notifications_sent_count + 1
+    return msg, delivered
+end
+
+--===========================================================================
+-- Main Entry Point: `gp_failover.trigger(reason, context_info)`
+--===========================================================================
+function format_context_info(context_info)
+    if context_info == nil then
+        return ""
+    end
+    if type(context_info) == "table" then
+        local parts = {}
+        if context_info.mod_name then table.insert(parts, "mod=" .. tostring(context_info.mod_name)) end
+        if context_info.fn_name then table.insert(parts, "fn=" .. tostring(context_info.fn_name)) end
+        if context_info.err then table.insert(parts, "err=" .. tostring(context_info.err)) end
+        if #parts > 0 then
+            return table.concat(parts, ";")
+        end
+    end
+    return tostring(context_info)
+end
+
+function trigger(reason, context_info)
+    if state.in_progress then
+        return false, "reentrant_skip"
+    end
+    state.in_progress = true
+
+    local clean_reason = tostring(reason or "unexpected_gamepad_error")
+    local clean_ctx = format_context_info(context_info)
+    local now_ms = get_now_ms()
+    local pre_failover_ctx = "World_Gameplay"
+    if game and type(game.get_gamepad_context_name) == "function" then
+        local ok_c, c = pcall(game.get_gamepad_context_name)
+        if ok_c and type(c) == "string" and c ~= "" then
+            pre_failover_ctx = c
+        end
+    end
+
+    -- Execute all 4 failover stages in a single tick
+    pcall(reset_controls_and_vibration, clean_reason)
+    pcall(release_pauses_and_close_overlays, clean_reason)
+    local _, prev_src = pcall(switch_to_kbm, clean_reason)
+    local _, toast_msg = pcall(notify_player, clean_reason)
+
+    state.failed_over = true
+    state.trigger_count = state.trigger_count + 1
+    state.last_reason = clean_reason
+    state.last_context_info = clean_ctx
+    state.last_trigger_ms = now_ms
+
+    emit_failover_log(clean_reason, clean_ctx, prev_src)
+
+    local rec = {
+        reason = clean_reason,
+        context_info = clean_ctx,
+        time_ms = now_ms,
+        prev_source = prev_src or "kbm",
+        gamepad_context = pre_failover_ctx,
+        toast_text = toast_msg or state.last_toast_text,
+    }
+    table.insert(state.history, rec)
+    if #state.history > 32 then
+        table.remove(state.history, 1)
+    end
+
+    -- Forward failover event to gp_error_log (Step S3b) if present
+    local err_mod = rawget(_G, "gp_error_log")
+    if type(err_mod) == "table" then
+        if type(err_mod.on_failover) == "function" then
+            pcall(err_mod.on_failover, clean_reason, context_info, rec)
+        elseif type(err_mod.record_error) == "function" then
+            pcall(err_mod.record_error, "failover:" .. clean_reason, clean_ctx ~= "" and clean_ctx or clean_reason, {
+                origin_layer = "lua:gp_failover",
+                from_failover = true,
+                force_write = true,
+                gamepad_context = pre_failover_ctx,
+                time_ms = now_ms,
+            })
+        end
+    end
+
+    state.in_progress = false
+    return true, rec
+end
+
+-- Hook called automatically by `gp_safe_guard` (Step S1) when any `gp_*` handler throws an error
+function on_handler_error(tag, err_str, info, mod_name, fn_name)
+    if not state.auto_failover_on_error then
+        return false
+    end
+    if state.in_handler_error or state.in_progress then
+        state.reentrant_skips = state.reentrant_skips + 1
+        return false, "reentrant_skip"
+    end
+    state.in_handler_error = true
+    local gp_active = false
+    if game and type(game.is_gamepad_active_source) == "function" then
+        local ok, act = pcall(game.is_gamepad_active_source)
+        gp_active = (ok and act == true)
+    end
+    if state.failed_over and not gp_active then
+        state.suppressed_auto_triggers = state.suppressed_auto_triggers + 1
+        state.in_handler_error = false
+        return false
+    end
+    local ok_t, res_t, rec_t = pcall(trigger, tag or "handler_error", {
+        err = err_str,
+        info = info,
+        mod_name = mod_name,
+        fn_name = fn_name,
+    })
+    state.in_handler_error = false
+    if not ok_t then
+        return false, res_t
+    end
+    return res_t, rec_t
+end
+
+-- Convenience wrapper to run a function and trigger failover if it raises an unhandled error
+function guard_call(reason_tag, fn, ...)
+    if type(fn) ~= "function" then
+        return false, nil
+    end
+    local ok, r1, r2, r3, r4 = pcall(fn, ...)
+    if not ok then
+        trigger(reason_tag or "guard_call_error", r1)
+        return false, r1
+    end
+    return true, r1, r2, r3, r4
+end
+
+function is_failed_over()
+    return state.failed_over == true
+end
+
+function set_auto_failover(enabled)
+    state.auto_failover_on_error = (enabled ~= false)
+    return state.auto_failover_on_error
+end
+
+function get_state()
+    return state
+end
+
+function get_status_summary()
+    return string.format(
+        "failed_over=%s;triggers=%d;suppressed=%d;controls_reset=%d;pauses_released=%d;kbm_switches=%d;notifs=%d;last_reason=%s",
+        state.failed_over and "1" or "0",
+        state.trigger_count,
+        state.suppressed_auto_triggers,
+        state.controls_reset_count,
+        state.pauses_released_count,
+        state.kbm_switch_count,
+        state.notifications_sent_count,
+        state.last_reason ~= "" and state.last_reason or "none"
+    )
+end
+
+function reset_state()
+    state.failed_over              = false
+    state.in_progress              = false
+    state.in_handler_error         = false
+    state.reentrant_skips          = 0
+    state.auto_failover_on_error   = true
+    state.trigger_count            = 0
+    state.suppressed_auto_triggers = 0
+    state.last_reason              = ""
+    state.last_context_info        = ""
+    state.last_trigger_ms          = -1
+    state.last_toast_text          = ""
+    state.last_prev_source         = "kbm"
+    state.controls_reset_count     = 0
+    state.pauses_released_count    = 0
+    state.overlays_closed_count    = 0
+    state.kbm_switch_count         = 0
+    state.notifications_sent_count = 0
+    state.history                  = {}
+    return true
+end
+
+function on_input_source_restored(new_source)
+    if tostring(new_source or "") == "gamepad" then
+        state.failed_over = false
+    end
+end
+
+function on_game_start()
+    reset_state()
+end
+
+--===========================================================================
+-- Self-Test (`gp_failover.selftest()`)
+--===========================================================================
+function selftest()
+    reset_state()
+
+    local fail_reasons = {}
+    local function check(cond, reason_str)
+        if not cond then
+            table.insert(fail_reasons, reason_str)
+        end
+    end
+
+    -- 1. Simulate active gamepad session with open Quick Action Wheel in PAUSE mode + deflected stick
+    run_console_cmd("gp_source gamepad")
+    if type(_G.gp_wheel) == "table" and type(_G.gp_wheel.on_game_start) == "function" then
+        pcall(_G.gp_wheel.on_game_start)
+        pcall(_G.gp_wheel.set_time_mode, "pause")
+        pcall(_G.gp_wheel.open_from_lb_hold)
+        check(is_wheel_open() == true, "wheel_opened_before_failover")
+    end
+    if type(_G.device) == "function" and _G.device() then
+        check(_G.device():is_paused() == true, "device_paused_by_wheel_before_failover")
+    end
+
+    -- Trigger single-tick failover in the middle of the open wheel!
+    local ok1, rec1 = trigger("selftest_wheel_crash", { mod_name = "gp_wheel", fn_name = "Update", err = "simulated_wheel_fault" })
+    check(ok1 == true and type(rec1) == "table", "wheel_failover_triggered")
+    check(is_wheel_open() == false, "wheel_closed_on_failover")
+    if type(_G.device) == "function" and _G.device() then
+        check(_G.device():is_paused() == false, "pause_released_after_wheel_failover")
+    end
+    if game and type(game.is_wheel_stick_active) == "function" then
+        check(game.is_wheel_stick_active() == false, "wheel_stick_zeroed_on_failover")
+    end
+    if game and type(game.get_active_input_source) == "function" then
+        check(game.get_active_input_source() == "kbm", "active_source_switched_to_kbm_1")
+    end
+    if type(_G.gp_bridge) == "table" and type(_G.gp_bridge.is_gamepad_active) == "function" then
+        check(_G.gp_bridge.is_gamepad_active() == false, "gp_bridge_reports_kbm_1")
+    end
+    check(state.last_toast_text ~= "", "notification_text_emitted_1")
+
+    -- 2. Simulate active gamepad session with Inventory Pause held (`gp_inv_pause`)
+    on_input_source_restored("gamepad")
+    run_console_cmd("gp_source gamepad")
+    -- FIX-LIVE1: пауза инвентаря отменена (D65), но снятие токена при отказе проверяем на старом пути
+    local inv_pause_prev = type(_G.gp_inv_pause) == "table" and _G.gp_inv_pause.PAUSE_FEATURE_ENABLED
+    if type(_G.gp_inv_pause) == "table" then
+        _G.gp_inv_pause.PAUSE_FEATURE_ENABLED = true
+        _G.ui_inventory = {
+            GUI = {
+                mode = "inventory",
+                IsShown = function() return true end,
+            },
+        }
+        pcall(_G.gp_inv_pause.on_gui_show, "UIInventory")
+        if type(_G.gp_inv_pause.is_paused_by_inventory) == "function" then
+            check(_G.gp_inv_pause.is_paused_by_inventory() == true, "inv_pause_acquired_before_failover")
+        end
+    end
+
+    -- Trigger single-tick failover in the middle of inventory pause!
+    local ok2, rec2 = trigger("selftest_inv_pause_crash", "inventory_update_fault")
+    check(ok2 == true and type(rec2) == "table", "inv_failover_triggered")
+
+    if type(_G.gp_inv_pause) == "table" and type(_G.gp_inv_pause.is_paused_by_inventory) == "function" then
+        check(_G.gp_inv_pause.is_paused_by_inventory() == false, "inv_pause_released_on_failover")
+    end
+    if type(_G.gp_inv_pause) == "table" then _G.gp_inv_pause.PAUSE_FEATURE_ENABLED = inv_pause_prev end
+    if type(_G.device) == "function" and _G.device() then
+        check(_G.device():is_paused() == false, "device_unpaused_after_inv_failover")
+    end
+    if game and type(game.get_active_input_source) == "function" then
+        check(game.get_active_input_source() == "kbm", "active_source_switched_to_kbm_2")
+    end
+    if type(_G.gp_toasts) == "table" and type(_G.gp_toasts.get_visible_toasts) == "function" then
+        local vis = _G.gp_toasts.get_visible_toasts()
+        check(type(vis) == "table" and #vis >= 1, "failover_toast_pushed")
+    end
+
+    _G.ui_inventory = nil
+    if type(_G.gp_toasts) == "table" and type(_G.gp_toasts.clear_toasts) == "function" then
+        pcall(_G.gp_toasts.clear_toasts)
+    end
+    reset_state()
+
+    if #fail_reasons > 0 then
+        return "FAIL:" .. table.concat(fail_reasons, ",")
+    end
+    return "PASS"
+end

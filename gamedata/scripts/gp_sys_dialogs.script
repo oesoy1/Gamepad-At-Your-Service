@@ -1,0 +1,1576 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- gp_sys_dialogs.script -- W5-SYSDLG (2026-11-14): управление геймпадом для системных и полевых диалогов:
+--   1. Кодовый замок (ui_numpad.UINumpad, В31): старт на «5», A - клавиша, X - стереть, Y - ввод, B - выход.
+--   2. Создание тайника (item_backpack.UICreateStash, В14): старт на «Создать», A - создать / поле -> OSK,
+--      Y - экранная клавиатура с 6 шаблонами (StashDialog), защита от гонки закрытия OSK и кнопок.
+--   3. Книга рецептов (item_recipe.UIRecipe, В28): закрытие только B, плавный RS-скролл, шаг по ячейкам, серые рамки.
+--   4. Учебные карточки и радио-кодек NPE (npe_dialog_tutorial, npe_dialog_codec, В33): страницы LB/RB,
+--      A «Далее -> Закрыть», Y - время, X - MCM, досрочный выход - удержание B (0,3+0,7 с), на последней B сразу.
+-- В чистой Anomaly (без NPE / actor_stash_patch) неиспользуемые ветки тихо спят (P23).
+
+HOLD_PAUSE = 300
+HOLD_FILL = 700
+SCROLL_SPEED = 520
+OSK_GUARD_MS = 120
+DIM_ALPHA = 115
+NEUTRAL_FRAME_RGB = { 195, 195, 195 }
+
+local NUMPAD_IDS = {
+    "btn_7", "btn_8", "btn_9",
+    "btn_4", "btn_5", "btn_6",
+    "btn_1", "btn_2", "btn_3",
+    "btn_0", "btn_c", "btn_backspase",
+    "btn_enter", "btn_cancel",
+}
+
+-- dir: 1 = Up, 2 = Down, 3 = Left, 4 = Right
+local NUMPAD_NAV = {
+    btn_7         = { [2] = "btn_4",         [4] = "btn_8" },
+    btn_8         = { [2] = "btn_5",         [3] = "btn_7", [4] = "btn_9" },
+    btn_9         = { [2] = "btn_6",         [3] = "btn_8" },
+    btn_4         = { [1] = "btn_7",         [2] = "btn_1", [4] = "btn_5" },
+    btn_5         = { [1] = "btn_8",         [2] = "btn_2", [3] = "btn_4", [4] = "btn_6" },
+    btn_6         = { [1] = "btn_9",         [2] = "btn_3", [3] = "btn_5" },
+    btn_1         = { [1] = "btn_4",         [2] = "btn_0", [4] = "btn_2" },
+    btn_2         = { [1] = "btn_5",         [2] = "btn_c", [3] = "btn_1", [4] = "btn_3" },
+    btn_3         = { [1] = "btn_6",         [2] = "btn_backspase", [3] = "btn_2" },
+    btn_0         = { [1] = "btn_1",         [2] = "btn_enter",     [4] = "btn_c" },
+    btn_c         = { [1] = "btn_2",         [2] = "btn_enter",     [3] = "btn_0", [4] = "btn_backspase" },
+    btn_backspase = { [1] = "btn_3",         [2] = "btn_cancel",    [3] = "btn_c" },
+    btn_enter     = { [1] = "btn_0",         [4] = "btn_cancel" },
+    btn_cancel    = { [1] = "btn_backspase", [3] = "btn_enter" },
+}
+
+local NUMPAD_DIGIT = {
+    btn_0 = 0, btn_1 = 1, btn_2 = 2, btn_3 = 3, btn_4 = 4,
+    btn_5 = 5, btn_6 = 6, btn_7 = 7, btn_8 = 8, btn_9 = 9,
+}
+
+local LABELS_RU = {
+    press    = "Нажать",
+    erase    = "Стереть",
+    submit   = "Ввод",
+    exit     = "Выход",
+    close    = "Закрыть",
+    create   = "Создать",
+    cancel   = "Отмена",
+    keyboard = "Название",
+    scroll   = "Листать",
+    desc     = "Описание",
+    skip     = "Пропустить",
+    hold_b   = "Закрыть (удерж.)",
+    skip_b   = "Пропустить (удерж.)",
+    finish   = "Завершить",
+}
+
+local LABELS_EN = {
+    press    = "Press",
+    erase    = "Erase",
+    submit   = "Enter",
+    exit     = "Exit",
+    close    = "Close",
+    create   = "Create",
+    cancel   = "Cancel",
+    keyboard = "Name",
+    scroll   = "Scroll",
+    desc     = "Details",
+    skip     = "Skip",
+    hold_b   = "Close (hold)",
+    skip_b   = "Skip (hold)",
+    finish   = "Finish",
+}
+
+local live = {
+    recipe    = nil,
+    npe_codec = nil,
+}
+local xml_cache = nil
+local denies_count = 0
+
+function now_ms()
+    local d = device and device()
+    if d and d.time_continual then
+        local ok, t = pcall(d.time_continual, d)
+        if ok and tonumber(t) then return tonumber(t) end
+    end
+    return 0
+end
+
+function shown(w)
+    if not w or not w.IsShown then return false end
+    local ok, res = pcall(w.IsShown, w)
+    return ok and res == true
+end
+
+function enabled(w)
+    if not w or not w.IsEnabled then return true end
+    local ok, res = pcall(w.IsEnabled, w)
+    return (not ok) or res == true
+end
+
+function abs_rect(w)
+    if not w or not w.GetAbsoluteRect or not Frect then return nil end
+    local r = Frect()
+    local ok = pcall(w.GetAbsoluteRect, w, r)
+    if ok and r and r.x1 and r.x2 and (r.x2 - r.x1) > 1 and (r.y2 - r.y1) > 1 then
+        return { x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2 }
+    end
+    return nil
+end
+
+function center(r)
+    return (r.x1 + r.x2) * 0.5, (r.y1 + r.y2) * 0.5
+end
+
+function contains(r, x, y)
+    return r ~= nil and x >= r.x1 and x <= r.x2 and y >= r.y1 and y <= r.y2
+end
+
+function move_cursor(x, y)
+    if SetCursorPosition and vector2 then
+        pcall(function() SetCursorPosition(vector2():set(x, y)) end)
+    end
+end
+
+function is_gamepad()
+    local b = rawget(_G, "gp_bridge")
+    if type(b) == "table" and type(b.is_gamepad_active) == "function" then
+        local ok, res = pcall(b.is_gamepad_active)
+        return ok and res == true
+    end
+    return false
+end
+
+function hints_shown_menu()
+    if not is_gamepad() then return false end
+    local ic = rawget(_G, "gp_icons")
+    if type(ic) == "table" and type(ic.hints_visible) == "function" then
+        return ic.hints_visible("menu") == true
+    end
+    return true
+end
+
+function is_russian()
+    local s = game and game.translate_string and game.translate_string("ui_total_weight") or ""
+    return type(s) == "string" and s:find("[\192-\255]") ~= nil
+end
+
+function label(key)
+    local tbl = is_russian() and LABELS_RU or LABELS_EN
+    return tbl[key] or key
+end
+
+function consume_buttons()
+    if game and type(game.consume_all_gamepad_buttons) == "function" then
+        pcall(game.consume_all_gamepad_buttons)
+    end
+end
+
+function deny()
+    denies_count = denies_count + 1
+    local rw = rawget(_G, "gp_inv_rework")
+    if type(rw) == "table" and type(rw.deny) == "function" then
+        pcall(rw.deny)
+    elseif game and type(game.gamepad_inv_focus_deny) == "function" then
+        pcall(game.gamepad_inv_focus_deny)
+    end
+    return "used"
+end
+
+function get_denies_count()
+    return denies_count
+end
+
+local function xmlh()
+    if not xml_cache and CScriptXmlInit then
+        local x = CScriptXmlInit()
+        x:ParseFile("ui_gp_workshop.xml")
+        xml_cache = x
+    end
+    return xml_cache
+end
+
+local function ensure_state(wnd, kind)
+    local st = wnd._gpsys
+    if not st or st.kind ~= kind then
+        st = {
+            kind            = kind,
+            reg             = st and st.reg or {},
+            queue           = {},
+            btn_ui          = {},
+            strip           = nil,
+            focus_id        = nil,
+            scroll_pos      = nil,
+            scroll_int      = nil,
+            osk_was_open    = false,
+            osk_guard_until = 0,
+            hold_b          = false,
+            b_hold_icon     = nil,
+            stack_depth     = 0,
+        }
+        wnd._gpsys = st
+    end
+    return st
+end
+
+local function ctrl_of(wnd, name)
+    local st = wnd and wnd._gpsys
+    if st and st.reg and st.reg[name] then return st.reg[name] end
+    if wnd and wnd[name] then return wnd[name] end
+    if wnd and type(wnd._registered) == "table" and wnd._registered[name] then
+        return wnd._registered[name]
+    end
+    return nil
+end
+
+local function defer(wnd, fn)
+    local st = wnd and wnd._gpsys
+    if st then
+        st.queue[#st.queue + 1] = fn
+    end
+    return "used"
+end
+
+local function drain_queue(wnd)
+    local st = wnd and wnd._gpsys
+    local q = st and st.queue
+    if not q or #q == 0 then return end
+    local copy = {}
+    for i = 1, #q do
+        copy[i] = q[i]
+        q[i] = nil
+    end
+    for i = 1, #copy do
+        pcall(copy[i])
+    end
+end
+
+local function osk_is_open_for(wnd)
+    if game and type(game.gamepad_osk_is_open) == "function" then
+        local ok, open = pcall(game.gamepad_osk_is_open)
+        if ok then return open == true end
+    end
+    local st = wnd and wnd._gpsys
+    if st and st.osk_was_open and game and type(game.gamepad_is_top_dialog) == "function" then
+        if shown(wnd) and not game.gamepad_is_top_dialog(wnd) then
+            return true
+        end
+    end
+    return false
+end
+
+local function top_ok(win_name, wnd, open_depth)
+    if not (wnd and wnd._gpsys and shown(wnd)) then
+        return false
+    end
+    if game and type(game.gamepad_is_top_dialog) == "function" then
+        return game.gamepad_is_top_dialog(wnd) == true
+    end
+    local st = rawget(_G, "_UI_stack")
+    if type(st) ~= "table" or #st == 0 then
+        return true
+    end
+    if win_name == "UIRecipe" then
+        return #st <= (tonumber(open_depth) or #st)
+    end
+    return st[#st] == win_name
+end
+
+function active()
+    local c = live.npe_codec
+    if c and top_ok("UINewPlayerExperience", c) then
+        return "npe_codec", c, "UINewPlayerExperience"
+    end
+    local nt_mod = rawget(_G, "npe_dialog_tutorial")
+    local nt = type(nt_mod) == "table" and nt_mod.GUI or nil
+    if nt and top_ok("UINewPlayerExperience", nt) then
+        return "npe_tutorial", nt, "UINewPlayerExperience"
+    end
+    local np_mod = rawget(_G, "ui_numpad")
+    local np = type(np_mod) == "table" and np_mod.GUI or nil
+    if np and top_ok("UINumpad", np) then
+        return "numpad", np, "UINumpad"
+    end
+    local bp_mod = rawget(_G, "item_backpack")
+    local bp = type(bp_mod) == "table" and bp_mod.GUI or nil
+    if bp and top_ok("UICreateStash", bp) then
+        return "stash", bp, "UICreateStash"
+    end
+    local rc_mod = rawget(_G, "item_recipe")
+    local rc = live.recipe or (type(rc_mod) == "table" and rc_mod.GUI or nil)
+    if rc and rc._gpsys and top_ok("UIRecipe", rc, rc._gpsys.stack_depth) then
+        return "recipe", rc, "UIRecipe"
+    end
+    return nil, nil, nil
+end
+
+function field_modal_tag()
+    local _, _, tag = active()
+    return tag
+end
+
+function focus_frame_active()
+    local kind, wnd = active()
+    if not kind then return false end
+    if osk_is_open_for(wnd) then return false end
+    return is_gamepad()
+end
+
+local function ring_suffix(icon_wnd)
+    local r = icon_wnd and shown(icon_wnd) and abs_rect(icon_wnd)
+    if not r then return "" end
+    return string.format(":%.1f,%.1f,%.1f,%.1f", r.x1, r.y1, r.x2, r.y2)
+end
+
+local function no_hit(x, y)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=0;h=0;kind=none", x, y)
+end
+
+local function stay(x, y)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=none", x, y)
+end
+
+-- ---------------------------------------------------------------------------
+-- Значки gp_icons + выравнивание по заглавной букве (В8, P11, LINE = "cap")
+-- ---------------------------------------------------------------------------
+
+function place_glyph(icon_wnd, btn_key, col_x, cy, font, alpha)
+    local ic = rawget(_G, "gp_icons")
+    local al = rawget(_G, "gp_hint_align")
+    if not (icon_wnd and type(ic) == "table" and type(al) == "table" and vector2) then
+        if icon_wnd and icon_wnd.Show then icon_wnd:Show(false) end
+        return 0
+    end
+    local _, sh = al.screen()
+    local sk = ic.scale_k and ic.scale_k() or 1
+    local base_vis = (font == "letterica18") and 22 or 20
+    local k_px = (base_vis / 22) * (sh / 1080) * sk
+    local tex = ic.tex(btn_key, "round")
+    local vw, _, tw, th = ic.dims(btn_key, "round")
+    local tw_px = math.max(10, math.floor(tw * k_px + 0.5))
+    local th_px = math.max(10, math.floor(th * k_px + 0.5))
+    local iw, ih = al.px_w(tw_px), al.px_h(th_px)
+    local pad_ui = al.px_w(3 * k_px)
+
+    if icon_wnd._gpsys_tex ~= tex then
+        icon_wnd:InitTexture(tex)
+        icon_wnd._gpsys_tex = tex
+    end
+    icon_wnd:SetWndPos(vector2():set(al.snap_x(col_x - pad_ui), al.snap_y(cy - ih * 0.5)))
+    icon_wnd:SetWndSize(vector2():set(iw, ih))
+    if GetARGB and icon_wnd.SetTextureColor then
+        icon_wnd:SetTextureColor(GetARGB(alpha or 255, 255, 255, 255))
+    end
+    icon_wnd:Show(true)
+    return al.px_w(vw * k_px)
+end
+
+local function paint_button_glyphs(wnd, parent, specs, font)
+    local st = wnd._gpsys
+    local al = rawget(_G, "gp_hint_align")
+    local xml = xmlh()
+    if not (st and parent and xml and type(al) == "table" and vector2) then return end
+    local show_gp = hints_shown_menu()
+    local _, sh = al.screen()
+    local cap = al.cap_px(font)
+
+    for i = 1, #specs do
+        local sp = specs[i]
+        local id, glyph_key, is_hold_b = sp[1], sp[2], sp[3]
+        local btn = ctrl_of(wnd, id)
+        local e = st.btn_ui[id]
+        if btn and shown(btn) then
+            local tc = btn.TextControl and btn:TextControl() or nil
+            if not e and tc then
+                e = {
+                    icon  = xml:InitStatic("icon", parent),
+                    label = xml:InitTextWnd(font == "letterica18" and "label18" or "measure16", parent),
+                    text  = tc:GetText() or "",
+                }
+                e.icon:Enable(false)
+                e.label:Enable(false)
+                st.btn_ui[id] = e
+            end
+            if e and tc then
+                local cur_t = tc:GetText()
+                if cur_t and cur_t ~= "" then
+                    e.text = cur_t
+                    tc:SetText("")
+                end
+                local pos = btn:GetWndPos()
+                local bw, bh = btn:GetWidth(), btn:GetHeight()
+                local cy = pos.y + bh * 0.5
+                local left = pos.x + al.px_w(math.max(4, math.floor(8 * sh / 1080 + 0.5)))
+                local act = enabled(btn)
+                local lx = left
+                if show_gp and glyph_key then
+                    local vis_w = place_glyph(e.icon, glyph_key, left, cy, font, act and 255 or DIM_ALPHA)
+                    lx = left + vis_w + al.px_w(math.max(4, math.floor(cap * 0.6 + 0.5)))
+                    if is_hold_b then
+                        st.b_hold_icon = e.icon
+                    end
+                else
+                    e.icon:Show(false)
+                end
+                e.label:SetText(e.text)
+                if GetARGB and e.label.SetTextColor then
+                    local shade = act and 240 or 150
+                    e.label:SetTextColor(GetARGB(255, shade, shade, shade))
+                end
+                e.label:SetWndPos(vector2():set(al.snap_x(lx), al.label_y(cy, 24, font)))
+                e.label:SetWndSize(vector2():set(math.max(1, pos.x + bw - lx), 24))
+                e.label:Show(true)
+            end
+        elseif e then
+            e.icon:Show(false)
+            e.label:Show(false)
+        end
+    end
+end
+
+local function paint_hint_strip(wnd, anchor, x, y, w, items)
+    local st = wnd._gpsys
+    local al = rawget(_G, "gp_hint_align")
+    local xml = xmlh()
+    if not (st and anchor and xml and type(al) == "table" and vector2) then return end
+    if not hints_shown_menu() or #items == 0 then
+        if st.strip then st.strip.bg:Show(false) end
+        return
+    end
+    if not st.strip then
+        local bg = xml:InitStatic("strip", anchor)
+        bg:Enable(false)
+        st.strip = { bg = bg, slots = {} }
+    end
+    local strip = st.strip
+    local _, sh = al.screen()
+    local h_ui = 26
+    strip.bg:SetWndPos(vector2():set(al.snap_x(x), al.snap_y(y)))
+    strip.bg:SetWndSize(vector2():set(w, h_ui))
+    strip.bg:Show(true)
+
+    local cy = h_ui * 0.5
+    local font = "letterica16"
+    local gap_icon = al.px_w(math.max(4, math.floor(6 * sh / 1080 + 0.5)))
+    local gap_item = al.px_w(math.max(10, math.floor(14 * sh / 1080 + 0.5)))
+    local cur_x = al.px_w(math.max(8, math.floor(10 * sh / 1080 + 0.5)))
+
+    for i = 1, #items do
+        local it = items[i]
+        local sl = strip.slots[i]
+        if not sl then
+            sl = {
+                icon  = xml:InitStatic("icon", strip.bg),
+                label = xml:InitTextWnd("measure16", strip.bg),
+            }
+            sl.icon:Enable(false)
+            sl.label:Enable(false)
+            strip.slots[i] = sl
+        end
+        local vis_w = place_glyph(sl.icon, it[1], cur_x, cy, font, 255)
+        if it[3] then
+            st.b_hold_icon = sl.icon
+        end
+        local lx = cur_x + vis_w + gap_icon
+        sl.label:SetText(it[2])
+        if sl.label.AdjustWidthToText then sl.label:AdjustWidthToText() end
+        local lw = math.max(18, sl.label:GetWidth())
+        sl.label:SetWndPos(vector2():set(al.snap_x(lx), al.label_y(cy, 24, font)))
+        sl.label:SetWndSize(vector2():set(lw + 4, 24))
+        sl.label:Show(true)
+        cur_x = lx + lw + gap_item
+    end
+    for i = #items + 1, #strip.slots do
+        strip.slots[i].icon:Show(false)
+        strip.slots[i].label:Show(false)
+    end
+    strip.bg:SetWndSize(vector2():set(math.max(w, cur_x), h_ui))
+end
+
+-- ---------------------------------------------------------------------------
+-- Плавная прокрутка ScrollView (P12, В28) + автодокрутка к цели
+-- ---------------------------------------------------------------------------
+
+local function smooth_scroll_view(st, sv, y, dt)
+    if not (sv and sv.GetCurrentScrollPos and sv.SetScrollPos) then return false end
+    local ok, cur = pcall(sv.GetCurrentScrollPos, sv)
+    cur = ok and tonumber(cur) or nil
+    if not cur then return false end
+    local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+    local okn, mn = pcall(sv.GetMinScrollPos, sv)
+    mx = okx and tonumber(mx) or cur
+    mn = okn and tonumber(mn) or 0
+    if mx <= mn then return false end
+    if st.scroll_int ~= cur or st.scroll_pos == nil then
+        st.scroll_pos = cur
+        st.scroll_int = cur
+    end
+    local next_p = st.scroll_pos + (tonumber(y) or 0) * SCROLL_SPEED * (tonumber(dt) or 0) / 1000
+    next_p = math.max(mn, math.min(mx, next_p))
+    st.scroll_pos = next_p
+    local ip = math.floor(next_p + 0.5)
+    if ip ~= cur then
+        pcall(sv.SetScrollPos, sv, ip)
+    end
+    local ok2, now_cur = pcall(sv.GetCurrentScrollPos, sv)
+    st.scroll_int = ok2 and tonumber(now_cur) or ip
+    return true
+end
+
+local function ensure_target_in_scroll(sv, t)
+    if not (sv and t and t.r and sv.GetCurrentScrollPos and sv.SetScrollPos) then return end
+    local vr = abs_rect(sv)
+    if not vr then return end
+    local ok, cur = pcall(sv.GetCurrentScrollPos, sv)
+    cur = ok and tonumber(cur) or 0
+    local target_pos = nil
+    if t.r.y1 < vr.y1 + 2 then
+        target_pos = cur - (vr.y1 + 2 - t.r.y1)
+    elseif t.r.y2 > vr.y2 - 2 then
+        target_pos = cur + (t.r.y2 - (vr.y2 - 2))
+    end
+    if target_pos ~= nil then
+        local okn, mn = pcall(sv.GetMinScrollPos, sv)
+        local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+        if okn and tonumber(mn) then target_pos = math.max(tonumber(mn), target_pos) end
+        if okx and tonumber(mx) then target_pos = math.min(tonumber(mx), target_pos) end
+        target_pos = math.floor(target_pos + 0.5)
+        pcall(sv.SetScrollPos, sv, target_pos)
+        if t.wnd then
+            local nr = abs_rect(t.wnd)
+            if nr then t.r = nr end
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- 1. Кодовый замок (ui_numpad.UINumpad, В31)
+-- ---------------------------------------------------------------------------
+
+local function numpad_text(g)
+    local tc = g and g.st and g.st.TextControl and g.st:TextControl() or nil
+    local t = tc and tc:GetText() or ""
+    return tostring(t or "")
+end
+
+local function collect_numpad(g)
+    local list = {}
+    for i = 1, #NUMPAD_IDS do
+        local id = NUMPAD_IDS[i]
+        local w = ctrl_of(g, id)
+        local r = w and shown(w) and abs_rect(w) or nil
+        if r then
+            list[#list + 1] = { id = id, wnd = w, r = r, kind = "btn" }
+        end
+    end
+    return list
+end
+
+local function numpad_button(g, name, phase)
+    if phase ~= "press" then return "used" end
+    local st = g._gpsys
+    if name == "B" then
+        return defer(g, function() consume_buttons(); g:Close() end)
+    elseif name == "X" then
+        if #numpad_text(g) == 0 then return deny() end
+        return defer(g, function() g:OnButton_backspace_clicked() end)
+    elseif name == "Y" then
+        if #numpad_text(g) == 0 then return deny() end
+        return defer(g, function() g:OnButton_OK_clicked() end)
+    elseif name == "A" then
+        local id = st.focus_id or "btn_5"
+        local digit = NUMPAD_DIGIT[id]
+        if digit ~= nil then
+            if #numpad_text(g) > 12 then return deny() end
+            return defer(g, function()
+                local fn = g["OnButton_" .. tostring(digit) .. "_clicked"]
+                if fn then fn(g) else g:AddNumber(digit) end
+            end)
+        elseif id == "btn_c" then
+            if #numpad_text(g) == 0 then return deny() end
+            return defer(g, function() g:OnButton_c_clicked() end)
+        elseif id == "btn_backspase" then
+            if #numpad_text(g) == 0 then return deny() end
+            return defer(g, function() g:OnButton_backspace_clicked() end)
+        elseif id == "btn_enter" then
+            if #numpad_text(g) == 0 then return deny() end
+            return defer(g, function() g:OnButton_OK_clicked() end)
+        elseif id == "btn_cancel" then
+            return defer(g, function() consume_buttons(); g:Close() end)
+        end
+    end
+    return "used"
+end
+
+local function tick_numpad(g)
+    drain_queue(g)
+    if not shown(g) then return end
+    local st = g._gpsys
+    if not st.focus_id then
+        st.focus_id = "btn_5"
+        local b5 = ctrl_of(g, "btn_5")
+        local r5 = b5 and abs_rect(b5)
+        if r5 and is_gamepad() then
+            local cx, cy = center(r5)
+            move_cursor(cx, cy)
+        end
+    end
+    paint_hint_strip(g, g, 8, 370, 322, {
+        { "a", label("press") },
+        { "x", label("erase") },
+        { "y", label("submit") },
+        { "b", label("exit") },
+    })
+end
+
+-- ---------------------------------------------------------------------------
+-- 2. Создание тайника (item_backpack.UICreateStash, В14)
+-- ---------------------------------------------------------------------------
+
+local function release_edit_focus(g)
+    local inp = g and (g.input or ctrl_of(g, "fld_input"))
+    if inp and type(inp.CaptureFocus) == "function" then
+        pcall(inp.CaptureFocus, inp, false)
+    end
+end
+
+local function open_stash_osk(g)
+    local st = g._gpsys
+    local inp = g.input or ctrl_of(g, "fld_input")
+    if not inp then return deny() end
+    st.osk_was_open = true
+    st.osk_guard_until = now_ms() + OSK_GUARD_MS
+    consume_buttons()
+    if game and type(game.gamepad_new_game_keyboard) == "function" then
+        pcall(game.gamepad_new_game_keyboard, inp)
+        return "used"
+    end
+    return ""
+end
+
+local function collect_stash(g)
+    local list = {}
+    local order = {
+        { "fld_input", g.input or ctrl_of(g, "fld_input"), "edit" },
+        { "btn_ok",    ctrl_of(g, "btn_ok"),               "btn"  },
+        { "btn_cancel",ctrl_of(g, "btn_cancel"),           "btn"  },
+    }
+    for i = 1, #order do
+        local id, w, k = order[i][1], order[i][2], order[i][3]
+        local r = w and shown(w) and abs_rect(w) or nil
+        if r then
+            list[#list + 1] = { id = id, wnd = w, r = r, kind = k }
+        end
+    end
+    return list
+end
+
+local function stash_nav(list, cur_id, dir)
+    local by = {}
+    for i = 1, #list do by[list[i].id] = list[i] end
+    if cur_id == "fld_input" then
+        if dir == 2 then return by.btn_ok or by.btn_cancel end
+        return nil
+    end
+    if dir == 1 then
+        return by.fld_input
+    end
+    if dir == 3 or dir == 4 then
+        local ok_t, ca_t = by.btn_ok, by.btn_cancel
+        if ok_t and ca_t then
+            local ok_left = ok_t.r.x1 <= ca_t.r.x1
+            if cur_id == "btn_ok" then
+                if (ok_left and dir == 4) or ((not ok_left) and dir == 3) then return ca_t end
+            elseif cur_id == "btn_cancel" then
+                if (ok_left and dir == 3) or ((not ok_left) and dir == 4) then return ok_t end
+            end
+        end
+    end
+    return nil
+end
+
+local function stash_button(g, name, phase)
+    if phase ~= "press" then return "used" end
+    local st = g._gpsys
+    if now_ms() < (st.osk_guard_until or 0) then
+        return "used"
+    end
+    if name == "Y" then
+        return open_stash_osk(g)
+    elseif name == "B" then
+        return defer(g, function()
+            release_edit_focus(g)
+            consume_buttons()
+            g:Close()
+        end)
+    elseif name == "A" then
+        local id = st.focus_id or "btn_ok"
+        if id == "fld_input" then
+            return open_stash_osk(g)
+        elseif id == "btn_cancel" then
+            return defer(g, function()
+                release_edit_focus(g)
+                consume_buttons()
+                g:Close()
+            end)
+        else
+            return defer(g, function()
+                release_edit_focus(g)
+                consume_buttons()
+                g:OnAccept()
+            end)
+        end
+    end
+    return "used"
+end
+
+local function tick_stash(g)
+    local st = g._gpsys
+    local osk_open = osk_is_open_for(g)
+    if st.osk_was_open and not osk_open then
+        st.osk_was_open = false
+        st.osk_guard_until = now_ms() + OSK_GUARD_MS
+        release_edit_focus(g)
+        st.focus_id = "btn_ok"
+        local bok = ctrl_of(g, "btn_ok")
+        local r = bok and abs_rect(bok)
+        if r and is_gamepad() then
+            local cx, cy = center(r)
+            move_cursor(cx, cy)
+        end
+    elseif is_gamepad() and not osk_open then
+        release_edit_focus(g)
+    end
+
+    drain_queue(g)
+    if not shown(g) then return end
+
+    if not st.focus_id then
+        st.focus_id = "btn_ok"
+        local bok = ctrl_of(g, "btn_ok")
+        local r = bok and abs_rect(bok)
+        if r and is_gamepad() then
+            local cx, cy = center(r)
+            move_cursor(cx, cy)
+        end
+    end
+
+    local parent = g.dialog or g
+    paint_button_glyphs(g, parent, {
+        { "btn_ok",     "a", false },
+        { "btn_cancel", "b", false },
+    }, "letterica16")
+    local dw = parent.GetWidth and parent:GetWidth() or 192
+    local dh = parent.GetHeight and parent:GetHeight() or 85
+    paint_hint_strip(g, parent, 0, dh + 4, dw, {
+        { "y", label("keyboard") },
+    })
+end
+
+-- ---------------------------------------------------------------------------
+-- 3. Книга рецептов (item_recipe.UIRecipe, В28)
+-- ---------------------------------------------------------------------------
+
+local function cell_widget(ci)
+    if type(ci) ~= "table" then return nil end
+    return ci.ico or ci.cell or ci.hl or ci
+end
+
+local function collect_recipe(g)
+    local list = {}
+    if g.toolkit and g.cells_tool then
+        local tw = cell_widget(g.cells_tool)
+        local tr = tw and shown(tw) and abs_rect(tw) or nil
+        if tr then
+            list[#list + 1] = {
+                id = "tool", row = 0, col = 1,
+                wnd = tw, r = tr, kind = "cell", section = g.toolkit,
+            }
+        end
+    end
+    if type(g.cells) == "table" then
+        for i = 1, #g.cells do
+            local row_t = g.cells[i]
+            if type(row_t) == "table" then
+                for j = 1, #row_t do
+                    local ci = row_t[j]
+                    local cw = cell_widget(ci)
+                    local cr = cw and abs_rect(cw) or nil
+                    if cr then
+                        list[#list + 1] = {
+                            id = string.format("cell:%d:%d", i, j),
+                            row = i, col = j,
+                            wnd = cw, r = cr, kind = "cell",
+                            section = ci.section, sv = g.scroll,
+                        }
+                    end
+                end
+            end
+        end
+    end
+    return list
+end
+
+local function recipe_nav(list, cur, dir)
+    if not cur then return list[1] end
+    if dir == 3 or dir == 4 then
+        local want_col = cur.col + (dir == 4 and 1 or -1)
+        for i = 1, #list do
+            if list[i].row == cur.row and list[i].col == want_col then
+                return list[i]
+            end
+        end
+        return nil
+    end
+    local step = (dir == 2) and 1 or -1
+    local best, best_dc = nil, 999
+    local want_row = cur.row + step
+    while want_row >= 0 and want_row <= (list[#list] and list[#list].row or 0) do
+        for i = 1, #list do
+            local cand = list[i]
+            if cand.row == want_row then
+                local dc = math.abs(cand.col - cur.col)
+                if dc < best_dc then
+                    best, best_dc = cand, dc
+                end
+            end
+        end
+        if best then return best end
+        want_row = want_row + step
+    end
+    return nil
+end
+
+local function recipe_button(g, name, phase)
+    if phase ~= "press" then return "used" end
+    if name == "B" then
+        return defer(g, function() consume_buttons(); g:Close() end)
+    elseif name == "Y" then
+        local rw = rawget(_G, "gp_inv_rework")
+        if type(rw) == "table" and type(rw.state) == "table" then
+            rw.state.desc_hidden = not rw.state.desc_hidden
+            return "used"
+        end
+        return deny()
+    end
+    return "used"
+end
+
+local function neutralize_recipe_frame(frame_wnd)
+    if frame_wnd and GetARGB and frame_wnd.SetTextureColor then
+        pcall(frame_wnd.SetTextureColor, frame_wnd,
+            GetARGB(255, NEUTRAL_FRAME_RGB[1], NEUTRAL_FRAME_RGB[2], NEUTRAL_FRAME_RGB[3]))
+    end
+    return frame_wnd
+end
+
+local function tick_recipe(g)
+    drain_queue(g)
+    if not shown(g) then return end
+    local st = g._gpsys
+    local list = collect_recipe(g)
+    local cur = nil
+    for i = 1, #list do
+        if list[i].id == st.focus_id then cur = list[i]; break end
+    end
+    if not cur and #list > 0 then
+        cur = list[1]
+        for i = 1, #list do
+            if list[i].row == 1 and list[i].col == 1 then cur = list[i]; break end
+        end
+        st.focus_id = cur.id
+        if is_gamepad() then
+            ensure_target_in_scroll(g.scroll, cur)
+            local cx, cy = center(cur.r)
+            move_cursor(cx, cy)
+        end
+    end
+    if is_gamepad() and cur and cur.section and g.item_info and type(g.item_info.Update) == "function" then
+        local rw = rawget(_G, "gp_inv_rework")
+        if type(rw) == "table" and type(rw.state) == "table" and rw.state.desc_hidden then
+            pcall(g.item_info.Update, g.item_info)
+        else
+            pcall(g.item_info.Update, g.item_info, nil, cur.section)
+        end
+    end
+    local parent = g.dialog or g
+    local dw = parent.GetWidth and parent:GetWidth() or 320
+    local dh = parent.GetHeight and parent:GetHeight() or 420
+    paint_hint_strip(g, parent, 0, dh + 4, dw, {
+        { "rs", label("scroll") },
+        { "y",  label("desc") },
+        { "b",  label("close") },
+    })
+end
+
+-- ---------------------------------------------------------------------------
+-- 4. Учебные карточки NPE и радио-кодек (npe_dialog_tutorial, npe_dialog_codec, В33)
+-- ---------------------------------------------------------------------------
+
+local function npe_tut_unlocked(g)
+    if g.unlocked == true then return true end
+    if g.btn_close and shown(g.btn_close) then return true end
+    local cards = g.set and g.set.cards
+    if type(cards) == "table" and tonumber(g.cardIndex) and tonumber(g.cardIndex) >= #cards then
+        return true
+    end
+    return false
+end
+
+local function collect_npe_tutorial(g)
+    local order = { "btn_prev", "btn_pause", "btn_resume", "btn_mcm", "btn_next", "btn_close" }
+    local list = {}
+    for i = 1, #order do
+        local id = order[i]
+        local w = ctrl_of(g, id)
+        local r = w and shown(w) and abs_rect(w) or nil
+        if r then
+            list[#list + 1] = { id = id, wnd = w, r = r, kind = "btn" }
+        end
+    end
+    table.sort(list, function(a, b)
+        if math.abs(a.r.y1 - b.r.y1) > 12 then return a.r.y1 < b.r.y1 end
+        return a.r.x1 < b.r.x1
+    end)
+    return list
+end
+
+local function sync_npe_tut_focus(g)
+    local st = g._gpsys
+    local list = collect_npe_tutorial(g)
+    local pick = nil
+    for i = 1, #list do
+        if list[i].id == "btn_next" then pick = list[i]; break end
+    end
+    if not pick then
+        for i = 1, #list do
+            if list[i].id == "btn_close" then pick = list[i]; break end
+        end
+    end
+    pick = pick or list[1]
+    if pick then
+        st.focus_id = pick.id
+        if is_gamepad() then
+            local cx, cy = center(pick.r)
+            move_cursor(cx, cy)
+        end
+    end
+end
+
+local function npe_tutorial_button(g, name, phase)
+    local st = g._gpsys
+    if phase ~= "press" then
+        if name == "B" and st.hold_b then
+            st.hold_b = false
+            if phase == "hold" then
+                return defer(g, function() consume_buttons(); g:Close() end)
+            elseif phase == "release" then
+                return deny()
+            end
+        end
+        return "used"
+    end
+
+    if name == "LB" then
+        if not shown(g.btn_prev) or (tonumber(g.cardIndex) or 1) <= 1 then
+            return deny()
+        end
+        return defer(g, function() g:OnButtonPrev(); sync_npe_tut_focus(g) end)
+    elseif name == "RB" then
+        if not shown(g.btn_next) then
+            return deny()
+        end
+        return defer(g, function() g:OnButtonNext(); sync_npe_tut_focus(g) end)
+    elseif name == "Y" then
+        if type(g.OnButtonGametime) ~= "function" then return deny() end
+        return defer(g, function() g:OnButtonGametime(); sync_npe_tut_focus(g) end)
+    elseif name == "X" then
+        if not shown(g.btn_mcm) or type(g.OnButtonMcM) ~= "function" then
+            return deny()
+        end
+        return defer(g, function() consume_buttons(); g:OnButtonMcM() end)
+    elseif name == "B" then
+        if npe_tut_unlocked(g) then
+            st.hold_b = false
+            return defer(g, function() consume_buttons(); g:Close() end)
+        end
+        st.hold_b = true
+        return string.format("hold:%d:%d", HOLD_PAUSE, HOLD_FILL) .. ring_suffix(st.b_hold_icon)
+    elseif name == "A" then
+        local fid = st.focus_id
+        if fid == "btn_prev" and shown(g.btn_prev) then
+            return defer(g, function() g:OnButtonPrev(); sync_npe_tut_focus(g) end)
+        elseif (fid == "btn_pause" and shown(g.btn_pause)) or (fid == "btn_resume" and shown(g.btn_resume)) then
+            return defer(g, function() g:OnButtonGametime(); sync_npe_tut_focus(g) end)
+        elseif fid == "btn_mcm" and shown(g.btn_mcm) then
+            return defer(g, function() consume_buttons(); g:OnButtonMcM() end)
+        elseif shown(g.btn_next) then
+            return defer(g, function() g:OnButtonNext(); sync_npe_tut_focus(g) end)
+        else
+            return defer(g, function() consume_buttons(); g:Close() end)
+        end
+    end
+    return "used"
+end
+
+local function tick_npe_tutorial(g)
+    drain_queue(g)
+    if not shown(g) then return end
+    local st = g._gpsys
+    local list = collect_npe_tutorial(g)
+    local found = false
+    for i = 1, #list do
+        if list[i].id == st.focus_id then found = true; break end
+    end
+    if not found then
+        sync_npe_tut_focus(g)
+    end
+    local parent = g.dialog or g
+    paint_button_glyphs(g, parent, {
+        { "btn_prev",   "lb", false },
+        { "btn_pause",  "y",  false },
+        { "btn_resume", "y",  false },
+        { "btn_mcm",    "x",  false },
+        { "btn_next",   "rb", false },
+        { "btn_close",  "b",  true  },
+    }, "letterica16")
+    if not npe_tut_unlocked(g) then
+        local dh = parent.GetHeight and parent:GetHeight() or 480
+        paint_hint_strip(g, parent, 0, dh + 4, 180, {
+            { "a", label("press"),  false },
+            { "b", label("hold_b"), true  },
+        })
+    elseif st.strip then
+        st.strip.bg:Show(false)
+    end
+end
+
+local function collect_npe_codec(g)
+    local list = {}
+    local order = { "btn_continue", "btn_close" }
+    for i = 1, #order do
+        local id = order[i]
+        local w = ctrl_of(g, id)
+        local r = w and shown(w) and abs_rect(w) or nil
+        if r then
+            list[#list + 1] = { id = id, wnd = w, r = r, kind = "btn" }
+        end
+    end
+    return list
+end
+
+local function sync_npe_codec_focus(g)
+    local st = g._gpsys
+    local list = collect_npe_codec(g)
+    local pick = list[1]
+    if pick then
+        st.focus_id = pick.id
+        if is_gamepad() then
+            local cx, cy = center(pick.r)
+            move_cursor(cx, cy)
+        end
+    end
+end
+
+local function codec_on_last_card(g)
+    if g.btn_close and shown(g.btn_close) and not (g.btn_continue and shown(g.btn_continue)) then
+        return true
+    end
+    local cards = g.set and g.set.cards
+    return type(cards) == "table" and tonumber(g.cardIndex) and tonumber(g.cardIndex) >= #cards
+end
+
+local function npe_codec_button(g, name, phase)
+    local st = g._gpsys
+    if phase ~= "press" then
+        if name == "B" and st.hold_b then
+            st.hold_b = false
+            if phase == "hold" then
+                return defer(g, function() consume_buttons(); g:Close() end)
+            elseif phase == "release" then
+                return deny()
+            end
+        end
+        return "used"
+    end
+
+    if name == "A" or name == "X" then
+        if g.btn_continue and shown(g.btn_continue) then
+            return defer(g, function() g:OnButtonContinue(); sync_npe_codec_focus(g) end)
+        end
+        return defer(g, function() consume_buttons(); g:Close() end)
+    elseif name == "B" then
+        if codec_on_last_card(g) then
+            st.hold_b = false
+            return defer(g, function() consume_buttons(); g:Close() end)
+        end
+        st.hold_b = true
+        return string.format("hold:%d:%d", HOLD_PAUSE, HOLD_FILL) .. ring_suffix(st.b_hold_icon)
+    elseif name == "LB" or name == "RB" or name == "Y" then
+        return deny()
+    end
+    return "used"
+end
+
+local function tick_npe_codec(g)
+    drain_queue(g)
+    if not shown(g) then return end
+    local st = g._gpsys
+    local list = collect_npe_codec(g)
+    local found = false
+    for i = 1, #list do
+        if list[i].id == st.focus_id then found = true; break end
+    end
+    if not found then
+        sync_npe_codec_focus(g)
+    end
+    local parent = g.dialog or g
+    paint_button_glyphs(g, parent, {
+        { "btn_continue", "a", false },
+        { "btn_close",    "a", false },
+    }, "letterica16")
+    local dw = parent.GetWidth and parent:GetWidth() or 540
+    local dh = parent.GetHeight and parent:GetHeight() or 360
+    if codec_on_last_card(g) then
+        paint_hint_strip(g, parent, 0, dh + 4, math.min(dw, 180), {
+            { "b", label("finish"), false },
+        })
+    else
+        paint_hint_strip(g, parent, 0, dh + 4, math.min(dw, 220), {
+            { "b", label("skip_b"), true },
+        })
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Общие точки входа моста: query / snap / rs_analog / ws_button
+-- ---------------------------------------------------------------------------
+
+local function collect_for(kind, g)
+    if kind == "numpad" then return collect_numpad(g)
+    elseif kind == "stash" then return collect_stash(g)
+    elseif kind == "recipe" then return collect_recipe(g)
+    elseif kind == "npe_tutorial" then return collect_npe_tutorial(g)
+    else return collect_npe_codec(g) end
+end
+
+local function linear_nav(list, cur, dir)
+    if #list == 0 then return nil end
+    local idx = 1
+    for i = 1, #list do
+        if cur and list[i].id == cur.id then idx = i; break end
+    end
+    if dir == 3 or dir == 1 then
+        return idx > 1 and list[idx - 1] or nil
+    elseif dir == 4 or dir == 2 then
+        return idx < #list and list[idx + 1] or nil
+    end
+    return nil
+end
+
+function query(x, y)
+    local kind, g = active()
+    if not kind or osk_is_open_for(g) then return nil end
+    x, y = tonumber(x) or 0, tonumber(y) or 0
+    local st = g._gpsys
+    local list = collect_for(kind, g)
+    if #list == 0 then return no_hit(x, y) end
+
+    local hit = nil
+    for i = 1, #list do
+        if contains(list[i].r, x, y) then
+            hit = list[i]
+            break
+        end
+    end
+    if not hit and st.focus_id then
+        for i = 1, #list do
+            if list[i].id == st.focus_id then
+                hit = list[i]
+                break
+            end
+        end
+    end
+    hit = hit or list[1]
+    st.focus_id = hit.id
+    local cx, cy = center(hit.r)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s",
+        cx, cy, hit.r.x2 - hit.r.x1, hit.r.y2 - hit.r.y1, hit.kind)
+end
+
+function snap(x, y, dir)
+    local kind, g = active()
+    if not kind or osk_is_open_for(g) then return nil end
+    x, y, dir = tonumber(x) or 0, tonumber(y) or 0, tonumber(dir) or 0
+    local st = g._gpsys
+    local list = collect_for(kind, g)
+    if #list == 0 then return stay(x, y) end
+
+    local by, cur = {}, nil
+    for i = 1, #list do
+        by[list[i].id] = list[i]
+        if contains(list[i].r, x, y) then cur = list[i] end
+    end
+    cur = cur or (st.focus_id and by[st.focus_id]) or list[1]
+
+    local nxt = nil
+    if kind == "numpad" then
+        local nid = NUMPAD_NAV[cur.id] and NUMPAD_NAV[cur.id][dir]
+        nxt = nid and by[nid] or nil
+    elseif kind == "stash" then
+        nxt = stash_nav(list, cur.id, dir)
+    elseif kind == "recipe" then
+        nxt = recipe_nav(list, cur, dir)
+    else
+        nxt = linear_nav(list, cur, dir)
+    end
+
+    if not nxt then
+        local cx, cy = center(cur.r)
+        return stay(cx, cy)
+    end
+
+    if nxt.sv then
+        ensure_target_in_scroll(nxt.sv, nxt)
+    end
+    st.focus_id = nxt.id
+    local cx, cy = center(nxt.r)
+    move_cursor(cx, cy)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, nxt.kind)
+end
+
+function rs_analog(y, dt)
+    local kind, g = active()
+    if not kind or osk_is_open_for(g) then return nil end
+    local st = g._gpsys
+    if kind == "recipe" then
+        return smooth_scroll_view(st, g.scroll, y, dt)
+    elseif kind == "npe_tutorial" then
+        return smooth_scroll_view(st, g.scroll or g.card_description, y, dt)
+    elseif kind == "npe_codec" then
+        return smooth_scroll_view(st, g.scroll or g.message, y, dt)
+    end
+    return false
+end
+
+function ws_button(name, phase)
+    local kind, g = active()
+    if not kind or osk_is_open_for(g) then return nil end
+    name = tostring(name or "")
+    phase = tostring(phase or "press")
+    if kind == "numpad" then
+        return numpad_button(g, name, phase)
+    elseif kind == "stash" then
+        return stash_button(g, name, phase)
+    elseif kind == "recipe" then
+        return recipe_button(g, name, phase)
+    elseif kind == "npe_tutorial" then
+        return npe_tutorial_button(g, name, phase)
+    else
+        return npe_codec_button(g, name, phase)
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Установка хуков на gp_bridge / gp_workshop и классы окон (идемпотентно)
+-- ---------------------------------------------------------------------------
+
+function install_bridge_hooks()
+    local bg = rawget(_G, "gp_bridge")
+    if type(bg) == "table" and not bg._gpsys_wrapped then
+        bg._gpsys_wrapped = true
+
+        local orig_ws_btn = bg.ws_button
+        bg.ws_button = function(name, phase)
+            local res = ws_button(name, phase)
+            if type(res) == "string" then return res end
+            return orig_ws_btn and orig_ws_btn(name, phase) or ""
+        end
+
+        local orig_ff = bg.inv_focus_frame_active
+        bg.inv_focus_frame_active = function()
+            if active() ~= nil then
+                return focus_frame_active()
+            end
+            return orig_ff and orig_ff() or false
+        end
+
+        local orig_query = bg.cursor_query_target
+        bg.cursor_query_target = function(x, y)
+            local res = query(x, y)
+            if type(res) == "string" then return res end
+            return orig_query and orig_query(x, y) or "hit:0"
+        end
+
+        local orig_snap = bg.cursor_dpad_snap
+        bg.cursor_dpad_snap = function(x, y, dir)
+            local res = snap(x, y, dir)
+            if type(res) == "string" then return res end
+            return orig_snap and orig_snap(x, y, dir) or "snap:0"
+        end
+
+        local orig_rs = bg.cursor_rs_analog
+        bg.cursor_rs_analog = function(y, dt)
+            local res = rs_analog(y, dt)
+            if res ~= nil then return res == true end
+            return orig_rs and orig_rs(y, dt) or false
+        end
+    end
+
+    local ws = rawget(_G, "gp_workshop")
+    if type(ws) == "table" and not ws._gpsys_wrapped then
+        ws._gpsys_wrapped = true
+        local orig_tag = ws.field_modal_tag
+        ws.field_modal_tag = function()
+            local tag = field_modal_tag()
+            if tag then return tag end
+            return orig_tag and orig_tag() or nil
+        end
+    end
+end
+
+local function wrap_register_capture(self, st, fn, ...)
+    local orig_reg = self.Register
+    self.Register = function(w, ctrl, name, ...)
+        if type(name) == "string" and ctrl ~= nil then
+            st.reg[name] = ctrl
+        end
+        if orig_reg then
+            return orig_reg(w, ctrl, name, ...)
+        end
+    end
+    local ok, err = pcall(fn, self, ...)
+    self.Register = orig_reg
+    if not ok then error(err) end
+end
+
+local function hook_update_method(cls, kind, tick_fn)
+    local orig_upd = cls.Update or (CUIScriptWnd and CUIScriptWnd.Update)
+    cls.Update = function(self, ...)
+        ensure_state(self, kind)
+        if orig_upd then orig_upd(self, ...) end
+        tick_fn(self)
+    end
+end
+
+local function install_numpad_hooks()
+    local m = rawget(_G, "ui_numpad")
+    local cls = type(m) == "table" and m.UINumpad or nil
+    if not cls then return false end
+    if cls._gpsys_hooked then return true end
+    cls._gpsys_hooked = true
+
+    local orig_init = cls.InitControls
+    cls.InitControls = function(self, ...)
+        install_bridge_hooks()
+        local st = ensure_state(self, "numpad")
+        st.focus_id = "btn_5"
+        if self.SetWindowName then pcall(self.SetWindowName, self, "UINumpad") end
+        wrap_register_capture(self, st, orig_init, ...)
+    end
+    hook_update_method(cls, "numpad", tick_numpad)
+    return true
+end
+
+local function install_stash_hooks()
+    local m = rawget(_G, "item_backpack")
+    local cls = type(m) == "table" and m.UICreateStash or nil
+    if not cls then return false end
+    if cls._gpsys_hooked then return true end
+    cls._gpsys_hooked = true
+
+    local orig_init = cls.InitControls
+    cls.InitControls = function(self, ...)
+        install_bridge_hooks()
+        local st = ensure_state(self, "stash")
+        st.focus_id = "btn_ok"
+        if self.SetWindowName then pcall(self.SetWindowName, self, "UICreateStash") end
+        wrap_register_capture(self, st, orig_init, ...)
+        local inp = self.input or st.reg.fld_input
+        if inp and inp.SetWindowName then
+            pcall(inp.SetWindowName, inp, "fld_input")
+        end
+    end
+
+    local orig_reset = cls.Reset
+    if type(orig_reset) == "function" then
+        cls.Reset = function(self, ...)
+            install_bridge_hooks()
+            local st = ensure_state(self, "stash")
+            st.focus_id = "btn_ok"
+            st.osk_was_open = false
+            st.osk_guard_until = 0
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UICreateStash") end
+            local res = orig_reset(self, ...)
+            release_edit_focus(self)
+            return res
+        end
+    end
+
+    local orig_close = cls.Close
+    if type(orig_close) == "function" then
+        cls.Close = function(self, ...)
+            release_edit_focus(self)
+            return orig_close(self, ...)
+        end
+    end
+
+    hook_update_method(cls, "stash", tick_stash)
+    return true
+end
+
+local function install_recipe_hooks()
+    local m = rawget(_G, "item_recipe")
+    local cls = type(m) == "table" and m.UIRecipe or nil
+    if not cls then return false end
+    if cls._gpsys_hooked then return true end
+    cls._gpsys_hooked = true
+
+    local orig_init = cls.InitControls
+    cls.InitControls = function(self, ...)
+        install_bridge_hooks()
+        ensure_state(self, "recipe")
+        if self.SetWindowName then pcall(self.SetWindowName, self, "UIRecipe") end
+        local res = orig_init(self, ...)
+        if self.xml and not self.xml._gpsys_frame_wrapped then
+            self.xml._gpsys_frame_wrapped = true
+            local orig_frame = self.xml.InitFrame
+            if type(orig_frame) == "function" then
+                self.xml.InitFrame = function(xobj, path, parent, ...)
+                    local fw = orig_frame(xobj, path, parent, ...)
+                    if type(path) == "string" and (path:find("frame_1", 1, true) or path:find("frame_2", 1, true)) then
+                        neutralize_recipe_frame(fw)
+                    end
+                    return fw
+                end
+            end
+        end
+        return res
+    end
+
+    local orig_reset = cls.Reset
+    if type(orig_reset) == "function" then
+        cls.Reset = function(self, ...)
+            install_bridge_hooks()
+            local st = ensure_state(self, "recipe")
+            st.focus_id = nil
+            st.scroll_pos = nil
+            st.scroll_int = nil
+            local uis = rawget(_G, "_UI_stack")
+            st.stack_depth = type(uis) == "table" and #uis or 0
+            live.recipe = self
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UIRecipe") end
+            return orig_reset(self, ...)
+        end
+    end
+
+    local orig_close = cls.Close
+    if type(orig_close) == "function" then
+        cls.Close = function(self, ...)
+            if rawequal(live.recipe, self) then live.recipe = nil end
+            return orig_close(self, ...)
+        end
+    end
+
+    local orig_kb = cls.OnKeyboard
+    if type(orig_kb) == "function" then
+        cls.OnKeyboard = function(self, dik, kb_act)
+            if is_gamepad() then
+                local esc = (DIK_keys and DIK_keys.DIK_ESCAPE) or 1
+                if dik ~= esc then
+                    return true
+                end
+            end
+            return orig_kb(self, dik, kb_act)
+        end
+    end
+
+    hook_update_method(cls, "recipe", tick_recipe)
+    return true
+end
+
+local function install_npe_hooks()
+    if not rawget(_G, "npe_director") then
+        return false
+    end
+    local any = false
+
+    local mt = rawget(_G, "npe_dialog_tutorial")
+    local ct = type(mt) == "table" and mt.UINewPlayerExperience or nil
+    if ct and not ct._gpsys_hooked then
+        ct._gpsys_hooked = true
+        local orig_init = ct.InitControls
+        ct.InitControls = function(self, ...)
+            install_bridge_hooks()
+            local st = ensure_state(self, "npe_tutorial")
+            st.hold_b = false
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UINewPlayerExperience") end
+            consume_buttons()
+            wrap_register_capture(self, st, orig_init, ...)
+            sync_npe_tut_focus(self)
+        end
+        hook_update_method(ct, "npe_tutorial", tick_npe_tutorial)
+        any = true
+    elseif ct and ct._gpsys_hooked then
+        any = true
+    end
+
+    local mc = rawget(_G, "npe_dialog_codec")
+    local cc = type(mc) == "table" and mc.UINewPlayerExperience or nil
+    if cc and not cc._gpsys_hooked then
+        cc._gpsys_hooked = true
+        local orig_init = cc.InitControls
+        cc.InitControls = function(self, ...)
+            install_bridge_hooks()
+            local st = ensure_state(self, "npe_codec")
+            st.hold_b = false
+            live.npe_codec = self
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UINewPlayerExperience") end
+            consume_buttons()
+            wrap_register_capture(self, st, orig_init, ...)
+            sync_npe_codec_focus(self)
+        end
+        local orig_close = cc.Close
+        if type(orig_close) == "function" then
+            cc.Close = function(self, ...)
+                if rawequal(live.npe_codec, self) then live.npe_codec = nil end
+                return orig_close(self, ...)
+            end
+        end
+        local orig_td = cc.TearDown
+        if type(orig_td) == "function" then
+            cc.TearDown = function(self, ...)
+                if rawequal(live.npe_codec, self) then live.npe_codec = nil end
+                return orig_td(self, ...)
+            end
+        end
+        hook_update_method(cc, "npe_codec", tick_npe_codec)
+        any = true
+    elseif cc and cc._gpsys_hooked then
+        any = true
+    end
+
+    return any
+end
+
+function install()
+    install_bridge_hooks()
+    return {
+        numpad = install_numpad_hooks(),
+        stash  = install_stash_hooks(),
+        recipe = install_recipe_hooks(),
+        npe    = install_npe_hooks(),
+    }
+end
+
+function reset_for_test()
+    live.recipe = nil
+    live.npe_codec = nil
+    xml_cache = nil
+    denies_count = 0
+end
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    return install()
+end

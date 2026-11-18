@@ -1,0 +1,117 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- gp_hint_align.script - INV-REWORK-24: одна линия для значка и подписи (решение Миши 2026-11-12).
+-- Эталон: горизонталь через середину значка проходит через середину МАЛЕНЬКИХ букв подписи (x-height),
+-- а не через середину прямоугольника строки. Метрики атласов шрифтов посчитаны по пикселям
+-- (_build/inv24/font_metrics.py, те же числа - configs/ui/gp_font_metrics.ltx для F8-рентгена движка):
+-- клетка буквы cell (px атласа), строчные x_top..x_bot, заглавные cap_top..cap_bot (0 = верх клетки).
+-- Атлас выбирается по высоте экрана как в движке (GameFont.cpp GetFontTextureName): h < 601 -> *_800,
+-- 601..1023 -> *_1024, 1024 и выше -> *_1600 (текстур *_2160 у этих шрифтов нет).
+-- Значки ставятся в целые пиксели экрана (сторона и верх), квадратные на любом соотношении сторон.
+
+-- Линия (решение Миши 2026-11-13: «мерить среднюю высоту букв по первой заглавной букве»):
+-- "cap" - середина заглавной буквы (cap_top..cap_bot), "x" - середина строчных (x_top..x_bot, INV-REWORK-24).
+-- Тот же ключ для движка - [gp_hint_align] line в configs/ui/gp_font_metrics.ltx.
+LINE = "cap"
+
+FONTS = {
+    letterica18 = { [800] = { 16, 5, 13, 3, 13 }, [1024] = { 16, 5, 13, 3, 13 }, [1600] = { 23, 7, 19, 4, 19 } },
+    letterica16 = { [800] = { 16, 5, 13, 3, 13 }, [1024] = { 16, 5, 13, 3, 13 }, [1600] = { 22, 7, 18, 4, 18 } },
+    graffiti19 = { [800] = { 16, 5, 13, 3, 13 }, [1024] = { 16, 5, 13, 3, 13 }, [1600] = { 26, 8, 21, 4, 21 } },
+    graffiti22 = { [800] = { 16, 5, 13, 3, 13 }, [1024] = { 16, 5, 13, 3, 13 }, [1600] = { 26, 8, 21, 4, 21 } },
+}
+
+function screen()
+    local dev = device and device()
+    local w = math.max(1, dev and tonumber(dev.width) or 1920)
+    local h = math.max(1, dev and tonumber(dev.height) or 1080)
+    return w, h
+end
+
+function rung(h)
+    if h < 601 then return 800 end
+    if h < 1024 then return 1024 end
+    return 1600
+end
+
+-- {cell, x_top, x_bot, cap_top, cap_bot} шрифта на текущем экране (неизвестный шрифт -> letterica18)
+function metrics(font)
+    local _, h = screen()
+    local f = FONTS[font] or FONTS.letterica18
+    return f[rung(h)]
+end
+
+-- На сколько ед. UI (по высоте, + вниз) линия букв (см. LINE) ниже середины клетки буквы.
+-- Подпись с vert_align=c на линии Y: середина строчных = Y + xmid_below(font).
+function xmid_below(font)
+    local _, h = screen()
+    local m = metrics(font)
+    local mid = LINE == "x" and (m[2] + m[3]) * 0.5 or (m[4] + m[5]) * 0.5
+    return (mid - m[1] * 0.5) * 768 / h
+end
+
+-- Высота заглавной буквы в пикселях экрана
+function cap_px(font)
+    local m = metrics(font)
+    return m[5] - m[4]
+end
+
+-- Размер значка: base - пиксели при высоте экрана 1080 -> целые пиксели этого экрана (не меньше 8)
+function icon_px(base)
+    local _, h = screen()
+    return math.max(8, math.floor(base * h / 1080 + 0.5))
+end
+
+-- Пиксели экрана -> ед. UI по ширине и высоте
+function px_w(px)
+    local w = screen()
+    return px * 1024 / w
+end
+
+function px_h(px)
+    local _, h = screen()
+    return px * 768 / h
+end
+
+-- Ед. UI -> ближайший целый пиксель (обратно в ед. UI)
+function snap_x(x)
+    local w = screen()
+    return math.floor(x * w / 1024 + 0.5) * 1024 / w
+end
+
+function snap_y(y)
+    local _, h = screen()
+    return math.floor(y * h / 768 + 0.5) * 768 / h
+end
+
+-- Квадратный значок side_px пикселей с левым краем x и серединой на линии cy (ед. UI):
+-- возвращает x, y, w, h (ед. UI), верх и левый край - в целых пикселях.
+function icon_rect(x, cy, side_px)
+    local w, h = px_w(side_px), px_h(side_px)
+    local y = snap_y(cy - h * 0.5)
+    return snap_x(x), y, w, h
+end
+
+-- Верх прямоугольника подписи высотой box_h (vert_align=c), чтобы середина её строчных легла на линию cy
+function label_y(cy, box_h, font)
+    return cy - box_h * 0.5 - xmid_below(font)
+end
+
+-- ICONS-1 (2026-11-14): пересчитаны доли видимой высоты для PNG набора Dot Marks (round: круг 88/112 = 78.6%,
+-- двухзнаковая плашка 76/100 = 76.0% -> отношение 1.03; в key все клавиши 92/116 = 79.3% -> 1.0; у Nintendo
+-- плечи L/R однознаковые 112x112 -> 1.0). Для старых текстур ui_gp_xbox_graphite_p12 (пока gp_inv_rework заморожен)
+-- сохранён прежний коэффициент LEGACY_ICON_SCALE (60% курки -> 1.18, 54% плечи -> 1.7).
+ICON_SCALE = { ltrigger = 1.03, rtrigger = 1.03, lshoulder = 1.03, rshoulder = 1.03 }
+LEGACY_ICON_SCALE = { ltrigger = 1.18, rtrigger = 1.18, lshoulder = 1.7, rshoulder = 1.7 }
+
+-- Множитель размера клетки значка по имени текстуры (..._ltrigger и т.п.), иначе 1
+function icon_scale(tex)
+    local t = tostring(tex or "")
+    local s = t:match("_(%a+)$")
+    if not s then return 1 end
+    if t:find("^ui_gp_white_") or t:find("^ui_gp_dark_") or t:find("^ui_gp_color_") then
+        if t:find("_key_", 1, true) then return 1 end
+        if t:find("_nintendo_", 1, true) and (s == "lshoulder" or s == "rshoulder") then return 1 end
+        return ICON_SCALE[s] or 1
+    end
+    return LEGACY_ICON_SCALE[s] or 1
+end

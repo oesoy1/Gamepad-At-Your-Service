@@ -1,0 +1,455 @@
+-- =============================================================================
+-- gp_hooks_vanilla.script (W4-HOOKS / DEF-P0-01)
+-- Безопасные ленивые обёртки вместо прямого перекрытия 5 чужих скриптов:
+--   1. ui_workshop.UIWorkshop:InitControls (+ runtime-фоллбэк вкладок для PORT-A)
+--   2. ui_furniture_workshop.UIFurnitureWorkshop:InitControls (если мод установлен)
+--   3. ui_ctrl_lighting (start, InitControls, Update, gamepad_close)
+--   4. ui_mm_faction_select.UINewGame (Main_Controls, Update) — ZCP / Warfare / ваниль
+--   5. ui_mod_elements (start_game, card_game_21_point:InitControls, information_block:Show)
+-- В чистой Anomaly (PORT-A) отсутствие ui_furniture_workshop, ui_mod_elements
+-- или DXML не вызывает ошибок.
+-- =============================================================================
+
+local hooked = setmetatable({}, { __mode = "k" })
+local main_menu_cb_rsc = nil
+
+local WORKSHOP_TABS_16 = {
+    ["workshop:btn_state"]   = { x = 125, y = 21, w = 132, h = 34 },
+    ["workshop:btn_repair"]  = { x = 257, y = 21, w = 127, h = 34 },
+    ["workshop:btn_upgrade"] = { x = 384, y = 21, w = 128, h = 34 },
+    ["workshop:btn_craft"]   = { x = 512, y = 21, w = 140, h = 34 },
+}
+
+local WORKSHOP_TABS_43 = {
+    ["workshop:btn_state"]   = { x = 156, y = 21, w = 165, h = 34 },
+    ["workshop:btn_repair"]  = { x = 321, y = 21, w = 159, h = 34 },
+    ["workshop:btn_upgrade"] = { x = 480, y = 21, w = 160, h = 34 },
+    ["workshop:btn_craft"]   = { x = 640, y = 21, w = 175, h = 34 },
+}
+
+local NEW_GAME_CAPS = {
+    ["main_dialog:cap_character"] = "cap_character",
+    ["main_dialog:cap_options"]   = "cap_options",
+    ["main_dialog:cap_inventory"] = "cap_inventory",
+    ["main_dialog:cap_loadout"]   = "cap_loadout",
+}
+
+local NEW_GAME_BTNS = {
+    ["main_dialog:btn_start"]   = "start",
+    ["main_dialog:btn_back"]    = "back",
+    ["main_dialog:btn_random"]  = "random",
+    ["main_dialog:btn_faction"] = "faction",
+    ["main_dialog:btn_icon"]    = "icon",
+}
+
+local LIGHTING_CVARS = {
+    "r__gamma",
+    "r__saturation",
+    "r__exposure",
+}
+
+local function index_global(tbl, key)
+    return tbl[key]
+end
+
+local function get_module(name)
+    local ok, mod = pcall(index_global, _G, name)
+    if ok and type(mod) == "table" then
+        return mod
+    end
+    return nil
+end
+
+local XML_PROXY_MT = {
+    __index = function(proxy, key)
+        local handlers = rawget(proxy, "_handlers")
+        local raw_xml = rawget(proxy, "_raw_xml")
+        local custom = handlers and handlers[key]
+        local bound
+        if custom then
+            bound = function(_, ...)
+                return custom(raw_xml, ...)
+            end
+        else
+            local orig_fn = raw_xml[key]
+            if orig_fn == nil then
+                return nil
+            end
+            bound = function(_, ...)
+                return orig_fn(raw_xml, ...)
+            end
+        end
+        rawset(proxy, key, bound)
+        return bound
+    end,
+}
+
+local function with_xml_interceptor(handlers, fn, self_arg, ...)
+    local orig_ctor = _G.CScriptXmlInit
+    if orig_ctor ~= nil then
+        _G.CScriptXmlInit = function(...)
+            local raw_xml = orig_ctor(...)
+            return setmetatable({
+                _raw_xml = raw_xml,
+                _handlers = handlers,
+            }, XML_PROXY_MT)
+        end
+    end
+    local ok, res = pcall(fn, self_arg, ...)
+    _G.CScriptXmlInit = orig_ctor
+    if self_arg ~= nil and type(self_arg.xml) == "table" then
+        local raw_xml = rawget(self_arg.xml, "_raw_xml")
+        if raw_xml ~= nil then
+            self_arg.xml = raw_xml
+        end
+    end
+    if not ok then
+        error(res, 0)
+    end
+    return res
+end
+
+local function is_workshop_dxml_applied(raw_xml)
+    if raw_xml and type(raw_xml.ReadAttribute) == "function" then
+        if tonumber(raw_xml:ReadAttribute("workshop:btn_state", 0, "height")) == 34 then
+            return true
+        end
+    end
+    if _G.modxml_gp_workshop and type(_G.modxml_gp_workshop.is_active) == "function" then
+        if _G.modxml_gp_workshop.is_active() then
+            return true
+        end
+    end
+    return false
+end
+
+local WORKSHOP_XML_HANDLERS = {
+    InitStatic = function(raw_xml, path, parent)
+        local wnd = raw_xml:InitStatic(path, parent)
+        if path == "workshop:frame" and not is_workshop_dxml_applied(raw_xml) then
+            if wnd and wnd.InitTexture then
+                wnd:InitTexture("ui_gp_workshop_tabs_background")
+            end
+        end
+        return wnd
+    end,
+    InitTextWnd = function(raw_xml, path, parent)
+        local wnd = raw_xml:InitTextWnd(path, parent)
+        if path == "workshop:cap_tab" and not is_workshop_dxml_applied(raw_xml) then
+            if wnd then
+                if _G.GetARGB and wnd.SetTextColor then
+                    wnd:SetTextColor(_G.GetARGB(0, 200, 200, 200))
+                end
+                if wnd.Show then
+                    wnd:Show(false)
+                end
+            end
+        end
+        return wnd
+    end,
+    Init3tButton = function(raw_xml, path, parent)
+        local spec16 = WORKSHOP_TABS_16[path]
+        if not spec16 or is_workshop_dxml_applied(raw_xml) then
+            return raw_xml:Init3tButton(path, parent)
+        end
+        local is_43 = parent and parent.GetWidth and ((tonumber(parent:GetWidth()) or 0) > 900)
+        local spec = is_43 and WORKSHOP_TABS_43[path] or spec16
+        local btn
+        if _G.CUI3tButton then
+            btn = _G.CUI3tButton()
+            if btn.SetAutoDelete then
+                btn:SetAutoDelete(true)
+            end
+            if parent and parent.AttachChild then
+                parent:AttachChild(btn)
+            end
+        else
+            btn = raw_xml:Init3tButton(path, parent)
+        end
+        if btn and _G.vector2 then
+            if btn.SetWndPos then
+                btn:SetWndPos(_G.vector2():set(spec.x, spec.y))
+            end
+            if btn.SetWndSize then
+                btn:SetWndSize(_G.vector2():set(spec.w, spec.h))
+            end
+        end
+        return btn
+    end,
+}
+
+-- 1. ui_workshop.UIWorkshop
+function hook_workshop()
+    local mod = get_module("ui_workshop")
+    local cls = mod and mod.UIWorkshop
+    if not cls or hooked[cls] or type(cls.InitControls) ~= "function" then
+        return false
+    end
+    hooked[cls] = true
+    local orig_init = cls.InitControls
+    cls.InitControls = function(self, ...)
+        if self.SetWindowName then
+            self:SetWindowName("UIWorkshop")
+        end
+        return with_xml_interceptor(WORKSHOP_XML_HANDLERS, orig_init, self, ...)
+    end
+    return true
+end
+
+-- 2. ui_furniture_workshop.UIFurnitureWorkshop (Hideout Furniture, отсутствует в PORT-A)
+function hook_furniture_workshop()
+    local mod = get_module("ui_furniture_workshop")
+    local cls = mod and mod.UIFurnitureWorkshop
+    if not cls or hooked[cls] or type(cls.InitControls) ~= "function" then
+        return false
+    end
+    hooked[cls] = true
+    local orig_init = cls.InitControls
+    cls.InitControls = function(self, ...)
+        if self.SetWindowName then
+            self:SetWindowName("UIFurnitureWorkshop")
+        end
+        return orig_init(self, ...)
+    end
+    return true
+end
+
+local LIGHTING_XML_HANDLERS = {
+    InitStatic = function(raw_xml, path, parent)
+        local wnd = raw_xml:InitStatic(path, parent)
+        if path == "ctrl_lighting:cap" and wnd and wnd.SetWindowName then
+            wnd:SetWindowName("gp_lighting_caption")
+        end
+        return wnd
+    end,
+}
+
+-- 3. ui_ctrl_lighting (UILightControl + start + gamepad_close)
+function hook_ctrl_lighting()
+    local mod = get_module("ui_ctrl_lighting")
+    local cls = mod and mod.UILightControl
+    if not cls or hooked[cls] or type(cls.InitControls) ~= "function" then
+        return false
+    end
+    hooked[cls] = true
+
+    cls.gamepad_close = function(self)
+        if _G.game and _G.game.gamepad_is_top_dialog and _G.game.gamepad_is_top_dialog(self) then
+            self._gp_close = true
+        end
+    end
+
+    mod.gamepad_close = function()
+        if mod.GUI then
+            cls.gamepad_close(mod.GUI)
+        end
+    end
+
+    if type(mod.start) == "function" then
+        local orig_start = mod.start
+        mod.start = function(...)
+            local gui = mod.GUI
+            if gui and gui.IsShown and not gui:IsShown() then
+                gui._gp_close = nil
+                if type(_G.get_console_cmd) == "function" and gui.Track and gui.Value and gui.Num then
+                    for i = 1, #LIGHTING_CVARS do
+                        local val = tonumber(_G.get_console_cmd(0, LIGHTING_CVARS[i]))
+                        if val and gui.Track[i] then
+                            gui.Track[i]:SetFValue(val)
+                            gui.Value[i] = val
+                            if gui.Num[i] then
+                                gui.Num[i]:SetText(val)
+                            end
+                        end
+                    end
+                end
+            end
+            local res = orig_start(...)
+            if mod.GUI and not gui then
+                mod.GUI._gp_close = nil
+            end
+            return res
+        end
+    end
+
+    local orig_init = cls.InitControls
+    cls.InitControls = function(self, ...)
+        if self.SetWindowName then
+            self:SetWindowName("UILightControl")
+        end
+        return with_xml_interceptor(LIGHTING_XML_HANDLERS, orig_init, self, ...)
+    end
+
+    if type(cls.Update) == "function" then
+        local orig_update = cls.Update
+        cls.Update = function(self, ...)
+            orig_update(self, ...)
+            local top_ok = _G.game and _G.game.gamepad_is_top_dialog and _G.game.gamepad_is_top_dialog(self)
+            if top_ok and _G.gp_bridge and _G.gp_bridge.is_gamepad_active and _G.gp_bridge.is_gamepad_active() then
+                for i, ctrl in pairs(self.Track or {}) do
+                    local raw_val = ctrl:GetFValue()
+                    local val = _G.round_idp and _G.round_idp(raw_val, 6) or raw_val
+                    if val ~= self.Value[i] then
+                        self.Value[i] = val
+                        self:Callback_Track(i, val)
+                        break
+                    end
+                end
+            end
+            if self._gp_close then
+                self._gp_close = nil
+                if top_ok then
+                    self:Close()
+                end
+            end
+        end
+    end
+
+    return true
+end
+
+-- 4. ui_mm_faction_select.UINewGame (ZCP / Warfare / Soulslike / ваниль Anomaly)
+function hook_faction_select()
+    local mod = get_module("ui_mm_faction_select")
+    local cls = mod and mod.UINewGame
+    if not cls or hooked[cls] or type(cls.Main_Controls) ~= "function" then
+        return false
+    end
+    hooked[cls] = true
+
+    local orig_main = cls.Main_Controls
+    cls.Main_Controls = function(self, ...)
+        if self.SetWindowName then
+            self:SetWindowName("GACreateCharacter")
+        end
+        local gpc = self.gp_controls or {}
+        self.gp_controls = gpc
+        mod.gamepad_dialog = self
+
+        local handlers = {
+            InitStatic = function(raw_xml, path, parent)
+                local wnd = raw_xml:InitStatic(path, parent)
+                local cap_key = NEW_GAME_CAPS[path]
+                if cap_key then
+                    gpc[cap_key] = wnd
+                end
+                return wnd
+            end,
+            Init3tButton = function(raw_xml, path, parent)
+                local wnd = raw_xml:Init3tButton(path, parent)
+                local btn_key = NEW_GAME_BTNS[path]
+                if btn_key then
+                    gpc[btn_key] = wnd
+                end
+                return wnd
+            end,
+        }
+        return with_xml_interceptor(handlers, orig_main, self, ...)
+    end
+
+    if type(cls.Update) == "function" then
+        local orig_update = cls.Update
+        cls.Update = function(self, ...)
+            if _G.gp_new_game and type(_G.gp_new_game.update) == "function" then
+                _G.gp_new_game.update(self)
+            end
+            if self.IsShown and not self:IsShown() then
+                if _G.CUIScriptWnd and type(_G.CUIScriptWnd.Update) == "function" then
+                    _G.CUIScriptWnd.Update(self)
+                end
+                return
+            end
+            return orig_update(self, ...)
+        end
+    end
+
+    return true
+end
+
+-- 5. ui_mod_elements («21 очко» / 28- Black Jack / 287- MTO, отсутствует в PORT-A)
+function hook_blackjack()
+    local mod = get_module("ui_mod_elements")
+    if not mod or hooked[mod] then
+        return false
+    end
+    hooked[mod] = true
+
+    local card_cls = mod.card_game_21_point
+    if card_cls and type(card_cls.InitControls) == "function" then
+        local orig_init = card_cls.InitControls
+        card_cls.InitControls = function(self, ...)
+            local res = orig_init(self, ...)
+            if self.SetWindowName then
+                self:SetWindowName("GABlackjack")
+            end
+            mod.gamepad_table = self
+            if self.winner_box and self.winner_box.SetWindowName then
+                self.winner_box:SetWindowName("GABlackjackMessage")
+            end
+            return res
+        end
+    end
+
+    if type(mod.start_game) == "function" then
+        local orig_start = mod.start_game
+        mod.start_game = function(...)
+            mod.gamepad_table = nil
+            local res = orig_start(...)
+            if mod.gamepad_table == nil and res ~= nil then
+                mod.gamepad_table = res
+            end
+            return res
+        end
+    end
+
+    local info_cls = mod.information_block
+    if info_cls and type(info_cls.Show) == "function" then
+        local orig_show = info_cls.Show
+        info_cls.Show = function(self, mb_type, reason_type, text, extra_value)
+            local wname = (reason_type == "card_game_21_point") and "GABlackjackMessage" or ""
+            if self.information_mb and self.information_mb.SetWindowName then
+                self.information_mb:SetWindowName(wname)
+            end
+            local res = orig_show(self, mb_type, reason_type, text, extra_value)
+            if self.information_mb and self.information_mb.SetWindowName then
+                self.information_mb:SetWindowName(wname)
+            end
+            return res
+        end
+    end
+
+    return true
+end
+
+function install()
+    if _G.gp_compat and type(_G.gp_compat.is_engine_compatible) == "function" and not _G.gp_compat.is_engine_compatible() then
+        return false
+    end
+    hook_workshop()
+    hook_furniture_workshop()
+    hook_ctrl_lighting()
+    hook_faction_select()
+    hook_blackjack()
+    if _G.gp_workshop and type(_G.gp_workshop.install_hooks) == "function" then
+        _G.gp_workshop.install_hooks()
+    end
+    return true
+end
+
+function on_main_menu_init()
+    install()
+end
+
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_game_start()
+    if _G.gp_compat and type(_G.gp_compat.is_engine_compatible) == "function" and not _G.gp_compat.is_engine_compatible() then
+        return
+    end
+    install()
+    local rsc = _G.RegisterScriptCallback
+    if type(rsc) == "function" and main_menu_cb_rsc ~= rsc then
+        main_menu_cb_rsc = rsc
+        rsc("main_menu_on_init", on_main_menu_init)
+    end
+end

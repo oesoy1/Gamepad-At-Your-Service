@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<!-- MENU-FOCUS P16: pause menu hint strip and the top message inside the main menu (ui_gp_pause.script).
+     Positions are set by the script; sizes follow the menu items (graffiti19, icon ~18 UI units). -->
+<w>
+	<strip x="0" y="0" width="300" height="24" stretch="1">
+		<texture>ui\ui_gp_p16_strip</texture>
+	</strip>
+	<icon x="0" y="0" width="18" height="18" stretch="1">
+		<texture>ui_gp_xbox_south</texture>
+	</icon>
+	<label x="0" y="0" width="120" height="24">
+		<text font="graffiti19" r="225" g="225" b="225" a="255" align="l" vert_align="c"/>
+	</label>
+	<label_small x="0" y="0" width="120" height="24">
+		<text font="letterica18" r="225" g="225" b="225" a="255" align="l" vert_align="c"/>
+	</label_small>
+	<toast x="352" y="46" width="320" height="26" stretch="1">
+		<texture>ui\ui_gp_p16_toast</texture>
+		<text font="letterica18" r="240" g="240" b="240" a="255" align="c" vert_align="c"/>
+	</toast>
+</w>

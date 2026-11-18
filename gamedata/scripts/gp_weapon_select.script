@@ -1,0 +1,314 @@
+local menu, toast, pinned, last_seen, queued
+-- Fixed card and short-Y order: PRIMARY (slot 3, right inventory column),
+-- SECONDARY (slot 2, left column), MELEE (slot 1), then grenade/vision slots.
+local SLOTS = {3, 2, 1, 4, 5}
+-- Width and height are measured in pixels at a reference height of 1080.
+local WIDTH, HEIGHT, GAP, RAISE = 276, 126, 18, 32.4
+local DURATION = 140
+local IDLE, HIDDEN, MISFIRE = 0, 3, 8
+local function clock() return (game and game.get_time_continual and game.get_time_continual()) or (time_continual and time_continual()) or time_global() end
+local function tr(key) return game.translate_string(key) end
+local function firearm(item)
+    return item and IsWeapon(item) and not gp_field.is_knife_item(item) and SYS_GetParam(0, item:section(), "ammo_class") ~= nil
+end
+local function active(actor)
+    local item = actor:active_item()
+    if firearm(item) then pinned = item:id(); return item end
+end
+local function entries(actor)
+    active(actor)
+    local items, selected = {}, 1
+    for _, slot in ipairs(SLOTS) do
+        local item = actor:item_in_slot(slot)
+        if firearm(item) then
+            items[#items + 1] = {slot = slot, item = item}
+            if item:id() == pinned then selected = #items end
+        end
+    end
+    return items, selected
+end
+local function calibre(item)
+    local ammo = SYS_GetParam(0, item:section(), "ammo_class")
+    local code = ammo and ammo:match("ammo_(%d+%.?%d*x%d+%.?%d*)")
+    return code and code:gsub("%.", ",") or ""
+end
+local function box(wnd, x, y, w, h)
+    wnd:SetWndPos(vector2():set(x, y))
+    wnd:SetWndSize(vector2():set(w, h))
+end
+-- Inventory widgets may be anchored by their center in the XML.
+-- Convert the desired top-left into the widget's actual positioning convention.
+local function place_art(wnd, parent, x, y, w, h)
+    box(wnd, x, y, w, h)
+    local rect, parent_rect = Frect(), Frect()
+    wnd:GetAbsoluteRect(rect)
+    parent:GetAbsoluteRect(parent_rect)
+    wnd:SetWndPos(vector2():set(x + parent_rect.x1 + x - rect.x1,
+        y + parent_rect.y1 + y - rect.y1))
+end
+local function snapshot(wnd)
+    local p = wnd:GetWndPos()
+    return {wnd = wnd, x = p.x, y = p.y, w = wnd:GetWidth(), h = wnd:GetHeight()}
+end
+local function settle(slot, id)
+    local actor = db.actor
+    if not actor then return end
+    local actor_id = actor:id()
+    RemoveTimeEvent("gp_weapon_select", "commit")
+    queued = slot ~= 0 and id or nil
+    CreateTimeEvent("gp_weapon_select", "commit", 0, function()
+        local a = db.actor
+        if not a or a:id() ~= actor_id or not a:alive() then queued = nil; return true end
+        local target = slot ~= 0 and a:item_in_slot(slot)
+        if slot ~= 0 and (not target or target:id() ~= id) then queued = nil; return true end
+        local item = a:active_item()
+        if item and IsWeapon(item) then
+            local state = item:get_state()
+            if state ~= IDLE and state ~= HIDDEN and state ~= MISFIRE then return false end
+        end
+        if target then pinned = id else active(a) end
+        queued = nil
+        a:activate_slot(slot)
+        return true
+    end)
+end
+
+class "UIGpWeaponSelectRoomy" (CUIScriptWnd)
+function UIGpWeaponSelectRoomy:__init(items, selection)
+    super()
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    self:SetAutoDelete(false)
+    self:AllowMovement(true)
+    local d = device()
+    self.sx, self.sy = 1024 * d.height / (d.width * 1080), 768 / 1080
+    self.items, self.selection, self.cards = items, selection, {}
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ui_gp_weapon_select.xml")
+    local cells = CScriptXmlInit()
+    cells:ParseFile("ui_gp_qaw_option.xml")
+    self.xml = cells
+    for i, entry in ipairs(items) do
+        local card = {}
+        card.bg = xml:InitStatic("card", self)
+        card.name = xml:InitTextWnd("name", card.bg)
+        card.name:SetTextComplexMode(false)
+        card.name:SetEllipsis(true)
+        card.name:SetText(ui_item.get_sec_name(entry.item:section()))
+        card.calibre = xml:InitTextWnd("detail", card.bg)
+        card.calibre:SetText(calibre(entry.item))
+        card.condition = xml:InitTextWnd("detail", card.bg)
+        local font = GetFontLetterica16Russian()
+        for _, text in ipairs({card.name, card.calibre, card.condition}) do text:SetFont(font) end
+        local container = {path = "cont_item", xml = cells, grid_size = 50}
+        local art = utils_ui.UICellItem(container, card.bg, 1, true)
+        art.showcase = 2
+        art:Set(entry.item:section())
+        art.showcase = 0
+        art:Add_Attachements(cells, entry.item, entry.item:section(), entry.item:clsid())
+        art.showcase = 2
+        card.icon = art.cell
+        card.art = {snapshot(art.ico), snapshot(art.shadow)}
+        for _, layer in ipairs(art.layer or {}) do card.art[#card.art + 1] = snapshot(layer) end
+        for _, key in ipairs({"ico_scope", "ico_sil", "ico_gl"}) do
+            if art[key] then card.art[#card.art + 1] = snapshot(art[key]) end
+        end
+        local left, top = 0, 0
+        local right, bottom = art.ico:GetWidth(), art.ico:GetHeight()
+        for j, child in ipairs(card.art) do
+            if j <= 2 then
+                child.x, child.y = j - 1, (j - 1) * 2
+            else
+                child.parent = art.ico
+                local rect, base = Frect(), Frect()
+                child.wnd:GetAbsoluteRect(rect)
+                art.ico:GetAbsoluteRect(base)
+                child.x, child.y = rect.x1 - base.x1, rect.y1 - base.y1
+            end
+            left, top = math.min(left, child.x), math.min(top, child.y)
+            right, bottom = math.max(right, child.x + child.w), math.max(bottom, child.y + child.h)
+        end
+        local section = entry.item:section()
+        local kind = SYS_GetParam(0, section, "kind")
+        local grid_width = SYS_GetParam(2, section, "inv_grid_width", 0) or 0
+        card.long_gun = kind ~= "w_pistol" and grid_width >= 3
+        card.bounds = {x = left, y = top, w = right - left, h = bottom - top}
+        card.amount = i == selection and 1 or 0
+        self.cards[i] = card
+    end
+    self.hint = xml:InitStatic("hint", self)
+    self.hint:TextControl():SetText(tr("st_gp_weapon_select_release"))
+    box(self.hint, 512 - 105*self.sx, 808*self.sy, 210*self.sx, 32*self.sy)
+    self.last = clock()
+    self:Layout(self.last)
+end
+
+function UIGpWeaponSelectRoomy:Layout(now)
+    local sx, sy = self.sx, self.sy
+    for i, card in ipairs(self.cards) do
+        if card.started then
+            local t = math.min(1, (now - card.started) / DURATION)
+            card.amount = card.from + (card.to - card.from) * (1 - (1-t)^3)
+            if t == 1 then card.started = nil end
+        end
+        local selected = i == self.selection
+        local x = 512 + (i - (#self.cards+1)/2) * (WIDTH+GAP)*sx
+        local y = (640 - RAISE*card.amount)*sy
+        local w, h = WIDTH*sx, HEIGHT*sy
+        box(card.bg,x-w/2,y-h/2,w,h)
+        card.bg:SetTextureColor(GetARGB(math.floor(182+60*card.amount),255,255,255))
+        box(card.name,14*sx,78*sy,(WIDTH-28)*sx,19*sy)
+        box(card.calibre,14*sx,101*sy,(WIDTH/2-14)*sx,17*sy)
+        box(card.condition,WIDTH*sx/2,101*sy,(WIDTH/2-14)*sx,17*sy)
+        card.condition:Show(selected)
+        if selected then card.condition:SetText(("%d%%"):format(math.floor(self.items[i].item:condition()*100+0.5))) end
+        local bounds = card.bounds
+        local icon_width, icon_height = 156, 43
+        if card.long_gun then icon_width, icon_height = 198, 55 end
+        local scale = math.min(icon_width*sx/bounds.w, icon_height*sy/bounds.h) * 1.15 * (0.85+0.15*card.amount)
+        place_art(card.icon,card.bg,(w-bounds.w*scale)/2-bounds.x*scale,
+            38*sy-(bounds.h/2+bounds.y)*scale,bounds.w*scale,bounds.h*scale)
+        for _, child in ipairs(card.art) do
+            local parent = child.parent or card.icon
+            place_art(child.wnd,parent,child.x*scale,child.y*scale,child.w*scale,child.h*scale)
+        end
+    end
+end
+
+function UIGpWeaponSelectRoomy:Update()
+    CUIScriptWnd.Update(self)
+    if game and game.update_wheel_sector then game.update_wheel_sector(4,-1) end
+    local now = clock()
+    if not (game and game.is_wheel_stick_active and game.is_wheel_stick_active()) then
+        if self.direction then self.neutral_at = now end
+        self.direction = nil
+    elseif #self.items > 1 and not self.direction then
+        local x = math.sin((game and game.get_wheel_stick_angle and game.get_wheel_stick_angle()) or 0)
+        if math.abs(x) >= 0.77 then
+            local dir = x > 0 and 1 or -1
+            if not (self.last_direction == -dir and self.neutral_at and now-self.neutral_at < 70) then
+                local previous = self.selection
+                self.selection = (previous-1+dir) % #self.items + 1
+                self.direction, self.last_direction = dir, dir
+                local frame = math.max(1, math.min(16, now-self.last))
+                for _, i in ipairs({previous,self.selection}) do
+                    local card = self.cards[i]
+                    card.from, card.to, card.started = card.amount, i == self.selection and 1 or 0, now-frame
+                end
+            end
+        end
+    end
+    self.last = now
+    for _, card in ipairs(self.cards) do
+        if card.started then self:Layout(now); break end
+    end
+end
+
+local function no_weapons()
+    if not toast then
+        toast = CUIScriptWnd()
+        toast:SetWndRect(Frect():set(0,0,1024,768))
+        toast:SetAutoDelete(false)
+        local xml = CScriptXmlInit()
+        xml:ParseFile("ui_gp_pause.xml")
+        toast.label = xml:InitStatic("toast", toast)
+    end
+    toast.label:TextControl():SetText(tr("st_gp_weapon_select_empty"))
+    if not toast:IsShown() then
+        level.add_dialog_to_render(toast)
+        toast:Show(true)
+    end
+    local start = clock()
+    RemoveTimeEvent("gp_weapon_select","toast")
+    CreateTimeEvent("gp_weapon_select","toast",0,function()
+        local alpha = ui_gp_pause.toast_alpha(clock()-start)
+        toast.label:SetTextureColor(GetARGB(math.floor(alpha*255),255,255,255))
+        toast.label:TextControl():SetTextColor(GetARGB(math.floor(alpha*255),240,240,240))
+        if alpha <= 0 and clock()-start > 50 then
+            level.remove_dialog_to_render(toast)
+            toast:Show(false)
+            return true
+        end
+        return false
+    end)
+end
+function open()
+    if menu or not db.actor then return "unavailable" end
+    local items, selection = entries(db.actor)
+    if #items == 0 then no_weapons(); return "empty" end
+    local ok, wnd = gp_compat.safe_call("weapon_select", function() return UIGpWeaponSelectRoomy(items, selection) end)
+    if not ok or not wnd then return "unavailable" end
+    menu = wnd
+    if toast and toast:IsShown() then
+        level.remove_dialog_to_render(toast)
+        toast:Show(false)
+    end
+    menu:ShowDialog(true)
+    return "opened"
+end
+function is_open() return menu ~= nil and menu:IsShown() end
+function cancel()
+    if menu then menu:HideDialog(); menu = nil end
+    return "closed"
+end
+function confirm()
+    if not menu then return "closed" end
+    local entry = menu.items[menu.selection]
+    local current = db.actor and active(db.actor)
+    cancel()
+    if db.actor and entry and entry.item then
+        if current and current:id() == entry.item:id() then settle(0)
+        else settle(entry.slot,entry.item:id()) end
+    end
+    return "closed"
+end
+-- Short Y. Hands without a firearm (G.A.M.M.A. keeps wd_emptyhands in slot 15
+-- while the weapon is holstered, or a knife/binoculars) draw the pinned weapon;
+-- otherwise step to the next firearm in SLOTS order. A request that is still
+-- waiting for the current animation counts as "in hands" so repeated taps advance.
+function draw_pinned()
+    local actor = db.actor
+    if not actor or menu then return "pass" end
+    local items, selected = entries(actor)
+    if #items == 0 then return "pass" end
+    local held = queued or (firearm(actor:active_item()) and actor:active_item():id())
+    local current
+    for i, entry in ipairs(items) do
+        if entry.item:id() == held then current = i end
+    end
+    if not current then
+        settle(items[selected].slot, items[selected].item:id())
+        return "queued"
+    end
+    if #items == 1 then return "queued" end
+    local target = items[current % #items + 1]
+    settle(target.slot, target.item:id())
+    return "queued"
+end
+local function reset()
+    cancel()
+    pinned, last_seen, queued = nil, nil, nil
+    RemoveTimeEvent("gp_weapon_select","commit")
+    RemoveTimeEvent("gp_weapon_select","toast")
+    if toast and toast:IsShown() then
+        level.remove_dialog_to_render(toast)
+        toast:Show(false)
+    end
+end
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    RegisterScriptCallback("actor_on_net_destroy",reset)
+    RegisterScriptCallback("actor_on_before_death",reset)
+    RegisterScriptCallback("on_game_load",reset)
+    RegisterScriptCallback("actor_on_update",function()
+        local actor = db.actor
+        if not actor then return end
+        local item = actor:active_item()
+        local id = item and item:id()
+        if id ~= last_seen then
+            last_seen = id
+            active(actor)
+        end
+    end)
+end

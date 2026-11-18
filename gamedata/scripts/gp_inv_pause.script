@@ -1,0 +1,1954 @@
+--[[
+    gp_inv_pause.script  --  FG.3 (D06, D11, D33, D5.1, D59)
+
+    Standard G.A.M.M.A. inventory (ui_inventory.UIInventory) on full pause:
+      1. Pause token (CPauseTokenManager, C4.1) while UIInventory is shown and the
+         option control/gamepad/gp_inventory_pause is on (default: on, D06).
+         AllowWorkInPause(true) for GUI and its own dialogs (item_props, message boxes),
+         otherwise CUIDialogWnd::IR_process (UIDialogWnd.cpp:45-54) drops all input.
+      2. UI clocks that do not freeze: ui_inventory module lookups of time_global()
+         and utils_ui.get_time() (utils_ui.script:113-115) are redirected to a single
+         monotonic clock Device.dwTimeContinual. dwTimeContinual >= dwTimeGlobal and
+         the shim is never switched back at runtime, so stored timestamps
+         (tg_info, tg_hint, tg_stats, K_Timer, UIInfoItem timer, db.tg) only ever see
+         the clock jump forward, never backward -> no stuck debounce.
+      3. FDDA animations (D11, D33): nothing is executed here. FDDA handlers run on
+         world ticks, which are frozen while the token is held; the token is released
+         on GUI_on_hide("UIInventory") (ui_inventory.script:4040-4055 Close ->
+         Unregister_UI), so queued animations resume right after the window closes.
+         Engine also drops all tokens on disconnect/quickload/level change/death
+         (GamePersistent.cpp:200, 887; PauseTokenManager.cpp:390, 4521).
+      4. Button hint bar (D5.1) at the bottom of UIInventory while the gamepad is the
+         active source, and option control/gamepad/gp_inventory_mode (D59):
+         "gamma" (classic cursor UI, default) / "full" (optional fullscreen UI, F-stage).
+
+    The script never edits G.A.M.M.A. files; it only patches module tables at runtime.
+--]]
+
+local TOKEN_TAG = "gp_inventory"
+local OPT_PAUSE = "control/gamepad/gp_inventory_pause"
+local OPT_MODE = "control/gamepad/gp_inventory_mode"
+local HINT_REFRESH_MS = 500
+local SHOW_LEGACY_INVENTORY_ICONS = false -- Bring these back one at a time as they are redesigned.
+local ITEM_CROSS_DWELL_MS = 400
+local CURSOR_MOVE_EPS = 1.5
+local CROSS_PILL_W = 24
+local CROSS_PILL_H = 13
+local CROSS_DX = 24
+local CROSS_DY = 21
+local LB_PILL_W = 16
+local LB_PILL_H = 12
+local LB_OFFSET_X = -30
+local LB_OFFSET_Y = -28
+
+-- Pixel coordinates of the visible opening in ui_gp_inv_equipment_wide_rail_v6_aligned.
+local RAIL = { width = 684, height = 1536, left = 20, right = 660, top = 1468, bottom = 1526,
+    trigger_width = 34.5, trigger_center_inset = 28 }
+-- Visible alpha bounds of the ten stock 66x58 tiles, in inventory order.
+-- Checked and unchecked atlas rows have the same silhouette bounds.
+local CATEGORY_GLYPHS = {
+    { 19, 13, 49, 43 }, { 16, 16, 53, 41 }, { 20, 11, 46, 45 },
+    { 19, 13, 47, 42 }, { 21, 9, 45, 45 }, { 15, 11, 53, 45 },
+    { 23, 11, 43, 44 }, { 14, 9, 56, 45 }, { 12, 11, 54, 46 },
+    { 16, 11, 52, 48 },
+}
+local CATEGORY_END_GAP_RATIO = 1.45
+local VALID_MODES = { gamma = true, full = true }
+
+-- child dialogs of UIInventory that are shown with their own ShowDialog()
+local CHILD_DIALOGS = { "item_props", "message_box", "message_box_up", "picker" }
+
+-- non-raw lookup: lets the engine auto-load a script namespace on first access
+local function mod(name)
+    local ok, m = pcall(function() return _G[name] end)
+    if ok and type(m) == "table" then return m end
+    return nil
+end
+
+local state = {
+    token_id = 0,
+    shim_installed = false,
+    orig_ui_time_global = nil,
+    orig_utils_get_time = nil,
+    update_patched = false,
+    orig_update = nil,
+    on_kb_patched = false,
+    orig_on_kb = nil,
+    live_reload_count = 0,
+    last_reload_status = "none",
+    cc_pause_patched = false,
+    wrapped_cc_calc_sort_step = nil,
+    orig_cc_calc_sort_step = nil,
+    orig_cc_calc_icon_step = nil,
+    orig_cc_reset_sorter = nil,
+    flushing_cc = false,
+    options_patched = false,
+    last_hint_ms = -100000,
+    last_has_item = nil,
+    last_lb_held = nil,
+    hover_bag = nil,
+    hover_idx = nil,
+    hover_since_ms = -100000,
+    last_cursor_x = nil,
+    last_cursor_y = nil,
+    acquires = 0,
+    releases = 0,
+    last_event = "",
+}
+
+function get_state()
+    return state
+end
+
+--===========================================================================
+-- Clock
+--===========================================================================
+
+function clock()
+    if game and game.get_time_continual then
+        local ok, v = pcall(game.get_time_continual)
+        if ok and type(v) == "number" then return v end
+    end
+    if time_continual then
+        return time_continual()
+    end
+    return time_global()
+end
+
+function install_clock_shim()
+    if state.shim_installed then
+        return true
+    end
+    local inv = mod("ui_inventory")
+    local uu = mod("utils_ui")
+    if type(inv) ~= "table" or type(uu) ~= "table" then
+        return false
+    end
+    state.orig_ui_time_global = rawget(inv, "time_global")
+    state.orig_utils_get_time = uu.get_time
+    -- module-level global shadows _G.time_global for every function whose env is ui_inventory
+    inv.time_global = clock
+    uu.get_time = clock
+    state.shim_installed = true
+    return true
+end
+
+-- test/debug only: never called during a game session (clock must not go backward)
+function uninstall_clock_shim()
+    if not state.shim_installed then
+        return false
+    end
+    local inv = mod("ui_inventory")
+    local uu = mod("utils_ui")
+    if type(inv) == "table" then inv.time_global = state.orig_ui_time_global end
+    if type(uu) == "table" then uu.get_time = state.orig_utils_get_time end
+    state.shim_installed = false
+    return true
+end
+
+--===========================================================================
+-- Options (D06, D59)
+--===========================================================================
+
+local function read_option(path, default)
+    if ui_options and type(ui_options.get) == "function" then
+        local ok, v = pcall(ui_options.get, path)
+        if ok and v ~= nil then return v end
+    end
+    return default
+end
+
+-- FIX-LIVE1 (2026-11-15, решение Миши D65): пауза мира в инвентаре/торговле/тайнике отменена полностью.
+-- Мир всегда идёт в реальном времени; опция gp_inventory_pause убрана из настроек, старое значение игнорируется.
+PAUSE_FEATURE_ENABLED = false
+function is_pause_enabled()
+    if not PAUSE_FEATURE_ENABLED then return false end
+    local v = read_option(OPT_PAUSE, true)
+    return not (v == false or v == 0 or v == "0" or v == "false")
+end
+
+function get_inventory_mode()
+    local v = tostring(read_option(OPT_MODE, "gamma"))
+    if VALID_MODES[v] then return v end
+    return "gamma"
+end
+
+function is_fullscreen_ui_selected()
+    return get_inventory_mode() == "full"
+end
+
+local function options_entries()
+    return {
+        { id = "line_gamepad_inventory", type = "line" },
+        { id = "desc_gamepad_inventory", type = "desc", text = "ui_mm_desc_gamepad_inventory" },
+        { id = "gp_inventory_mode", type = "list", val = 0, def = "gamma",
+          content = { { "gamma", "gp_inv_mode_gamma" }, { "full", "gp_inv_mode_full" } },
+          hint = "control_gamepad_gp_inventory_mode" },
+    }
+end
+
+function inject_options()
+    if not (ui_options and type(ui_options.options) == "table") then
+        return false
+    end
+    for _, top in ipairs(ui_options.options) do
+        if top.id == "control" and type(top.gr) == "table" then
+            for _, sub in ipairs(top.gr) do
+                if sub.id == "gamepad" and type(sub.gr) == "table" then
+                    for _, e in ipairs(sub.gr) do
+                        if e.id == "gp_inventory_mode" then return false end
+                    end
+                    -- keep the mod-status block last: insert before "line_gamepad_mod_status"
+                    local pos = #sub.gr + 1
+                    for i, e in ipairs(sub.gr) do
+                        if e.id == "line_gamepad_mod_status" then pos = i break end
+                    end
+                    for k, e in ipairs(options_entries()) do
+                        table.insert(sub.gr, pos + k - 1, e)
+                    end
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+function install_options()
+    if state.options_patched then return false end
+    if not (ui_options and type(ui_options.init_opt_base) == "function") then
+        return false
+    end
+    -- make sure the gamepad tab wrapper is installed first (idempotent)
+    if ui_options_gamepad and type(ui_options_gamepad.on_xml_read) == "function" then
+        pcall(ui_options_gamepad.on_xml_read)
+    end
+    state.options_patched = true
+    local base = ui_options.init_opt_base
+    ui_options.init_opt_base = function(...)
+        base(...)
+        local ok_inj, injected = pcall(inject_options)
+        if ok_inj and injected and ui_options.init_opt_coder then
+            pcall(ui_options.init_opt_coder)
+        end
+    end
+    if type(ui_options.options) == "table" and #ui_options.options > 0 then
+        local ok_inj, injected = pcall(inject_options)
+        if ok_inj and injected and ui_options.init_opt_coder then
+            pcall(ui_options.init_opt_coder)
+        end
+    end
+    return true
+end
+
+--===========================================================================
+-- Pause token + AllowWorkInPause
+--===========================================================================
+
+local function get_gui()
+    local inv = mod("ui_inventory")
+    return inv and inv.GUI or nil
+end
+
+local function gui_shown(gui)
+    if not gui then return false end
+    local ok, shown = pcall(function() return gui:IsShown() end)
+    return ok and shown == true
+end
+
+local function allow_pause(wnd)
+    if not wnd then return false end
+    local ok = pcall(function() wnd:AllowWorkInPause(true) end)
+    return ok
+end
+
+function apply_work_in_pause(gui)
+    if not gui then return 0 end
+    local n = allow_pause(gui) and 1 or 0
+    for _, name in ipairs(CHILD_DIALOGS) do
+        local ok, child = pcall(function() return gui[name] end)
+        if ok and child and allow_pause(child) then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+function acquire_token()
+    if state.token_id ~= 0 then return state.token_id end
+    if game and game.acquire_pause_token then
+        local ok, id = pcall(game.acquire_pause_token, TOKEN_TAG)
+        if ok and type(id) == "number" and id > 0 then
+            state.token_id = id
+            state.acquires = state.acquires + 1
+        end
+    end
+    return state.token_id
+end
+
+function release_token(reason)
+    if state.token_id == 0 then return false end
+    local id = state.token_id
+    state.token_id = 0
+    state.releases = state.releases + 1
+    state.last_event = "release:" .. tostring(reason or "")
+    if game and game.release_pause_token then
+        pcall(game.release_pause_token, id)
+    end
+    return true
+end
+
+function is_paused_by_inventory()
+    return state.token_id ~= 0
+end
+
+function get_active_token()
+    return (state.token_id ~= 0) and state.token_id or nil
+end
+
+function on_gui_show(name)
+    if name ~= "UIInventory" then
+        -- safety net: a token must never outlive a hidden inventory
+        if state.token_id ~= 0 and not gui_shown(get_gui()) then
+            release_token("stale_on_" .. tostring(name))
+        end
+        return false
+    end
+    local gui = get_gui()
+    -- gp_bridge sends a synthetic GUI_on_show("UIInventory") for functor flush (gp_bridge.script:1073-1078)
+    if not gui_shown(gui) then
+        return false
+    end
+    install_clock_shim()
+    patch_inventory_update()
+    apply_work_in_pause(gui)
+    state.last_hint_ms = -100000
+    state.hover_bag = nil
+    state.hover_idx = nil
+    state.hover_since_ms = clock()
+    state.last_cursor_x = nil
+    state.last_cursor_y = nil
+    if is_pause_enabled() then
+        acquire_token()
+    end
+    if type(gui.CC) == "table" and not state.flushing_cc then
+        state.flushing_cc = true
+        for _, cc in pairs(gui.CC) do
+            if cc and cc.deferred then
+                if not cc.sorter and type(cc.ResetSorter) == "function" then
+                    cc.sorterUpdateTime = -1
+                    pcall(cc.ResetSorter, cc)
+                end
+                if cc.sorter and type(cc.Update) == "function" then
+                    cc.sort_step = 500
+                    cc.icon_step = 200
+                    local guard = 0
+                    while cc.sorter and guard < 32 do
+                        guard = guard + 1
+                        local ok = pcall(cc.Update, cc, gui.item_info)
+                        if not ok then break end
+                    end
+                end
+            end
+        end
+        state.flushing_cc = false
+    end
+    state.last_event = "show"
+    return true
+end
+
+function on_gui_hide(name)
+    if name == "UIInventory" then
+        local gui = get_gui()
+        if gui then
+            if gui._gp_hint_wnd then
+                pcall(function() gui._gp_hint_wnd:Show(false) end)
+            end
+            if type(gui._gp_inline_hints) == "table" then
+                local h = gui._gp_inline_hints
+                local footer = mod("ui_gp_inv_footer")
+                if footer and h.pixel_footer then footer.hide(h) end
+                if type(h.widgets) == "table" then
+                    for _, w in ipairs(h.widgets) do
+                        if w then pcall(function() w:Show(false) end) end
+                    end
+                end
+                if type(h.pills) == "table" then
+                    for _, p in ipairs(h.pills) do
+                        show_hint_pill(p, false)
+                    end
+                end
+            end
+        end
+        return release_token("hide")
+    end
+    if state.token_id ~= 0 and not gui_shown(get_gui()) then
+        return release_token("stale_on_hide_" .. tostring(name))
+    end
+    return false
+end
+
+function on_session_end()
+    return release_token("session_end")
+end
+
+--===========================================================================
+-- Inline button hints in UIInventory (FG.6k, replaces bottom hint bar)
+--===========================================================================
+
+local function tr(id, fallback)
+    if game and game.translate_string then
+        local ok, s = pcall(game.translate_string, id)
+        if ok and type(s) == "string" and s ~= "" and s ~= id then return s end
+    end
+    return fallback
+end
+
+local function glyph(name, fallback)
+    if gp_bridge and gp_bridge.get_action_glyph then
+        local ok, g = pcall(gp_bridge.get_action_glyph, name)
+        if ok and type(g) == "string" and g ~= "" then return g end
+    end
+    return fallback
+end
+
+local BUTTON_STEM_BY_NAME = {
+    A       = "south",
+    B       = "east",
+    X       = "west",
+    Y       = "north",
+    View    = "back",
+    Menu    = "start",
+    Start   = "start",
+    LB      = "lshoulder",
+    RB      = "rshoulder",
+    LT      = "ltrigger",
+    RT      = "rtrigger",
+    L3      = "lstick",
+    R3      = "rstick",
+    LS      = "ls",
+    RS      = "rs",
+    DPUp    = "dpup",
+    DPDown  = "dpdown",
+    DPLeft  = "dpleft",
+    DPRight = "dpright",
+}
+
+local VALID_GLYPH_SETS = {
+    xbox     = true,
+    ps       = true,
+    nintendo = true,
+    generic  = true,
+}
+
+local ACTION_PICTOGRAM_TEXTURES = {
+    hand       = "ui_gp_act_hand",
+    grab       = "ui_gp_act_grab",
+    bolt       = "ui_gp_act_bolt",
+    list       = "ui_gp_act_list",
+    back       = "ui_gp_act_back",
+    swap       = "ui_gp_act_swap",
+    stack      = "ui_gp_act_stack",
+    eye        = "ui_gp_act_eye",
+    med        = "ui_gp_act_med",
+    sort       = "ui_gp_act_sort",
+    all        = "ui_gp_act_all",
+    slot_up    = "ui_gp_act_slot_up",
+    slot_right = "ui_gp_act_slot_right",
+    slot_down  = "ui_gp_act_slot_down",
+    slot_left  = "ui_gp_act_slot_left",
+}
+
+local function icon_state_info()
+    local ic = rawget(_G, "gp_icons")
+    local sk = (ic and ic.scale_k) and ic.scale_k() or 1.0
+    local vis = (not ic or not ic.hints_visible) or ic.hints_visible("menu")
+    local rev = (ic and ic.revision) and ic.revision() or 0
+    return ic, sk, vis, rev
+end
+
+local function place_scaled_inline_icon(wnd, cx, cy, base_h, btn_name)
+    if not (wnd and vector2) then return end
+    local ic, sk = icon_state_info()
+    local ratio = 1.0
+    if ic and ic.dims then
+        local _, _, tw, th = ic.dims(btn_name, "round")
+        if tw and th and th > 0 then ratio = tw / th end
+    end
+    local dev = device and device()
+    local sx = math.max(1, dev and dev.width or 1920) / 1024
+    local sy = math.max(1, dev and dev.height or 1080) / 768
+    local ih = base_h * sk
+    local iw = ih * ratio * (sy / sx)
+    pcall(wnd.SetWndPos, wnd, vector2():set(cx - iw * 0.5, cy - ih * 0.5))
+    pcall(wnd.SetWndSize, wnd, vector2():set(iw, ih))
+end
+
+function get_button_icon_texture(name)
+    local ic = rawget(_G, "gp_icons")
+    if ic and ic.tex then
+        local btn = tostring(name or "")
+        if gp_bridge and gp_bridge.resolve_menu_button_for_hint then
+            local ok_r, resolved = pcall(gp_bridge.resolve_menu_button_for_hint, btn)
+            if ok_r and type(resolved) == "string" and resolved ~= "" then
+                btn = resolved
+            end
+        end
+        return ic.tex(btn, "round")
+    end
+    if gp_bridge and gp_bridge.get_action_icon then
+        local ok, tex = pcall(gp_bridge.get_action_icon, name)
+        if ok and type(tex) == "string" and tex ~= "" then
+            return tex
+        end
+    end
+    local set_name = "xbox"
+    if gp_bridge and gp_bridge.get_glyph_set then
+        local ok_s, s = pcall(gp_bridge.get_glyph_set)
+        if ok_s and type(s) == "string" and VALID_GLYPH_SETS[s] then
+            set_name = s
+        end
+    end
+    local stem = BUTTON_STEM_BY_NAME[tostring(name or "")] or "south"
+    return string.format("ui_gp_%s_%s", set_name, stem)
+end
+
+function get_action_pictogram_texture(act_name)
+    local key = tostring(act_name or "")
+    if ACTION_PICTOGRAM_TEXTURES[key] then
+        return ACTION_PICTOGRAM_TEXTURES[key]
+    end
+    if string.sub(key, 1, 10) == "ui_gp_act_" then
+        return key
+    end
+    return "ui_gp_act_hand"
+end
+
+function build_hint_text()
+    local items = {
+        { glyph("A", "[A]"), tr("ui_gp_inv_hint_select", "Select / Drag") },
+        { glyph("Y", "[Y]"), tr("ui_gp_inv_hint_use", "Use / Take") },
+        { glyph("X", "[X]"), tr("ui_gp_inv_hint_menu", "Menu") },
+        { glyph("LT", "[LT]") .. "/" .. glyph("RT", "[RT]"), tr("ui_gp_inv_hint_filter", "Filter") },
+        { glyph("View", "[View]"), tr("ui_gp_inv_hint_panel", "Panel") },
+        { glyph("B", "[B]"), tr("ui_gp_inv_hint_close", "Close") },
+    }
+    local parts = {}
+    for i, it in ipairs(items) do
+        parts[i] = it[1] .. " " .. it[2]
+    end
+    return table.concat(parts, "   ")
+end
+
+-- INV-REWORK-1: размер значков LT/RT на рельсе категорий (было 1.08, решение Миши 2026-11-11 — как иконки категорий)
+-- INV-REWORK-26 (Миша 2026-11-13: LT/RT в торговле и ящике тоже крупнее, как в инвентаре 34->44): 1.14 * 1.29; центр отодвигается от рамки, чтобы зазор остался > 3
+TRIGGER_SCALE = 1.47
+
+function build_item_action_hint_text(has_item)
+    -- INV-REWORK-1: A — по предмету, Y «Описание», View «Раздел», X «Меню» (как в нижней полосе)
+    local rw = _G.gp_inv_rework
+    if rw and rw.hovered_a_label and rw.label and ui_inventory and ui_inventory.GUI then
+        local ok, a_text = pcall(rw.hovered_a_label, ui_inventory.GUI)
+        return string.format(
+            "%s %s  %s %s  %s %s  %s %s",
+            glyph("A", "[A]"), (ok and a_text) or rw.label("action"),
+            glyph("Y", "[Y]"), rw.label("description"),
+            glyph("View", "[View]"), rw.label("section"),
+            glyph("X", "[X]"), rw.label("menu")
+        )
+    end
+    return string.format(
+        "%s %s  %s %s  %s %s",
+        glyph("A", "[A]"), tr("ui_gp_inv_hint_select", "Select"),
+        glyph("Y", "[Y]"), tr("ui_gp_inv_hint_desc", "Details"),
+        glyph("X", "[X]"), tr("ui_gp_inv_hint_menu", "Menu")
+    )
+end
+
+local function make_icon_static(parent, x, y, w, h, tex_id)
+    if not CUIStatic or not vector2 then return nil end
+    local s = CUIStatic()
+    s:SetAutoDelete(true)
+    s:SetWndPos(vector2():set(x, y))
+    s:SetWndSize(vector2():set(w, h))
+    if type(s.SetStretchTexture) == "function" then
+        s:SetStretchTexture(true)
+    end
+    if tex_id and type(s.InitTexture) == "function" then
+        pcall(s.InitTexture, s, tex_id)
+    end
+    if parent and type(parent.AttachChild) == "function" then
+        parent:AttachChild(s)
+    end
+    return s
+end
+
+local function set_static_text(s, text)
+    if not s or type(s.TextControl) ~= "function" then return false end
+    local tc = s:TextControl()
+    if tc and type(tc.SetText) == "function" then
+        pcall(tc.SetText, tc, tostring(text or ""))
+        return true
+    end
+    return false
+end
+
+local function make_text_static(parent, x, y, w, h, text)
+    if not CUIStatic or not vector2 then return nil end
+    local s = CUIStatic()
+    s:SetAutoDelete(true)
+    s:SetWndPos(vector2():set(x, y))
+    s:SetWndSize(vector2():set(w, h))
+    if type(s.TextControl) == "function" then
+        local tc = s:TextControl()
+        if tc then
+            local fnt = (GetFontLetterica18Russian and GetFontLetterica18Russian())
+                or (GetFontLetterica16Russian and GetFontLetterica16Russian())
+                or (GetFontSmall and GetFontSmall())
+            if fnt and type(tc.SetFont) == "function" then
+                pcall(tc.SetFont, tc, fnt)
+            end
+            if GetARGB and type(tc.SetTextColor) == "function" then
+                pcall(tc.SetTextColor, tc, GetARGB(235, 220, 220, 220))
+            end
+            if type(tc.SetText) == "function" then
+                pcall(tc.SetText, tc, tostring(text or ""))
+            end
+        end
+    end
+    if parent and type(parent.AttachChild) == "function" then
+        parent:AttachChild(s)
+    end
+    return s
+end
+
+-- FG.6k1 (pt. 5): Shared pill badge constructor ("button glyph + white action pictogram inside dark matte-glass pill").
+-- Used by FG.6k1 (Variant A inline badges), FG.6k2 (Variant C item cross), FG.6k3 (RB meds), FG.6k4 (LB+D-pad quick slots).
+-- Signature: draw_hint_pill(parent, x, y, btn_name, act_name, opts) -> pill_table | nil
+function draw_hint_pill(parent, x, y, btn_name, act_name, opts)
+    if not CUIStatic or not vector2 then return nil end
+    opts = type(opts) == "table" and opts or {}
+    local has_act = type(act_name) == "string" and act_name ~= ""
+    local icon_sz = tonumber(opts.icon_size) or 14
+    local icon_w  = tonumber(opts.icon_w) or math.max(9, math.floor(icon_sz * 0.78 + 0.5))
+    local pad_x   = tonumber(opts.pad_x) or 2
+    local gap     = tonumber(opts.gap) or 2
+    local pill_h  = tonumber(opts.h) or (icon_sz + 4)
+    local def_w   = has_act and (pad_x * 2 + icon_w * 2 + gap) or (pad_x * 2 + icon_w)
+    local pill_w  = tonumber(opts.w) or def_w
+    local pill_tex = opts.pill_tex or (has_act and "ui_gp_hint_pill" or "ui_gp_hint_pill_sm")
+
+    local bg = make_icon_static(parent, x, y, pill_w, pill_h, pill_tex)
+    if not bg then return nil end
+
+    local iy = math.floor((pill_h - icon_sz) * 0.5)
+    local btn_tex = get_button_icon_texture(btn_name)
+    local bx = has_act and ( x + pad_x ) or ( x + math.floor((pill_w - icon_w) * 0.5) )
+    local btn_icon = make_icon_static(parent, bx, y + iy, icon_w, icon_sz, btn_tex)
+
+    local act_icon = nil
+    local act_tex  = nil
+    if has_act then
+        act_tex = get_action_pictogram_texture(act_name)
+        local ax = x + pill_w - pad_x - icon_w
+        act_icon = make_icon_static(parent, ax, y + iy, icon_w, icon_sz, act_tex)
+    end
+
+    return {
+        bg       = bg,
+        btn_icon = btn_icon,
+        act_icon = act_icon,
+        btn_name = tostring(btn_name or ""),
+        act_name = has_act and tostring(act_name) or nil,
+        btn_tex  = btn_tex,
+        act_tex  = act_tex,
+        x = x, y = y, w = pill_w, h = pill_h,
+        icon_size = icon_sz,
+        icon_w = icon_w,
+        pad_x = pad_x,
+        gap = gap,
+    }
+end
+
+function move_hint_pill(pill, x, y)
+    if type(pill) ~= "table" or not vector2 then return false end
+    x = tonumber(x) or pill.x or 0
+    y = tonumber(y) or pill.y or 0
+    pill.x, pill.y = x, y
+    local pill_w  = tonumber(pill.w) or 24
+    local pill_h  = tonumber(pill.h) or 13
+    local icon_sz = tonumber(pill.icon_size) or 11
+    local icon_w  = tonumber(pill.icon_w) or math.max(9, math.floor(icon_sz * 0.78 + 0.5))
+    local pad_x   = tonumber(pill.pad_x) or 2
+    local has_act = (pill.act_icon ~= nil)
+    local iy      = math.floor((pill_h - icon_sz) * 0.5)
+    local bx      = has_act and (x + pad_x) or (x + math.floor((pill_w - icon_w) * 0.5))
+    if pill.bg and type(pill.bg.SetWndPos) == "function" then
+        pcall(pill.bg.SetWndPos, pill.bg, vector2():set(x, y))
+    end
+    if pill.btn_icon and type(pill.btn_icon.SetWndPos) == "function" then
+        pcall(pill.btn_icon.SetWndPos, pill.btn_icon, vector2():set(bx, y + iy))
+    end
+    if pill.act_icon and type(pill.act_icon.SetWndPos) == "function" then
+        local ax = x + pill_w - pad_x - icon_w
+        pcall(pill.act_icon.SetWndPos, pill.act_icon, vector2():set(ax, y + iy))
+    end
+    return true
+end
+
+function update_hint_pill(pill, btn_name, act_name)
+    if type(pill) ~= "table" then return false end
+    if btn_name ~= nil then pill.btn_name = tostring(btn_name) end
+    if act_name ~= nil then pill.act_name = (act_name ~= "" and tostring(act_name) or nil) end
+    if pill.btn_icon and pill.btn_name ~= "" then
+        local btex = get_button_icon_texture(pill.btn_name)
+        pill.btn_tex = btex
+        if type(pill.btn_icon.InitTexture) == "function" then
+            pcall(pill.btn_icon.InitTexture, pill.btn_icon, btex)
+        end
+    end
+    if pill.act_icon and pill.act_name then
+        local atex = get_action_pictogram_texture(pill.act_name)
+        pill.act_tex = atex
+        if type(pill.act_icon.InitTexture) == "function" then
+            pcall(pill.act_icon.InitTexture, pill.act_icon, atex)
+        end
+    end
+    return true
+end
+
+function show_hint_pill(pill, visible)
+    if type(pill) ~= "table" then return false end
+    local v = SHOW_LEGACY_INVENTORY_ICONS and visible ~= false
+    if pill.bg then pcall(function() pill.bg:Show(v) end) end
+    if pill.btn_icon then pcall(function() pill.btn_icon:Show(v) end) end
+    if pill.act_icon then pcall(function() pill.act_icon:Show(v and pill.act_name ~= nil) end) end
+    return v
+end
+
+local function get_wnd_rect(wnd, def_x, def_y, def_w, def_h)
+    local x, y, w, h = def_x, def_y, def_w, def_h
+    if wnd then
+        if type(wnd.GetWndPos) == "function" then
+            local ok_p, p = pcall(wnd.GetWndPos, wnd)
+            if ok_p and p and type(p.x) == "number" and type(p.y) == "number" and (p.x ~= 0 or p.y ~= 0) then
+                x, y = p.x, p.y
+            end
+        end
+        if type(wnd.GetWidth) == "function" then
+            local ok_w, ww = pcall(wnd.GetWidth, wnd)
+            if ok_w and type(ww) == "number" and ww > 0 then w = ww end
+        end
+        if type(wnd.GetHeight) == "function" then
+            local ok_h, hh = pcall(wnd.GetHeight, wnd)
+            if ok_h and type(hh) == "number" and hh > 0 then h = hh end
+        end
+    end
+    return x, y, w, h
+end
+
+local function compute_category_layout(gui, left, right, center_y)
+    local tabs = {}
+    local total_width = 0
+    for i, bounds in ipairs(CATEGORY_GLYPHS) do
+        local button = gui and gui.sort_btn and gui.sort_btn[i]
+        local _, _, w, h = get_wnd_rect(button, (i - 1) * 23, 0, 23, 29)
+        -- Moving a CUI3tButton moves the artwork, but resizing its Lua window
+        -- only changes the hit box, so use the stock artwork dimensions here.
+        local glyph_w = (bounds[3] - bounds[1]) * w / 66
+        tabs[i] = {
+            artwork_left = bounds[1] * w / 66,
+            artwork_width = glyph_w,
+            y = center_y - (bounds[2] + bounds[4]) * h / (2 * 58),
+            hit_width = w,
+        }
+        total_width = total_width + glyph_w
+    end
+
+    local gap = (right - left - total_width) / (#tabs - 1 + 2 * CATEGORY_END_GAP_RATIO)
+    local x = left + gap * CATEGORY_END_GAP_RATIO
+    for _, tab in ipairs(tabs) do
+        tab.x = x - tab.artwork_left
+        tab.left = x
+        tab.right = x + tab.artwork_width
+        x = tab.right + gap
+    end
+    for i = 1, #tabs - 1 do
+        local tab = tabs[i]
+        tab.hit_width = math.min(tab.hit_width, tabs[i + 1].x - tab.x)
+    end
+    return tabs
+end
+
+function compute_inventory_hint_rects(gui)
+    local equ_x, equ_y, equ_w, equ_h = get_wnd_rect(gui and gui.equ_dialog, 375, 0, 273, 768)
+    local ply_x, ply_y, ply_w, ply_h = get_wnd_rect(gui and gui.player_dialog, 648, 0, 377, 768)
+    local sort_x, sort_y, sort_w, sort_h = get_wnd_rect(gui and gui.sort_dialog, 20, 735, 244, 29)
+    local put_x, put_y, put_w, put_h = get_wnd_rect(gui and gui.player_putall, 10, 736, 140, 24)
+    local wcap_x, wcap_y, wcap_w, wcap_h = get_wnd_rect(gui and gui.player_weight_cap, 200, 742, 57, 16)
+
+    local btn10_right = 230
+    if gui and type(gui.sort_btn) == "table" and gui.sort_btn[10] then
+        local bx, _, bw = get_wnd_rect(gui.sort_btn[10], 207, 0, 23, 29)
+        btn10_right = bx + bw
+    end
+
+    -- Medical sorter tab (default tab 8 at x=161, w=23 in sort_dialog; FG.6k3 RB -> medicine)
+    local med_idx = 8
+    if gp_bridge and type(gp_bridge.inv_find_medical_sort_tab) == "function" then
+        local ok_m, mi = pcall(gp_bridge.inv_find_medical_sort_tab, gui)
+        if ok_m and type(mi) == "number" and mi >= 1 then med_idx = mi end
+    end
+    local rb_w, rb_h = 22, 13
+    local rb_local_y = -11
+
+    local rail_scale_x = equ_w / RAIL.width
+    local rail_scale_y = equ_h / RAIL.height
+    local trigger_w = RAIL.trigger_width * rail_scale_x * (TRIGGER_SCALE or 1.08)
+    local dev = device and device()
+    local scale_x = math.max(1, dev and dev.width or 2560) / 1024
+    local scale_y = math.max(1, dev and dev.height or 1080) / 768
+    local trigger_h = math.min((RAIL.bottom - RAIL.top) * rail_scale_y - 2, trigger_w * scale_x / scale_y * (34 / 40))
+    local rail_center_y = (RAIL.top + RAIL.bottom) * 0.5 * rail_scale_y - sort_y
+    local trigger_y = rail_center_y - trigger_h * 0.5
+    -- INV-REWORK-26: крупный LT/RT не должен налезать на рамку - центр сдвигается внутрь (зазор 3.5 ед.)
+    local inset = math.max(RAIL.trigger_center_inset, (trigger_w * 0.5 + 3.5) / rail_scale_x)
+    local lt_local_x = (RAIL.left + inset) * rail_scale_x - sort_x - trigger_w * 0.5
+    local rt_local_x = (RAIL.right - inset) * rail_scale_x - sort_x - trigger_w * 0.5
+    local tabs = compute_category_layout(gui, lt_local_x + trigger_w, rt_local_x, rail_center_y)
+    local med_tab = tabs[med_idx] or tabs[8]
+    local rb_local_x = (med_tab.left + med_tab.right - rb_w) * 0.5
+
+    -- Keep View on the panel seam, in the row above the category rail.
+    local view_w, view_h = 24, 16
+    local seam_global_x = equ_x + equ_w
+    local view_global_x = seam_global_x - view_w * 0.5
+    local view_global_y = equ_y + sort_y - view_h - 2
+
+    -- B + back arrow in the empty left edge of the weight bar (aligned vertically with weight_caption)
+    local b_w, b_h = 28, 16
+    local weight_gap_left  = put_x + put_w
+    local weight_gap_right = wcap_x
+    local b_local_x = weight_gap_left + math.max(2, math.floor((weight_gap_right - weight_gap_left - b_w) * 0.5))
+    local b_local_y = wcap_y
+
+    -- Temporary A/Y/X/B pictogram strip at selected item gap (y=414..430 in equ_dialog) until FG.6k2 replaces it with cross
+    local strip_w, strip_h = 148, 16
+    local strip_local_x = math.floor((equ_w - strip_w) * 0.5)
+    local strip_local_y = 414
+
+    return {
+        equ  = { x = equ_x, y = equ_y, w = equ_w, h = equ_h },
+        ply  = { x = ply_x, y = ply_y, w = ply_w, h = ply_h },
+        sort = { x = sort_x, y = sort_y, w = sort_w, h = sort_h, btn10_right = btn10_right, tabs = tabs },
+        rail = { left = equ_x + RAIL.left * rail_scale_x, right = equ_x + RAIL.right * rail_scale_x,
+            top = equ_y + RAIL.top * rail_scale_y, bottom = equ_y + RAIL.bottom * rail_scale_y },
+        lt   = {
+            local_x = lt_local_x, local_y = trigger_y, w = trigger_w, h = trigger_h,
+            ux = equ_x + sort_x + lt_local_x, uy = equ_y + sort_y + trigger_y,
+        },
+        rt   = {
+            local_x = rt_local_x, local_y = trigger_y, w = trigger_w, h = trigger_h,
+            ux = equ_x + sort_x + rt_local_x, uy = equ_y + sort_y + trigger_y,
+        },
+        rb_med = {
+            local_x = rb_local_x,
+            local_y = rb_local_y, w = rb_w, h = rb_h,
+            ux = equ_x + sort_x + rb_local_x,
+            uy = equ_y + sort_y + rb_local_y,
+            tab_idx = med_idx,
+        },
+        view = {
+            ux = view_global_x, uy = view_global_y, w = view_w, h = view_h,
+        },
+        b_close = {
+            local_x = b_local_x, local_y = b_local_y, w = b_w, h = b_h,
+            ux = ply_x + b_local_x, uy = ply_y + b_local_y,
+        },
+        item_strip = {
+            local_x = strip_local_x, local_y = strip_local_y, w = strip_w, h = strip_h,
+            ux = equ_x + strip_local_x, uy = equ_y + strip_local_y,
+        },
+    }
+end
+
+local function compute_quick_slot_hint_specs(gui, r)
+    r = r or compute_inventory_hint_rects(gui)
+    local equ_x = (r and r.equ and r.equ.x) or 375
+    local equ_y = (r and r.equ and r.equ.y) or 0
+    local pill_w, pill_h = 24, 13
+    if gp_bridge and type(gp_bridge.inv_get_quick_slot_hint_specs) == "function" then
+        local ok, specs = pcall(gp_bridge.inv_get_quick_slot_hint_specs, gui)
+        if ok and type(specs) == "table" and #specs == 4 then
+            for i = 1, 4 do
+                local qs = specs[i]
+                if type(qs) == "table" then
+                    local cy1 = tonumber(qs.cell_y) or (equ_y + 430)
+                    local cx1 = tonumber(qs.cell_x) or (equ_x + 10 + ({ 11, 73, 136, 199 })[i])
+                    local cw  = tonumber(qs.cell_w) or 52
+                    qs.w  = pill_w
+                    qs.h  = pill_h
+                    qs.ux = cx1 + math.floor((cw - pill_w) * 0.5)
+                    if (tonumber(qs.uy) or 0) < cy1 then
+                        qs.uy = cy1 + 2
+                    end
+                    qs.local_x = qs.ux - equ_x
+                    qs.local_y = qs.uy - equ_y
+                end
+            end
+            return specs
+        end
+    end
+    local acts = { "slot_up", "slot_right", "slot_down", "slot_left" }
+    local def_cell_x = { 11, 73, 136, 199 }
+    local out = {}
+    for i = 1, 4 do
+        local cx1 = equ_x + 10 + def_cell_x[i]
+        local cy1 = equ_y + 430
+        out[i] = {
+            slot_idx = i,
+            btn_name = "LB",
+            act_name = acts[i],
+            ux = cx1 + math.floor((52 - pill_w) * 0.5),
+            uy = cy1 + 2,
+            w = pill_w,
+            h = pill_h,
+            cell_x = cx1,
+            cell_y = cy1,
+            cell_w = 52,
+            cell_h = 52,
+        }
+    end
+    return out
+end
+
+function ensure_inline_hints(gui)
+    if not gui then return nil end
+    if type(gui._gp_inline_hints) == "table" then
+        return gui._gp_inline_hints
+    end
+    if not CUIStatic or not vector2 then return nil end
+
+    local ok, hints = pcall(function()
+        local sort_parent = (gui.sort_dialog and type(gui.sort_dialog.AttachChild) == "function") and gui.sort_dialog or gui
+        local equ_parent  = (gui.equ_dialog and type(gui.equ_dialog.AttachChild) == "function") and gui.equ_dialog or gui
+        local ply_parent  = (gui.player_dialog and type(gui.player_dialog.AttachChild) == "function") and gui.player_dialog or gui
+
+        local r = compute_inventory_hint_rects(gui)
+
+        -- Dot Marks round plates via gp_icons (ICONS-1)
+        local lt_icon = make_icon_static(gui, r.lt.ux, r.lt.uy, r.lt.w, r.lt.h, get_button_icon_texture("LT"))
+        local rt_icon = make_icon_static(gui, r.rt.ux, r.rt.uy, r.rt.w, r.rt.h, get_button_icon_texture("RT"))
+        local trig_base_h = math.min((r.rail.bottom - r.rail.top) - 1, r.lt.h * 1.12)
+        place_scaled_inline_icon(lt_icon, r.lt.ux + r.lt.w * 0.5, r.lt.uy + r.lt.h * 0.5, trig_base_h, "LT")
+        place_scaled_inline_icon(rt_icon, r.rt.ux + r.rt.w * 0.5, r.rt.uy + r.rt.h * 0.5, trig_base_h, "RT")
+        if lt_icon then lt_icon:Enable(false) end
+        if rt_icon then rt_icon:Enable(false) end
+
+        -- 1b. RB + medkit pill above the medical filter tab (FG.6k3 / Variant D)
+        local rb_x = rawequal(sort_parent, gui.sort_dialog) and r.rb_med.local_x or r.rb_med.ux
+        local rb_y = rawequal(sort_parent, gui.sort_dialog) and r.rb_med.local_y or r.rb_med.uy
+        local rb_pill = draw_hint_pill(sort_parent, rb_x, rb_y, "RB", "med", { w = r.rb_med.w, h = r.rb_med.h, icon_size = 12, pad_x = 2, gap = 2 })
+
+        -- 2. View + swap pictogram in the seam above the category rail.
+        local view_pill = draw_hint_pill(gui, r.view.ux, r.view.uy, "View", "swap", { w = r.view.w, h = r.view.h, icon_size = 11, pad_x = 1, gap = 2 })
+
+        -- 3. B + back arrow in the empty left edge of the weight bar + Bottom Hint Bar in player_dialog footer
+        local b_x = rawequal(ply_parent, gui.player_dialog) and r.b_close.local_x or r.b_close.ux
+        local b_y = rawequal(ply_parent, gui.player_dialog) and r.b_close.local_y or r.b_close.uy
+        local b_pill = draw_hint_pill(ply_parent, b_x, b_y, "B", "back", { w = r.b_close.w, h = r.b_close.h, icon_size = 14, pad_x = 2, gap = 2 })
+
+        -- Bottom Hint Bar: A (action), Y (details), X (menu) matching EXACT LT/RT style, size and centerline
+        local base_x = rawequal(ply_parent, gui.player_dialog) and 0 or r.ply.x
+        local base_y = rawequal(ply_parent, gui.player_dialog) and 0 or r.ply.y
+        local bar_x = base_x + 9
+        local bar_y = base_y + 737
+        local bar_w = 192
+        local bar_h = 23
+        local bottom_bar = make_icon_static(ply_parent, bar_x, bar_y, bar_w, bar_h, nil)
+        if bottom_bar and type(bottom_bar.Enable) == "function" then
+            bottom_bar:Enable(false)
+        end
+
+        -- Scaled icons (+8%): trigger_w ~ 15, trigger_h ~ 22.5, center_y = 748.5
+        local dev = device and device()
+        local scale_x = math.max(1, dev and dev.width or 2560) / 1024
+        local scale_y = math.max(1, dev and dev.height or 1080) / 768
+        local u21_9 = scale_x / scale_y
+        local icon_w = 15
+        local icon_h = math.min(23, math.floor(icon_w * u21_9 * (34 / 40) + 0.5))
+
+        local glyph_set = gp_bridge and gp_bridge.get_glyph_set and gp_bridge.get_glyph_set() or "xbox"
+        local _, _, _, init_rev = icon_state_info()
+        local init_glyph_key = tostring(glyph_set) .. "|" .. tostring(init_rev)
+        local a_tex = get_button_icon_texture("A")
+        local y_tex = get_button_icon_texture("Y")
+        local x_tex = get_button_icon_texture("X")
+
+        local bar_parent = bottom_bar or ply_parent
+        -- Align vertical center of icons and text EXACTLY with LT center (748.5):
+        -- bar_y (737) + icon_y (0.25) + icon_h/2 (11.25) = 748.50
+        -- bar_y (737) + text_y (2.0) + visual center (9.5) = 748.50
+        local icon_y = bottom_bar and 0.25 or (bar_y + 0.25)
+        local text_y = bottom_bar and 2.0 or (bar_y + 2.0)
+
+        -- Clean symmetric spacing across available width (text +4%, icons +8%):
+        local a_icon_x = bottom_bar and 8 or (bar_x + 8)
+        local a_text_x = a_icon_x + icon_w + 3
+        local bbar_a_icon = make_icon_static(bar_parent, a_icon_x, icon_y, icon_w, icon_h, a_tex)
+        local bbar_a_text = make_text_static(bar_parent, a_text_x, text_y, 31, icon_h, tr("ui_gp_inv_hint_select", "Take"))
+
+        local y_icon_x = a_text_x + 31 + 9
+        local y_text_x = y_icon_x + icon_w + 3
+        local bbar_y_icon = make_icon_static(bar_parent, y_icon_x, icon_y, icon_w, icon_h, y_tex)
+        local bbar_y_text = make_text_static(bar_parent, y_text_x, text_y, 48, icon_h, tr("ui_gp_inv_hint_desc", "Details"))
+
+        local x_icon_x = y_text_x + 48 + 9
+        local x_text_x = x_icon_x + icon_w + 3
+        local bbar_x_icon = make_icon_static(bar_parent, x_icon_x, icon_y, icon_w, icon_h, x_tex)
+        local bbar_x_text = make_text_static(bar_parent, x_text_x, text_y, 27, icon_h, tr("ui_gp_inv_hint_menu", "Menu"))
+
+        local bbar_cy = icon_y + icon_h * 0.5
+        local bbar_centers = {
+            a = { a_icon_x + icon_w * 0.5, bbar_cy },
+            y = { y_icon_x + icon_w * 0.5, bbar_cy },
+            x = { x_icon_x + icon_w * 0.5, bbar_cy },
+        }
+        place_scaled_inline_icon(bbar_a_icon, bbar_centers.a[1], bbar_centers.a[2], icon_h, "A")
+        place_scaled_inline_icon(bbar_y_icon, bbar_centers.y[1], bbar_centers.y[2], icon_h, "Y")
+        place_scaled_inline_icon(bbar_x_icon, bbar_centers.x[1], bbar_centers.x[2], icon_h, "X")
+
+        if bbar_a_icon and type(bbar_a_icon.Enable) == "function" then bbar_a_icon:Enable(false) end
+        if bbar_y_icon and type(bbar_y_icon.Enable) == "function" then bbar_y_icon:Enable(false) end
+        if bbar_x_icon and type(bbar_x_icon.Enable) == "function" then bbar_x_icon:Enable(false) end
+
+        -- 4. Selected item cross (FG.6k2 Variant C: Y top, X left, B right, A bottom around item cell + LB badge)
+        local sx = r.item_strip.ux
+        local sy = r.item_strip.uy
+        local item_bg = make_icon_static(gui, sx, sy, r.item_strip.w, r.item_strip.h, "ui_gp_hint_pill_wide")
+        if item_bg then pcall(function() item_bg:Show(false) end) end
+        local cx0 = sx + math.floor(r.item_strip.w * 0.5)
+        local cy0 = sy + math.floor(r.item_strip.h * 0.5)
+        local c_pos = compute_item_cross_positions(cx0, cy0, nil)
+        local y_pill  = draw_hint_pill(gui, c_pos.y.x,  c_pos.y.y,  "Y",  "bolt", { w = CROSS_PILL_W, h = CROSS_PILL_H, icon_size = 12, pad_x = 2, gap = 2 })
+        local x_pill  = draw_hint_pill(gui, c_pos.x.x,  c_pos.x.y,  "X",  "list", { w = CROSS_PILL_W, h = CROSS_PILL_H, icon_size = 12, pad_x = 2, gap = 2 })
+        local ib_pill = draw_hint_pill(gui, c_pos.b.x,  c_pos.b.y,  "B",  "back", { w = CROSS_PILL_W, h = CROSS_PILL_H, icon_size = 12, pad_x = 2, gap = 2 })
+        local a_pill  = draw_hint_pill(gui, c_pos.a.x,  c_pos.a.y,  "A",  "hand", { w = CROSS_PILL_W, h = CROSS_PILL_H, icon_size = 12, pad_x = 2, gap = 2 })
+        local lb_pill = draw_hint_pill(gui, c_pos.lb.x, c_pos.lb.y, "LB", nil,    { w = LB_PILL_W,    h = LB_PILL_H,    icon_size = 12, pad_x = 2 })
+
+        -- 5. Quick slots F1..F4 (Variant D: LB + D-Pad Up/Right/Down/Left shown while LB is held)
+        local qspecs = compute_quick_slot_hint_specs(gui, r)
+        local qslot_pills = {}
+        local all_pills = { rb_pill, view_pill, b_pill, a_pill, y_pill, x_pill, ib_pill, lb_pill }
+        for i = 1, 4 do
+            local qs = qspecs[i]
+            local qp = draw_hint_pill(gui, qs.ux, qs.uy, "LB", qs.act_name, { w = qs.w, h = qs.h, icon_size = 12, pad_x = 2, gap = 2 })
+            qslot_pills[i] = qp
+            all_pills[#all_pills + 1] = qp
+        end
+
+        for _, pill in ipairs(all_pills) do
+            show_hint_pill(pill, false)
+        end
+
+        -- Legacy _gp_hint_wnd points to the top Y cross pill background (never at y=744 bottom!)
+        gui._gp_hint_wnd = (y_pill and y_pill.bg) or item_bg
+
+        local h = {
+            rects       = r,
+            rb_pill     = rb_pill,
+            view_pill   = view_pill,
+            b_pill      = b_pill,
+            a_pill      = a_pill,
+            y_pill      = y_pill,
+            x_pill      = x_pill,
+            ib_pill     = ib_pill,
+            lb_pill     = lb_pill,
+            qslot_pills = qslot_pills,
+            qslot_specs = qspecs,
+            cross_pos   = c_pos,
+            cross_shown = false,
+            cross_layer = 1,
+            lt_icon     = lt_icon,
+            rt_icon     = rt_icon,
+            rb_icon     = rb_pill and rb_pill.btn_icon or nil,
+            rb_act      = rb_pill and rb_pill.act_icon or nil,
+            view_icon   = view_pill and view_pill.btn_icon or nil,
+            view_act    = view_pill and view_pill.act_icon or nil,
+            b_icon      = b_pill and b_pill.btn_icon or nil,
+            b_act       = b_pill and b_pill.act_icon or nil,
+            a_icon      = a_pill and a_pill.btn_icon or nil,
+            a_act       = a_pill and a_pill.act_icon or nil,
+            y_icon      = y_pill and y_pill.btn_icon or nil,
+            y_act       = y_pill and y_pill.act_icon or nil,
+            x_icon      = x_pill and x_pill.btn_icon or nil,
+            x_act       = x_pill and x_pill.act_icon or nil,
+            ib_icon     = ib_pill and ib_pill.btn_icon or nil,
+            ib_act      = ib_pill and ib_pill.act_icon or nil,
+            lb_icon     = lb_pill and lb_pill.btn_icon or nil,
+            bottom_bar  = bottom_bar,
+            bbar_a_icon = bbar_a_icon,
+            bbar_a_text = bbar_a_text,
+            bbar_y_icon = bbar_y_icon,
+            bbar_y_text = bbar_y_text,
+            bbar_x_icon = bbar_x_icon,
+            bbar_x_text = bbar_x_text,
+            trigger_glyph_set = init_glyph_key,
+            icon_rev    = init_rev,
+            trig_base_h = trig_base_h,
+            bbar_base_h = icon_h,
+            bbar_centers = bbar_centers,
+            item_strip  = (y_pill and y_pill.bg) or item_bg,
+            pills       = all_pills,
+            widgets     = { item_bg, bottom_bar, lt_icon, rt_icon, bbar_a_icon, bbar_a_text, bbar_y_icon, bbar_y_text, bbar_x_icon, bbar_x_text },
+        }
+        -- 6. Match weight display (caption, current weight, max weight) to icon text style & center line
+        local fnt_w = (GetFontLetterica18Russian and GetFontLetterica18Russian())
+            or (GetFontLetterica16Russian and GetFontLetterica16Russian())
+            or (GetFontSmall and GetFontSmall())
+        local clr_cap = GetARGB and GetARGB(235, 220, 220, 220)
+        local clr_max = GetARGB and GetARGB(200, 180, 180, 180)
+
+        if gui.player_weight_cap then
+            local tc = gui.player_weight_cap.TextControl and gui.player_weight_cap:TextControl()
+            if tc then
+                if fnt_w and type(tc.SetFont) == "function" then pcall(tc.SetFont, tc, fnt_w) end
+                if clr_cap and type(tc.SetTextColor) == "function" then pcall(tc.SetTextColor, tc, clr_cap) end
+            end
+            if fnt_w and type(gui.player_weight_cap.SetFont) == "function" then pcall(gui.player_weight_cap.SetFont, gui.player_weight_cap, fnt_w) end
+            if clr_cap and type(gui.player_weight_cap.SetTextColor) == "function" then pcall(gui.player_weight_cap.SetTextColor, gui.player_weight_cap, clr_cap) end
+            if type(gui.player_weight_cap.SetWndPos) == "function" and vector2 then
+                pcall(gui.player_weight_cap.SetWndPos, gui.player_weight_cap, vector2():set(180, 739.0))
+            end
+            if type(gui.player_weight_cap.SetWndSize) == "function" and vector2 then
+                pcall(gui.player_weight_cap.SetWndSize, gui.player_weight_cap, vector2():set(68, 20))
+            end
+        end
+
+        if gui.player_weight then
+            if fnt_w and type(gui.player_weight.SetFont) == "function" then pcall(gui.player_weight.SetFont, gui.player_weight, fnt_w) end
+            if type(gui.player_weight.SetWndPos) == "function" and vector2 then
+                pcall(gui.player_weight.SetWndPos, gui.player_weight, vector2():set(252, 739.0))
+            end
+            if type(gui.player_weight.SetWndSize) == "function" and vector2 then
+                pcall(gui.player_weight.SetWndSize, gui.player_weight, vector2():set(46, 20))
+            end
+        end
+
+        if gui.player_weight_max then
+            if fnt_w and type(gui.player_weight_max.SetFont) == "function" then pcall(gui.player_weight_max.SetFont, gui.player_weight_max, fnt_w) end
+            if clr_max and type(gui.player_weight_max.SetTextColor) == "function" then pcall(gui.player_weight_max.SetTextColor, gui.player_weight_max, clr_max) end
+            if type(gui.player_weight_max.SetWndPos) == "function" and vector2 then
+                pcall(gui.player_weight_max.SetWndPos, gui.player_weight_max, vector2():set(302, 739.0))
+            end
+            if type(gui.player_weight_max.SetWndSize) == "function" and vector2 then
+                pcall(gui.player_weight_max.SetWndSize, gui.player_weight_max, vector2():set(75, 20))
+            end
+        end
+
+        gui._gp_inline_hints = h
+        return h
+    end)
+
+    if ok and hints then
+        return hints
+    end
+    return nil
+end
+
+function ensure_hint_wnd(gui)
+    local h = ensure_inline_hints(gui)
+    return h and h.item_strip or nil
+end
+
+local function set_wide_category_rail(gui, hints, enabled)
+    local background = gui.equ_background
+    if not background or not hints or (hints.wide_rail == true) == enabled then return end
+    if enabled then
+        background:InitTexture("ui\\ui_gp_inv_equipment_wide_rail_v6_aligned")
+        background:SetTextureRect(Frect():set(0, 0, RAIL.width, RAIL.height))
+        local tabs = hints.rects.sort.tabs
+        hints.native_sort_layout = {}
+        local function place(widget, x, y, width)
+            local pos = widget:GetWndPos()
+            local w, h = widget:GetWidth(), widget:GetHeight()
+            hints.native_sort_layout[#hints.native_sort_layout + 1] = { widget = widget, x = pos.x, y = pos.y, w = w, h = h }
+            widget:SetWndPos(vector2():set(x, y))
+            if width then widget:SetWndSize(vector2():set(width, h)) end
+        end
+        for i, tab in ipairs(tabs) do
+            local button = gui.sort_btn and gui.sort_btn[i]
+            local number = gui.sort_num and gui.sort_num[i]
+            if button then place(button, tab.x, tab.y, tab.hit_width) end
+            if number then place(number, tab.right + 2 - number:GetWidth(), number:GetWndPos().y) end
+        end
+    else
+        background:InitTexture("ui_inGame2_inventory_back")
+        for _, original in ipairs(hints.native_sort_layout or {}) do
+            original.widget:SetWndPos(vector2():set(original.x, original.y))
+            original.widget:SetWndSize(vector2():set(original.w, original.h))
+        end
+        hints.native_sort_layout = nil
+    end
+    hints.wide_rail = enabled
+end
+
+local function detach_or_hide(parent, w)
+    if not w then return false end
+    pcall(function() w:Show(false) end)
+    if parent and type(parent.DetachChild) == "function" then
+        pcall(parent.DetachChild, parent, w)
+    end
+    return true
+end
+
+function destroy_inline_hints(gui)
+    gui = gui or get_gui()
+    if not gui then return false end
+    local sort_parent = (gui.sort_dialog and type(gui.sort_dialog.DetachChild) == "function") and gui.sort_dialog or gui
+    local ply_parent  = (gui.player_dialog and type(gui.player_dialog.DetachChild) == "function") and gui.player_dialog or gui
+    -- Legacy fields can alias widgets already owned by the inline hints table.
+    local detached = {}
+    local function detach_once(parent, widget)
+        if widget and not detached[widget] then
+            detached[widget] = true
+            detach_or_hide(parent, widget)
+        end
+    end
+    local function clear_pill(parent, pill)
+        if type(pill) == "table" then
+            detach_once(parent, pill.bg)
+            detach_once(parent, pill.btn_icon)
+            detach_once(parent, pill.act_icon)
+        end
+    end
+    local h = gui._gp_inline_hints
+    if type(h) == "table" then
+        local footer = mod("ui_gp_inv_footer")
+        if footer and h.pixel_footer then footer.destroy(gui, h) end
+        set_wide_category_rail(gui, h, false)
+        clear_pill(sort_parent, h.rb_pill)
+        clear_pill(gui, h.view_pill)
+        clear_pill(ply_parent, h.b_pill)
+        clear_pill(gui, h.a_pill)
+        clear_pill(gui, h.y_pill)
+        clear_pill(gui, h.x_pill)
+        clear_pill(gui, h.ib_pill)
+        clear_pill(gui, h.lb_pill)
+        if type(h.qslot_pills) == "table" then
+            for i = 1, #h.qslot_pills do
+                clear_pill(gui, h.qslot_pills[i])
+            end
+        end
+        detach_once(ply_parent, h.bottom_bar)
+        if h.bottom_bar then
+            detach_once(h.bottom_bar, h.bbar_a_icon)
+            detach_once(h.bottom_bar, h.bbar_a_text)
+            detach_once(h.bottom_bar, h.bbar_y_icon)
+            detach_once(h.bottom_bar, h.bbar_y_text)
+            detach_once(h.bottom_bar, h.bbar_x_icon)
+            detach_once(h.bottom_bar, h.bbar_x_text)
+        else
+            detach_once(ply_parent, h.bbar_a_icon)
+            detach_once(ply_parent, h.bbar_a_text)
+            detach_once(ply_parent, h.bbar_y_icon)
+            detach_once(ply_parent, h.bbar_y_text)
+            detach_once(ply_parent, h.bbar_x_icon)
+            detach_once(ply_parent, h.bbar_x_text)
+        end
+        if type(h.widgets) == "table" then
+            for _, w in ipairs(h.widgets) do
+                if not rawequal(w, h.bottom_bar) then
+                    detach_once(gui, w)
+                end
+            end
+        end
+        if type(h.selection_frame) == "table" then
+            for _, fw in ipairs(h.selection_frame) do
+                detach_once(gui, fw)
+            end
+        end
+    end
+    if type(gui._gp_quick_slot_pills) == "table" then
+        for i = 1, #gui._gp_quick_slot_pills do
+            local qp = gui._gp_quick_slot_pills[i]
+            if type(qp) == "table" then
+                detach_once(gui, qp.bg)
+                detach_once(gui, qp.btn_icon)
+                detach_once(gui, qp.act_icon)
+            end
+        end
+    end
+    if gui._gp_hint_wnd then
+        detach_once(gui, gui._gp_hint_wnd)
+    end
+    gui._gp_inline_hints = nil
+    gui._gp_hint_wnd = nil
+    gui._gp_quick_slot_pills = nil
+    state.last_hint_ms = -100000
+    state.last_has_item = nil
+    state.last_lb_held = nil
+    return true
+end
+
+function compute_item_cross_positions(cx, cy, bounds)
+    cx = tonumber(cx) or 512
+    cy = tonumber(cy) or 384
+    local b = type(bounds) == "table" and bounds or {}
+    local min_x = tonumber(b.min_x) or 4
+    local min_y = tonumber(b.min_y) or 4
+    local max_x = tonumber(b.max_x) or 1020
+    local max_y = tonumber(b.max_y) or 764
+
+    local half_w = CROSS_DX + math.floor(CROSS_PILL_W * 0.5)
+    local half_h = CROSS_DY + math.floor(CROSS_PILL_H * 0.5)
+
+    local safe_cx = math.max(min_x + half_w, math.min(max_x - half_w, cx))
+    local safe_cy = math.max(min_y + half_h, math.min(max_y - half_h, cy))
+
+    local y_x  = safe_cx - math.floor(CROSS_PILL_W * 0.5)
+    local y_y  = safe_cy - CROSS_DY - math.floor(CROSS_PILL_H * 0.5)
+    local a_x  = safe_cx - math.floor(CROSS_PILL_W * 0.5)
+    local a_y  = safe_cy + CROSS_DY - math.floor(CROSS_PILL_H * 0.5)
+    local x_x  = safe_cx - CROSS_DX - math.floor(CROSS_PILL_W * 0.5)
+    local x_y  = safe_cy - math.floor(CROSS_PILL_H * 0.5)
+    local b_x  = safe_cx + CROSS_DX - math.floor(CROSS_PILL_W * 0.5)
+    local b_y  = safe_cy - math.floor(CROSS_PILL_H * 0.5)
+    local lb_x = math.max(min_x, math.min(max_x - LB_PILL_W, safe_cx + LB_OFFSET_X - math.floor(LB_PILL_W * 0.5)))
+    local lb_y = math.max(min_y, math.min(max_y - LB_PILL_H, safe_cy + LB_OFFSET_Y - math.floor(LB_PILL_H * 0.5)))
+
+    return {
+        cx       = safe_cx,
+        cy       = safe_cy,
+        raw_cx   = cx,
+        raw_cy   = cy,
+        clamped  = (safe_cx ~= cx) or (safe_cy ~= cy),
+        bounds   = { min_x = min_x, min_y = min_y, max_x = max_x, max_y = max_y },
+        y        = { x = y_x,  y = y_y,  w = CROSS_PILL_W, h = CROSS_PILL_H },
+        x        = { x = x_x,  y = x_y,  w = CROSS_PILL_W, h = CROSS_PILL_H },
+        b        = { x = b_x,  y = b_y,  w = CROSS_PILL_W, h = CROSS_PILL_H },
+        a        = { x = a_x,  y = a_y,  w = CROSS_PILL_W, h = CROSS_PILL_H },
+        lb       = { x = lb_x, y = lb_y, w = LB_PILL_W,    h = LB_PILL_H },
+    }
+end
+
+local function is_table_or_userdata(v)
+    local t = type(v)
+    return t == "table" or t == "userdata"
+end
+
+function resolve_item_cross_actions(gui, lb_held)
+    local is_lb = (lb_held == true)
+    if not is_lb then
+        return {
+            layer  = 1,
+            y_act  = "bolt",
+            x_act  = "list",
+            b_act  = "back",
+            a_act  = "hand",
+            show_x = true,
+            lb_tag = false,
+        }
+    end
+    local mode = (is_table_or_userdata(gui) and type(gui.mode) == "string") and gui.mode or "inventory"
+    local x_works_in_lb = (mode == "loot" or mode == "trade")
+    return {
+        layer  = 2,
+        y_act  = "stack",
+        x_act  = "stack",
+        b_act  = "back",
+        a_act  = "eye",
+        show_x = x_works_in_lb,
+        lb_tag = true,
+    }
+end
+
+local function is_lb_modifier_held(gui)
+    if gp_bridge and type(gp_bridge.inv_is_lb_modifier_active) == "function" then
+        local ok, res = pcall(gp_bridge.inv_is_lb_modifier_active)
+        if ok and res == true then return true end
+    end
+    if is_table_or_userdata(gui) and gui.holding_ctrl == true then
+        return true
+    end
+    return false
+end
+
+local function resolve_cell_center_and_bounds(gui, bag, idx, cc, ci)
+    local r = (is_table_or_userdata(gui) and type(gui._gp_inline_hints) == "table" and gui._gp_inline_hints.rects)
+        or compute_inventory_hint_rects(gui)
+    local cx = r.item_strip.ux + math.floor(r.item_strip.w * 0.5)
+    local cy = r.item_strip.uy + math.floor(r.item_strip.h * 0.5)
+
+    if not cc and is_table_or_userdata(gui) and type(gui.CC) == "table" and bag then
+        cc = gui.CC[bag]
+    end
+    if not ci and cc and type(cc.cell) == "table" and idx then
+        ci = cc.cell[idx]
+    end
+
+    local cell_wnd = (is_table_or_userdata(ci) and ci.cell) or ci
+    if cell_wnd then
+        if Frect and type(cell_wnd.GetAbsoluteRect) == "function" then
+            local rect = Frect()
+            local ok_r = pcall(cell_wnd.GetAbsoluteRect, cell_wnd, rect)
+            if ok_r and rect and type(rect.x1) == "number" and type(rect.x2) == "number" and (rect.x2 - rect.x1) > 1 then
+                cx = math.floor((rect.x1 + rect.x2) * 0.5 + 0.5)
+                cy = math.floor((rect.y1 + rect.y2) * 0.5 + 0.5)
+            end
+        elseif type(cell_wnd.GetWndPos) == "function" then
+            local wx, wy, ww, wh = get_wnd_rect(cell_wnd, cx - 25, cy - 25, 50, 50)
+            cx = math.floor(wx + ww * 0.5 + 0.5)
+            cy = math.floor(wy + wh * 0.5 + 0.5)
+        end
+    elseif GetCursorPosition then
+        local ok_p, pos = pcall(GetCursorPosition)
+        if ok_p and pos and type(pos.x) == "number" and type(pos.y) == "number" and (pos.x > 0 or pos.y > 0) then
+            cx = math.floor(pos.x + 0.5)
+            cy = math.floor(pos.y + 0.5)
+        end
+    end
+
+    local min_x, min_y, max_x, max_y = 4, 4, 1020, 764
+    if cc and cc.scroll and Frect and type(cc.scroll.GetAbsoluteRect) == "function" then
+        local srect = Frect()
+        local ok_s = pcall(cc.scroll.GetAbsoluteRect, cc.scroll, srect)
+        if ok_s and srect and type(srect.x1) == "number" and type(srect.x2) == "number"
+            and (srect.x2 - srect.x1) >= 120 and (srect.y2 - srect.y1) >= 80 then
+            min_x = math.max(4, math.floor(srect.x1))
+            min_y = math.max(4, math.floor(srect.y1))
+            max_x = math.min(1020, math.floor(srect.x2))
+            max_y = math.min(764, math.floor(srect.y2))
+        end
+    elseif bag == "actor_bag" or bag == "actor_trade" or bag == "actor_trade_bag" then
+        min_x = math.max(4, r.ply.x + 4)
+        min_y = math.max(4, r.ply.y + 4)
+        max_x = math.min(1020, r.ply.x + r.ply.w - 4)
+        max_y = math.min(764, r.ply.y + r.ply.h - 36)
+    elseif bag == "actor_equ" or bag == "actor_belt" or bag == "actor_quick" then
+        min_x = math.max(4, r.equ.x + 4)
+        min_y = math.max(4, r.equ.y + 4)
+        max_x = math.min(1020, r.equ.x + r.equ.w - 4)
+        max_y = math.min(764, r.equ.y + r.equ.h - 36)
+    end
+
+    return cx, cy, { min_x = min_x, min_y = min_y, max_x = max_x, max_y = max_y }
+end
+
+local function has_focused_inventory_item(gui)
+    if gp_bridge and type(gp_bridge.inv_find_hovered_cell) == "function" then
+        local ok, bag, idx, cc, ci = pcall(gp_bridge.inv_find_hovered_cell, gui)
+        if ok and bag ~= nil and idx ~= nil and idx ~= false then
+            return true, bag, idx, cc, ci
+        end
+    end
+    if gui and type(gui.hover) == "table" and gui.hover.bag and gui.hover.idx and gui.hover.idx ~= false then
+        local bag = gui.hover.bag
+        local idx = gui.hover.idx
+        local cc = type(gui.CC) == "table" and gui.CC[bag] or nil
+        local ci = (cc and type(cc.cell) == "table") and cc.cell[idx] or nil
+        if not cc or type(cc.cell) ~= "table" or (ci and (ci.ID ~= nil or ci.section ~= nil)) then
+            return true, bag, idx, cc, ci
+        end
+    end
+    return false, nil, nil, nil, nil
+end
+
+function update_hint(gui)
+    if not gui then return false end
+    local active = false
+    if gp_bridge and gp_bridge.is_gamepad_active then
+        local ok_a, res_a = pcall(gp_bridge.is_gamepad_active)
+        active = (ok_a and res_a) and true or false
+    end
+    -- Both input modes share the rail and tab geometry. Only prompts depend on input.
+    local h = ensure_inline_hints(gui)
+    if not h or not h.item_strip then return false end
+    set_wide_category_rail(gui, h, true)
+    local wnd = h.item_strip
+    local footer = mod("ui_gp_inv_footer")
+    if not active then
+        if wnd then pcall(function() wnd:Show(false) end) end
+        if type(h) == "table" then
+            h.cross_shown = false
+            if type(h.widgets) == "table" then
+                for _, w in ipairs(h.widgets) do
+                    if w then pcall(function() w:Show(false) end) end
+                end
+            end
+            if type(h.pills) == "table" then
+                for _, p in ipairs(h.pills) do
+                    show_hint_pill(p, false)
+                end
+            end
+        end
+        if footer and footer.update then footer.update(gui, h, false) end
+        return false
+    end
+
+    local has_item, bag, idx, cc, ci = has_focused_inventory_item(gui)
+    local now = clock()
+
+    -- Track cursor movement and cell hover dwell timer (>= 400 ms to show item cross; hide immediately on move)
+    local cur_x, cur_y = nil, nil
+    if GetCursorPosition then
+        local ok_p, pos = pcall(GetCursorPosition)
+        if ok_p and pos and type(pos.x) == "number" and type(pos.y) == "number" then
+            cur_x, cur_y = pos.x, pos.y
+        end
+    end
+    local cursor_moved = false
+    if cur_x ~= nil and cur_y ~= nil then
+        if state.last_cursor_x ~= nil and state.last_cursor_y ~= nil then
+            if math.abs(cur_x - state.last_cursor_x) > CURSOR_MOVE_EPS
+                or math.abs(cur_y - state.last_cursor_y) > CURSOR_MOVE_EPS then
+                cursor_moved = true
+            end
+        end
+        state.last_cursor_x = cur_x
+        state.last_cursor_y = cur_y
+    end
+
+    if not has_item then
+        state.hover_bag = nil
+        state.hover_idx = nil
+        state.hover_since_ms = now
+    elseif state.hover_bag ~= bag or state.hover_idx ~= idx or cursor_moved then
+        state.hover_bag = bag
+        state.hover_idx = idx
+        state.hover_since_ms = now
+    end
+
+    local dwell_elapsed = now - (tonumber(state.hover_since_ms) or now)
+    local show_cross = has_item and (not cursor_moved) and (dwell_elapsed >= ITEM_CROSS_DWELL_MS)
+    local lb_held = is_lb_modifier_held(gui)
+    local acts = resolve_item_cross_actions(gui, lb_held)
+    local _, _, hints_vis, cur_rev = icon_state_info()
+
+    if now - state.last_hint_ms >= HINT_REFRESH_MS
+        or state.last_has_item ~= has_item
+        or state.last_bag ~= bag
+        or state.last_lb_held ~= lb_held
+        or h.cross_layer ~= acts.layer
+        or h.icon_rev ~= cur_rev then
+        state.last_hint_ms = now
+        state.last_has_item = has_item
+        state.last_bag = bag
+        state.last_lb_held = lb_held
+        h.cross_layer = acts.layer
+        h.icon_rev = cur_rev
+
+        if h.bbar_a_text then
+            local a_label = tr("ui_gp_inv_hint_select", "Take")
+            if bag == "actor_equ" then
+                a_label = tr("ui_gp_inv_hint_unequip", "Remove")
+            end
+            set_static_text(h.bbar_a_text, a_label)
+        end
+        if h.bbar_y_text then
+            set_static_text(h.bbar_y_text, tr("ui_gp_inv_hint_desc", "Details"))
+        end
+        if h.bbar_x_text then
+            set_static_text(h.bbar_x_text, tr("ui_gp_inv_hint_menu", "Menu"))
+        end
+        local glyph_set = gp_bridge and gp_bridge.get_glyph_set and gp_bridge.get_glyph_set() or "xbox"
+        -- Keep weight elements styled to match icon text appearance and center line
+        local fnt_w = (GetFontLetterica18Russian and GetFontLetterica18Russian())
+            or (GetFontLetterica16Russian and GetFontLetterica16Russian())
+            or (GetFontSmall and GetFontSmall())
+        local clr_cap = GetARGB and GetARGB(235, 220, 220, 220)
+        local clr_max = GetARGB and GetARGB(200, 180, 180, 180)
+        if gui.player_weight_cap then
+            local tc = gui.player_weight_cap.TextControl and gui.player_weight_cap:TextControl()
+            if tc then
+                if fnt_w and type(tc.SetFont) == "function" then pcall(tc.SetFont, tc, fnt_w) end
+                if clr_cap and type(tc.SetTextColor) == "function" then pcall(tc.SetTextColor, tc, clr_cap) end
+            end
+            if fnt_w and type(gui.player_weight_cap.SetFont) == "function" then pcall(gui.player_weight_cap.SetFont, gui.player_weight_cap, fnt_w) end
+            if clr_cap and type(gui.player_weight_cap.SetTextColor) == "function" then pcall(gui.player_weight_cap.SetTextColor, gui.player_weight_cap, clr_cap) end
+            if type(gui.player_weight_cap.SetWndPos) == "function" and vector2 then
+                pcall(gui.player_weight_cap.SetWndPos, gui.player_weight_cap, vector2():set(180, 739.0))
+            end
+        end
+        if gui.player_weight then
+            if fnt_w and type(gui.player_weight.SetFont) == "function" then pcall(gui.player_weight.SetFont, gui.player_weight, fnt_w) end
+            if type(gui.player_weight.SetWndPos) == "function" and vector2 then
+                pcall(gui.player_weight.SetWndPos, gui.player_weight, vector2():set(252, 739.0))
+            end
+        end
+        if gui.player_weight_max then
+            if fnt_w and type(gui.player_weight_max.SetFont) == "function" then pcall(gui.player_weight_max.SetFont, gui.player_weight_max, fnt_w) end
+            if clr_max and type(gui.player_weight_max.SetTextColor) == "function" then pcall(gui.player_weight_max.SetTextColor, gui.player_weight_max, clr_max) end
+            if type(gui.player_weight_max.SetWndPos) == "function" and vector2 then
+                pcall(gui.player_weight_max.SetWndPos, gui.player_weight_max, vector2():set(302, 739.0))
+            end
+        end
+
+        local glyph_key = tostring(glyph_set) .. "|" .. tostring(cur_rev)
+        if h.trigger_glyph_set ~= glyph_key then
+            if h.lt_icon then h.lt_icon:InitTexture(get_button_icon_texture("LT")) end
+            if h.rt_icon then h.rt_icon:InitTexture(get_button_icon_texture("RT")) end
+            if h.bbar_a_icon then h.bbar_a_icon:InitTexture(get_button_icon_texture("A")) end
+            if h.bbar_y_icon then h.bbar_y_icon:InitTexture(get_button_icon_texture("Y")) end
+            if h.bbar_x_icon then h.bbar_x_icon:InitTexture(get_button_icon_texture("X")) end
+            local r = h.rects
+            if r then
+                local th = h.trig_base_h or r.lt.h
+                place_scaled_inline_icon(h.lt_icon, r.lt.ux + r.lt.w * 0.5, r.lt.uy + r.lt.h * 0.5, th, "LT")
+                place_scaled_inline_icon(h.rt_icon, r.rt.ux + r.rt.w * 0.5, r.rt.uy + r.rt.h * 0.5, th, "RT")
+            end
+            local bc = h.bbar_centers
+            if bc then
+                local bh = h.bbar_base_h or 18
+                place_scaled_inline_icon(h.bbar_a_icon, bc.a[1], bc.a[2], bh, "A")
+                place_scaled_inline_icon(h.bbar_y_icon, bc.y[1], bc.y[2], bh, "Y")
+                place_scaled_inline_icon(h.bbar_x_icon, bc.x[1], bc.x[2], bh, "X")
+            end
+            h.trigger_glyph_set = glyph_key
+        end
+        update_hint_pill(h.rb_pill, "RB", "med")
+        update_hint_pill(h.view_pill, "View", "swap")
+        update_hint_pill(h.b_pill, "B", "back")
+        update_hint_pill(h.y_pill, "Y", acts.y_act)
+        update_hint_pill(h.x_pill, "X", acts.x_act)
+        update_hint_pill(h.ib_pill, "B", acts.b_act)
+        update_hint_pill(h.a_pill, "A", acts.a_act)
+        update_hint_pill(h.lb_pill, "LB", nil)
+        if type(h.qslot_pills) == "table" then
+            local qspecs = compute_quick_slot_hint_specs(gui, h.rects)
+            h.qslot_specs = qspecs
+            for i = 1, 4 do
+                local qp = h.qslot_pills[i]
+                local qs = qspecs[i]
+                if qp and qs then
+                    update_hint_pill(qp, "LB", qs.act_name)
+                    move_hint_pill(qp, qs.ux, qs.uy)
+                end
+            end
+        end
+    end
+
+    if has_item then
+        local cx, cy, bounds = resolve_cell_center_and_bounds(gui, bag, idx, cc, ci)
+        local c_pos = compute_item_cross_positions(cx, cy, bounds)
+        h.cross_pos = c_pos
+        move_hint_pill(h.y_pill,  c_pos.y.x,  c_pos.y.y)
+        move_hint_pill(h.x_pill,  c_pos.x.x,  c_pos.x.y)
+        move_hint_pill(h.ib_pill, c_pos.b.x,  c_pos.b.y)
+        move_hint_pill(h.a_pill,  c_pos.a.x,  c_pos.a.y)
+        move_hint_pill(h.lb_pill, c_pos.lb.x, c_pos.lb.y)
+    end
+
+    local show_cross_vis = hints_vis and show_cross
+    h.cross_shown = SHOW_LEGACY_INVENTORY_ICONS and show_cross_vis
+    if h.lt_icon then h.lt_icon:Show(hints_vis) end
+    if h.rt_icon then h.rt_icon:Show(hints_vis) end
+    show_hint_pill(h.rb_pill, hints_vis)
+    show_hint_pill(h.view_pill, hints_vis)
+    show_hint_pill(h.b_pill, hints_vis)
+    if h.bottom_bar then
+        local putall_shown = false
+        if gui.player_putall and type(gui.player_putall.IsShown) == "function" then
+            local ok_p, ps = pcall(gui.player_putall.IsShown, gui.player_putall)
+            putall_shown = (ok_p and ps == true) or false
+        end
+        local bbar_vis = hints_vis and not putall_shown and gui.mode ~= "trade" and gui.mode ~= "loot" and gui.mode ~= "repair" -- INV-REWORK-21 + W4-TECH-SYS: Л1/Т1/техник в gp_inv_rework
+        pcall(function() h.bottom_bar:Show(bbar_vis) end)
+        if h.bbar_a_icon then pcall(function() h.bbar_a_icon:Show(bbar_vis) end) end
+        if h.bbar_a_text then pcall(function() h.bbar_a_text:Show(bbar_vis) end) end
+        if h.bbar_y_icon then pcall(function() h.bbar_y_icon:Show(bbar_vis) end) end
+        if h.bbar_y_text then pcall(function() h.bbar_y_text:Show(bbar_vis) end) end
+        if h.bbar_x_icon then pcall(function() h.bbar_x_icon:Show(bbar_vis) end) end
+        if h.bbar_x_text then pcall(function() h.bbar_x_text:Show(bbar_vis) end) end
+    end
+    show_hint_pill(h.y_pill, show_cross_vis)
+    show_hint_pill(h.x_pill, show_cross_vis and acts.show_x)
+    show_hint_pill(h.ib_pill, show_cross_vis)
+    show_hint_pill(h.a_pill, show_cross_vis)
+    show_hint_pill(h.lb_pill, show_cross_vis and acts.lb_tag)
+    if type(h.qslot_pills) == "table" then
+        for i = 1, 4 do
+            show_hint_pill(h.qslot_pills[i], hints_vis and lb_held)
+        end
+    end
+    if footer and footer.update then footer.update(gui, h, true, bag) end
+    return true
+end
+
+function on_inventory_update(gui)
+    if gui and type(gui.CC) == "table" and not state.flushing_cc then
+        state.flushing_cc = true
+        for _, cc in pairs(gui.CC) do
+            if cc and cc.deferred then
+                if not cc.sorter and type(cc.ResetSorter) == "function" then
+                    cc.sorterUpdateTime = -1
+                    pcall(cc.ResetSorter, cc)
+                end
+                if cc.sorter and type(cc.Update) == "function" then
+                    cc.sort_step = 500
+                    cc.icon_step = 200
+                    local guard = 0
+                    while cc.sorter and guard < 32 do
+                        guard = guard + 1
+                        local ok = pcall(cc.Update, cc, gui.item_info)
+                        if not ok then break end
+                    end
+                end
+            end
+        end
+        state.flushing_cc = false
+    end
+    return update_hint(gui)
+end
+
+function patch_inventory_update()
+    local uu = mod("utils_ui")
+    local cc_cls = type(uu) == "table" and uu.UICellContainer or nil
+    if cc_cls and type(cc_cls.CalcSortStep) == "function" and cc_cls.CalcSortStep ~= state.wrapped_cc_calc_sort_step then
+        local orig_get_def = cc_cls.GetDeferredEnabled
+        local orig_sort = cc_cls.CalcSortStep
+        local orig_icon = cc_cls.CalcIconStep
+        local orig_reset = cc_cls.ResetSorter
+        state.orig_cc_calc_sort_step = orig_sort
+        state.orig_cc_calc_icon_step = orig_icon
+        state.orig_cc_reset_sorter = orig_reset
+        if type(orig_get_def) == "function" then
+            cc_cls.GetDeferredEnabled = function(self, ...)
+                if is_pause_enabled() or is_paused_by_inventory() then
+                    return false
+                end
+                return orig_get_def(self, ...)
+            end
+        end
+        cc_cls.CalcSortStep = function(self, ...)
+            local step = orig_sort(self, ...)
+            if is_paused_by_inventory() or (tonumber(step) or 0) <= 0 then
+                return math.max(tonumber(step) or 0, 120)
+            end
+            return step
+        end
+        state.wrapped_cc_calc_sort_step = cc_cls.CalcSortStep
+        if type(orig_icon) == "function" then
+            cc_cls.CalcIconStep = function(self, ...)
+                local step = orig_icon(self, ...)
+                if is_paused_by_inventory() or (tonumber(step) or 0) <= 0 then
+                    return math.max(tonumber(step) or 0, 30)
+                end
+                return step
+            end
+        end
+        if type(orig_reset) == "function" then
+            cc_cls.ResetSorter = function(self, ...)
+                if not state.flushing_cc and (is_paused_by_inventory() or is_pause_enabled()) then
+                    self.sorterUpdateTime = -1
+                end
+                return orig_reset(self, ...)
+            end
+        end
+        state.cc_pause_patched = true
+    end
+    local inv = mod("ui_inventory")
+    local cls = type(inv) == "table" and inv.UIInventory or nil
+    if cls and not state.on_kb_patched and type(cls.OnKeyboard) == "function" then
+        local orig_kb = cls.OnKeyboard
+        state.orig_on_kb = orig_kb
+        cls.OnKeyboard = function(self, dik, keyboard_action, ...)
+            local f5 = (DIK_keys and DIK_keys.DIK_F5) or 63
+            local e_press = (ui_events and ui_events.WINDOW_KEY_PRESSED) or 6
+            if dik == f5 and keyboard_action == e_press then
+                if _G.gp_inv_pause and type(_G.gp_inv_pause.gp_live_reload_inventory) == "function" then
+                    pcall(_G.gp_inv_pause.gp_live_reload_inventory, { gui = self })
+                else
+                    pcall(gp_live_reload_inventory, { gui = self })
+                end
+                return true
+            end
+            return orig_kb(self, dik, keyboard_action, ...)
+        end
+        state.on_kb_patched = true
+    end
+    if state.update_patched then return false end
+    if not cls then return false end
+    local orig = cls.Update
+    if type(orig) ~= "function" then return false end
+    state.orig_update = orig
+    cls.Update = function(self, ...)
+        orig(self, ...)
+        if _G.gp_inv_pause and type(_G.gp_inv_pause.on_inventory_update) == "function" then
+            pcall(_G.gp_inv_pause.on_inventory_update, self)
+        else
+            pcall(on_inventory_update, self)
+        end
+    end
+    state.update_patched = true
+    return true
+end
+
+local function reload_script_module_from_disk(mod_name, file_name)
+    local path = nil
+    if getFS then
+        local ok_fs, p = pcall(function() return getFS():update_path("$game_scripts$", file_name) end)
+        if ok_fs and type(p) == "string" and p ~= "" then
+            path = p
+        end
+    end
+    if not path or path == file_name then
+        path = "D:\\GAMMA-Gamepad-Lab\\build\\mod\\gamedata\\scripts\\" .. tostring(file_name)
+    end
+    local chunk = nil
+    if setfenv and loadfile then
+        local ok_lf, fn = pcall(loadfile, path)
+        if ok_lf and type(fn) == "function" then
+            chunk = fn
+        end
+    end
+    if not chunk then
+        return false
+    end
+    local target_env = type(_G[mod_name]) == "table" and _G[mod_name] or {}
+    target_env._G = _G
+    target_env.this = target_env
+    if not getmetatable(target_env) then
+        setmetatable(target_env, { __index = _G })
+    end
+    _G[mod_name] = target_env
+    pcall(setfenv, chunk, target_env)
+    local ok_exec = pcall(chunk)
+    return ok_exec == true
+end
+
+function gp_live_reload_inventory(opts)
+    opts = type(opts) == "table" and opts or {}
+    local gui = opts.gui or get_gui()
+    destroy_inline_hints(gui)
+
+    -- Discover newly copied DDS files before any UI requests them by name.
+    if getFS then
+        pcall(function()
+            local fs = getFS()
+            fs:rescan_path("$game_textures$")
+            fs:rescan_path("$game_scripts$")
+            fs:rescan_pathes()
+        end)
+    end
+
+    if get_console then
+        local ok_c, con = pcall(get_console)
+        if ok_c and con and type(con.execute) == "function" then
+            pcall(con.execute, con, "flush_textures")
+        end
+    end
+
+    local reloaded_bridge = false
+    local reloaded_inv = false
+    if opts.skip_dofile ~= true then
+        reloaded_bridge = reload_script_module_from_disk("gp_bridge", "gp_bridge.script")
+        reload_script_module_from_disk("ui_gp_inv_footer", "ui_gp_inv_footer.script")
+        reloaded_inv = reload_script_module_from_disk("gp_inv_pause", "gp_inv_pause.script")
+    end
+
+    local active_ip = (_G and type(_G.gp_inv_pause) == "table") and _G.gp_inv_pause or this
+    if active_ip and type(active_ip.install_clock_shim) == "function" then
+        pcall(active_ip.install_clock_shim)
+    end
+    if active_ip and type(active_ip.patch_inventory_update) == "function" then
+        pcall(active_ip.patch_inventory_update)
+    end
+
+    if gui then
+        if active_ip and type(active_ip.ensure_inline_hints) == "function" then
+            pcall(active_ip.ensure_inline_hints, gui)
+        end
+        if active_ip and type(active_ip.update_hint) == "function" then
+            pcall(active_ip.update_hint, gui)
+        end
+    end
+
+    state.live_reload_count = (tonumber(state.live_reload_count) or 0) + 1
+    local status = string.format("ok:live_reload=%d;bridge=%s;inv=%s;gui=%s",
+        state.live_reload_count,
+        reloaded_bridge and "1" or "0",
+        reloaded_inv and "1" or "0",
+        gui and "1" or "0")
+    state.last_reload_status = status
+    if active_ip and type(active_ip.get_state) == "function" then
+        local st = active_ip.get_state()
+        if type(st) == "table" then
+            st.live_reload_count = state.live_reload_count
+            st.last_reload_status = status
+        end
+    end
+    if printf then
+        pcall(printf, "[gp_inv_pause] %s", status)
+    end
+    return status
+end
+
+function on_key_press(key)
+    local f5 = (DIK_keys and DIK_keys.DIK_F5) or 63
+    if key == f5 then
+        local gui = get_gui()
+        if gui_shown(gui) then
+            return gp_live_reload_inventory({ gui = gui })
+        end
+    end
+    return false
+end
+
+if _G then
+    _G.gp_live_reload_inventory = gp_live_reload_inventory
+end
+
+--===========================================================================
+-- Self-test (console: lua gp_inv_pause.selftest())
+--===========================================================================
+
+function selftest()
+    local res = {}
+    local function check(name, cond)
+        res[#res + 1] = string.format("%s:%s", name, cond and "PASS" or "FAIL")
+        return cond
+    end
+    local all = true
+    install_clock_shim()
+    all = check("shim_ui_inventory", mod("ui_inventory") ~= nil and ui_inventory.time_global == clock) and all
+    all = check("shim_utils_ui", mod("utils_ui") ~= nil and utils_ui.get_time == clock) and all
+    local t0 = clock()
+    all = check("clock_monotonic", clock() >= t0) and all
+    all = check("mode_valid", VALID_MODES[get_inventory_mode()] == true) and all
+    all = check("hint_text", build_hint_text() ~= "") and all
+    all = check("inline_item_hint_text", build_item_action_hint_text(true) ~= "" and build_item_action_hint_text(false) ~= "") and all
+    all = check("icon_textures", get_button_icon_texture("LT") ~= "" and get_button_icon_texture("View") ~= "" and get_button_icon_texture("A") ~= "") and all
+    all = check("action_pictograms", get_action_pictogram_texture("swap") == "ui_gp_act_swap" and get_action_pictogram_texture("back") == "ui_gp_act_back" and get_action_pictogram_texture("hand") == "ui_gp_act_hand") and all
+    local r = compute_inventory_hint_rects(nil)
+    all = check("hint_rects_valid", type(r) == "table" and r.view.ux < 648 and (r.view.ux + r.view.w) > 648 and r.b_close.ux >= 798 and (r.b_close.ux + r.b_close.w) <= 848) and all
+    local cp_edge = compute_item_cross_positions(5, 5, { min_x = 10, min_y = 10, max_x = 400, max_y = 400 })
+    local l1 = resolve_item_cross_actions(nil, false)
+    local l2 = resolve_item_cross_actions({ mode = "loot" }, true)
+    all = check("item_cross_clamp_and_layers", cp_edge.clamped == true and cp_edge.x.x >= 10 and cp_edge.y.y >= 10 and l1.y_act == "bolt" and l2.y_act == "stack" and l2.a_act == "eye" and l2.show_x == true) and all
+    local gui = get_gui()
+    if gui_shown(gui) then
+        all = check("token_matches_option", (state.token_id ~= 0) == is_pause_enabled()) and all
+    end
+    local line = string.format("[gp_inv_pause] selftest %s | %s", all and "PASS" or "FAIL", table.concat(res, " "))
+    printf("%s", line)
+    return all, line
+end
+
+--===========================================================================
+-- Registration
+--===========================================================================
+
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+
+function on_game_start()
+    if _G.gp_compat and _G.gp_compat.is_engine_compatible and not _G.gp_compat.is_engine_compatible() then return end
+    install_options()
+    install_clock_shim()
+    patch_inventory_update()
+    RegisterScriptCallback("GUI_on_show", on_gui_show)
+    RegisterScriptCallback("GUI_on_hide", on_gui_hide)
+    RegisterScriptCallback("on_key_press", on_key_press)
+    RegisterScriptCallback("actor_on_net_destroy", on_session_end)
+    RegisterScriptCallback("on_before_level_changing", on_session_end)
+end

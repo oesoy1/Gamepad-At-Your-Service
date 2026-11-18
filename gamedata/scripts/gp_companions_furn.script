@@ -1,0 +1,2179 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- gp_companions_furn.script — W4-COMPANIONS-FURN (G6.2, WIN-CONCEPT, D64):
+-- Управление с геймпада для окон напарников и базовых бытовых окон убежища:
+--   1. UICompanionInv (ui_companion_inv.script — чистая Anomaly PORT-A и G.A.M.M.A. PORT-G):
+--      тип «две панели» (§4.4): LB — напарник, RB — игрок, View — смена панели, A — передать предмет,
+--      удержание X (0,3 + 0,7 с, В4) — «Забрать всё» / «Отдать всё», Y — скрыть/показать описание,
+--      RS — плавная прокрутка списка, B — закрыть.
+--   2. addonCompanionsContextMenu (ui_addon_companion_quick_menu.script — Companions Quick Menu + Voiced Actor):
+--      тип «быстрое меню приказов» (§4.1, В11, В32): неинтрузивная обёртка без правок мода
+--      (оригинал не вызывает Register_UI и SetWindowName), выбор крестовиной/LS без переноса через край (В11),
+--      A — отдать приказ с родной озвучкой, B — закрыть.
+--   3. UIWheelCompanion (idiots_ui.script — 450- Useful Idiots):
+--      тактическая панель отряда (В32, В4): LS продолжает ходьбу (AllowMovement), крестовина шагает по
+--      приказам и заголовку, LB/RB (и LT/RT) переключают вкладки напарников (All / 1..10),
+--      View прыгает между строкой утилит и сеткой приказов, A выполняет приказ (на reset — удержание 0,3 + 0,7 с),
+--      X ставит путевую точку (или удерживает reset), Y открывает инвентарь напарника, B закрывает.
+--   4. UIFurnitureLight (ui_furniture_light.script — лампа / керосинка убежища):
+--      тип «малое полевое окно» (§4.6, В4): обход ловушки Register_UI("UIFurnitureLight", "ui_sleep_dialog"),
+--      A — вкл/выкл, Y — долить топливо, удержание X (0,3 + 0,7 с) — забрать в рюкзак, B — закрыть.
+--   5. UIFurnitureRadio (placeable_radio.script — радио убежища):
+--      тип «малое полевое окно» (§4.6, В4, В35): перехват локального SINGLETON, выбор радиостанции по A
+--      на строке выпадающего списка list_channel, громкость — крестовина влево-вправо (и LB/RB),
+--      Y — пуск/стоп, удержание X (0,3 + 0,7 с) — забрать в рюкзак, B — свернуть список / закрыть окно.
+--
+-- Все значки кнопок выдаются через gp_icons + gp_hint_align (LINE = "cap") и мгновенно скрываются при вводе с мыши.
+-- В чистой Anomaly (PORT-A), где нет аддонов мебели и Useful Idiots, соответствующие хуки тихо спят (P23).
+
+ENABLED = true
+HOLD_PAUSE_MS = 300
+HOLD_FILL_MS = 700
+LIST_SCROLL_SPEED = 520
+PENDING_RECOVER_MS = 600
+DIM_ALPHA = 110
+CIRCLE_K = 1.5
+STRIP_ICON_H = 18
+STRIP_GAP_PX = 8
+STRIP_ITEM_GAP_PX = 26
+
+local DIR_UP = 1
+local DIR_DOWN = 2
+local DIR_LEFT = 3
+local DIR_RIGHT = 4
+
+local QUICK_MENU_ORDER = {
+    "btn_lootCorpses_ignoreCorpses",
+    "btn_ignoreCombat_ignoreCombatButHelpActor",
+    "btn_aggressive_ignoreCombatButHelpActor",
+    "btn_stealth_stopStealth",
+    "btn_move_wait",
+    "btn_far_close",
+}
+
+local LIGHT_BUTTONS = {
+    { field = "btn_turn_on", glyph = "A", fn = "ToggleLight", id = "light:turn_on" },
+    { field = "btn_add_fuel", glyph = "Y", fn = "Refuel", id = "light:refuel" },
+    { field = "btn_pickup", glyph = "X", fn = "Pickup", id = "light:pickup", hold = true },
+    { field = "btn_close", glyph = "B", fn = "Close", id = "light:close" },
+}
+
+local RADIO_BUTTONS = {
+    { field = "btn_radio_start", glyph = "Y", fn = "On_Radio_Start", id = "radio:start" },
+    { field = "btn_radio_stop", glyph = nil, fn = "On_Radio_Stop", id = "radio:stop" },
+    { field = "btn_radio_v_down", glyph = "dpleft", fn = "On_Radio_Volume_Down", id = "radio:v_down" },
+    { field = "btn_radio_v_up", glyph = "dpright", fn = "On_Radio_Volume_Up", id = "radio:v_up" },
+    { field = "btn_pickup", glyph = "X", fn = "Pickup", id = "radio:pickup", hold = true },
+    { field = "btn_close", glyph = "B", fn = "Close", id = "radio:close" },
+}
+
+local LABELS_RU = {
+    transfer = "Передать",
+    take_all = "Забрать всё",
+    give_all = "Отдать всё",
+    desc = "Описание",
+    panel = "Панель",
+    close = "Закрыть",
+    order = "Приказ",
+    squad = "Отряд",
+    inv = "Вещи",
+    station = "Станция",
+    volume = "Громкость",
+    back = "Назад",
+}
+
+local LABELS_EN = {
+    transfer = "Transfer",
+    take_all = "Take all",
+    give_all = "Give all",
+    desc = "Details",
+    panel = "Panel",
+    close = "Close",
+    order = "Order",
+    squad = "Squad",
+    inv = "Inventory",
+    station = "Station",
+    volume = "Volume",
+    back = "Back",
+}
+
+state = {
+    queue = {},
+    hold = nil,
+    denies = 0,
+    desc_hidden = false,
+    -- UICompanionInv
+    comp_gui = nil,
+    comp_panel = "npc",
+    comp_mem = { npc = nil, player = nil },
+    comp_cur_id = nil,
+    comp_pending = nil,
+    comp_scroll_acc = { npc = nil, player = nil },
+    -- addonCompanionsContextMenu
+    quick_gui = nil,
+    quick_cur_id = nil,
+    -- UIWheelCompanion
+    wheel_gui = nil,
+    wheel_cur_id = nil,
+    wheel_last_grid_id = nil,
+    wheel_radio_playing = false,
+    -- UIFurnitureLight
+    light_gui = nil,
+    light_cur_id = nil,
+    -- UIFurnitureRadio
+    radio_gui = nil,
+    radio_cur_id = nil,
+    radio_playing = true,
+    radio_scroll_acc = nil,
+}
+
+local XML_CACHE = nil
+
+-- ---------------------------------------------------------------------------
+-- 1. Безопасные базовые примитивы UI и метрики значков (gp_icons + gp_hint_align)
+-- ---------------------------------------------------------------------------
+
+function now_ms()
+    local d = device and device()
+    if d and d.time_continual then
+        local ok, t = pcall(d.time_continual, d)
+        if ok and tonumber(t) then return tonumber(t) end
+    end
+    if time_continual then
+        local ok, t = pcall(time_continual)
+        if ok and tonumber(t) then return tonumber(t) end
+    end
+    return 0
+end
+
+function shown(w)
+    if rawequal(w, nil) or type(w.IsShown) ~= "function" then return false end
+    local ok, res = pcall(w.IsShown, w)
+    return ok and res == true
+end
+
+function enabled(w)
+    if rawequal(w, nil) then return false end
+    if type(w.IsEnabled) ~= "function" then return true end
+    local ok, res = pcall(w.IsEnabled, w)
+    return ok and res == true
+end
+
+function set_wnd_name(w, name)
+    if not rawequal(w, nil) and type(w.SetWindowName) == "function" then
+        pcall(w.SetWindowName, w, name)
+    end
+end
+
+function abs_rect(w)
+    if rawequal(w, nil) then return nil end
+    if Frect and type(w.GetAbsoluteRect) == "function" then
+        local r = Frect()
+        local ok = pcall(w.GetAbsoluteRect, w, r)
+        if ok and r and r.x1 and r.x2 and (r.x2 - r.x1) > 1 and (r.y2 - r.y1) > 1 then
+            return { x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2 }
+        end
+    end
+    if type(w.GetWndPos) == "function" and type(w.GetWidth) == "function" and type(w.GetHeight) == "function" then
+        local ok_p, p = pcall(w.GetWndPos, w)
+        local ok_w, ww = pcall(w.GetWidth, w)
+        local ok_h, hh = pcall(w.GetHeight, w)
+        if ok_p and ok_w and ok_h and p and ww and hh and ww > 1 and hh > 1 then
+            return { x1 = p.x, y1 = p.y, x2 = p.x + ww, y2 = p.y + hh }
+        end
+    end
+    return nil
+end
+
+function center_of(r)
+    return (r.x1 + r.x2) * 0.5, (r.y1 + r.y2) * 0.5
+end
+
+function contains_pt(r, x, y)
+    return r ~= nil and x >= r.x1 and x <= r.x2 and y >= r.y1 and y <= r.y2
+end
+
+function inside_view(r, v)
+    if not v then return true end
+    return r.y1 >= v.y1 - 2 and r.y2 <= v.y2 + 2
+end
+
+function cursor_xy()
+    if GetCursorPosition then
+        local ok, p = pcall(GetCursorPosition)
+        if ok and p then return tonumber(p.x) or 0, tonumber(p.y) or 0 end
+    end
+    return 512, 384
+end
+
+function move_cursor_to(x, y, dlg)
+    if SetCursorPosition and vector2 then
+        pcall(function() SetCursorPosition(vector2():set(x, y)) end)
+    end
+    if not rawequal(dlg, nil) and type(dlg.OnMouseAction) == "function" and ui_events and ui_events.WINDOW_MOUSE_MOVE then
+        pcall(dlg.OnMouseAction, dlg, x, y, ui_events.WINDOW_MOUSE_MOVE)
+    end
+end
+
+function is_gamepad()
+    if not ENABLED then return false end
+    local b = rawget(_G, "gp_bridge")
+    if type(b) == "table" and type(b.is_gamepad_active) == "function" then
+        local ok, res = pcall(b.is_gamepad_active)
+        if ok then return res == true end
+    end
+    if game and type(game.is_gamepad_active_source) == "function" then
+        local ok, res = pcall(game.is_gamepad_active_source)
+        if ok then return res == true end
+    end
+    return false
+end
+
+function hints_allowed()
+    if not is_gamepad() then return false end
+    local ic = _G.gp_icons
+    if type(ic) == "table" and type(ic.hints_visible) == "function" then
+        local ok, vis = pcall(ic.hints_visible, "menu")
+        if ok then return vis == true end
+    end
+    return true
+end
+
+function is_top_dialog(name, wnd)
+    if rawequal(wnd, nil) or not shown(wnd) then return false end
+    if game and type(game.gamepad_is_top_dialog) == "function" then
+        local ok, top = pcall(game.gamepad_is_top_dialog, wnd)
+        if ok then return top == true end
+    end
+    local st = rawget(_G, "_UI_stack")
+    if type(st) == "table" and #st > 0 then
+        return st[#st] == name
+    end
+    return true
+end
+
+function deny()
+    state.denies = state.denies + 1
+    local rw = rawget(_G, "gp_inv_rework")
+    if type(rw) == "table" and type(rw.deny) == "function" then
+        pcall(rw.deny)
+    elseif game and type(game.gamepad_inv_focus_deny) == "function" then
+        pcall(game.gamepad_inv_focus_deny)
+    end
+    return "used"
+end
+
+function defer(fn)
+    state.queue[#state.queue + 1] = fn
+    return "used"
+end
+
+function drain_queue()
+    if #state.queue == 0 then return end
+    local batch = state.queue
+    state.queue = {}
+    for i = 1, #batch do
+        pcall(batch[i])
+    end
+end
+
+function is_russian()
+    local s = game and game.translate_string and game.translate_string("ui_total_weight") or ""
+    return type(s) == "string" and s:find("[\192-\255]") ~= nil
+end
+
+function loc(key)
+    local tbl = is_russian() and LABELS_RU or LABELS_EN
+    return tbl[key] or key
+end
+
+function xmlh()
+    if not XML_CACHE and CScriptXmlInit then
+        local x = CScriptXmlInit()
+        local ok = pcall(x.ParseFile, x, "ui_gp_workshop.xml")
+        if ok then XML_CACHE = x end
+    end
+    return XML_CACHE
+end
+
+function screen_wh()
+    local al = rawget(_G, "gp_hint_align")
+    if type(al) == "table" and type(al.screen) == "function" then
+        return al.screen()
+    end
+    local d = device and device()
+    local w = math.max(1, d and tonumber(d.width) or 1920)
+    local h = math.max(1, d and tonumber(d.height) or 1080)
+    return w, h
+end
+
+function ui_px_w(px)
+    local al = rawget(_G, "gp_hint_align")
+    if type(al) == "table" and type(al.px_w) == "function" then return al.px_w(px) end
+    local w = screen_wh()
+    return px * 1024 / w
+end
+
+function ui_px_h(px)
+    local al = rawget(_G, "gp_hint_align")
+    if type(al) == "table" and type(al.px_h) == "function" then return al.px_h(px) end
+    local _, h = screen_wh()
+    return px * 768 / h
+end
+
+function ui_snap_x(x)
+    local al = rawget(_G, "gp_hint_align")
+    if type(al) == "table" and type(al.snap_x) == "function" then return al.snap_x(x) end
+    return x
+end
+
+function ui_snap_y(y)
+    local al = rawget(_G, "gp_hint_align")
+    if type(al) == "table" and type(al.snap_y) == "function" then return al.snap_y(y) end
+    return y
+end
+
+function ui_label_y(cy, box_h, font)
+    local al = rawget(_G, "gp_hint_align")
+    if type(al) == "table" and type(al.label_y) == "function" then
+        return al.label_y(cy, box_h, font)
+    end
+    return cy - box_h * 0.5
+end
+
+function ui_cap_px(font)
+    local al = rawget(_G, "gp_hint_align")
+    if type(al) == "table" and type(al.cap_px) == "function" then
+        return al.cap_px(font)
+    end
+    return 14
+end
+
+function icon_spec(button)
+    local ic = _G.gp_icons
+    local tex = "ui_gp_white_xbox_south"
+    local vis_w, vis_h, tex_w, tex_h = 22, 22, 28, 28
+    local scale = 1.0
+    if type(ic) == "table" then
+        if type(ic.tex) == "function" then tex = ic.tex(button, "round") end
+        if type(ic.dims) == "function" then vis_w, vis_h, tex_w, tex_h = ic.dims(button, "round") end
+        if type(ic.scale_k) == "function" then scale = ic.scale_k() end
+    end
+    return tex, vis_w, vis_h, tex_w, tex_h, scale
+end
+
+-- Рисует значок gp_icons с сохранением пропорций клетки атласа на 16:9 и 21:9 (S2, S4, S5-S7)
+function place_gp_icon(st, button, x, cy, base_vis_px, alpha)
+    local tex, _, vis_h, tex_w, tex_h, scale = icon_spec(button)
+    local cell_h_px = math.max(8, math.floor(base_vis_px * (tex_h / math.max(1, vis_h)) * scale + 0.5))
+    local cell_w_px = math.max(8, math.floor(cell_h_px * (tex_w / math.max(1, tex_h)) + 0.5))
+    local iw, ih = ui_px_w(cell_w_px), ui_px_h(cell_h_px)
+    local ix, iy = ui_snap_x(x), ui_snap_y(cy - ih * 0.5)
+    if st._gpcf_tex ~= tex then
+        st:InitTexture(tex)
+        st._gpcf_tex = tex
+    end
+    st:SetWndPos(vector2():set(ix, iy))
+    st:SetWndSize(vector2():set(iw, ih))
+    if GetARGB and type(st.SetTextureColor) == "function" then
+        st:SetTextureColor(GetARGB(alpha or 255, 255, 255, 255))
+    end
+    st:Show(true)
+    return iw, ih
+end
+
+function ring_suffix_for(w)
+    local r = w and shown(w) and abs_rect(w) or nil
+    if not r then return "" end
+    return string.format(":%.1f,%.1f,%.1f,%.1f", r.x1, r.y1, r.x2, r.y2)
+end
+
+function hold_cmd(icon_or_btn)
+    return string.format("hold:%d:%d", HOLD_PAUSE_MS, HOLD_FILL_MS) .. ring_suffix_for(icon_or_btn)
+end
+
+function format_hit(t)
+    local cx, cy = center_of(t.r)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s",
+        cx, cy, t.r.x2 - t.r.x1, t.r.y2 - t.r.y1, t.kind or "btn")
+end
+
+function format_snap(t)
+    local cx, cy = center_of(t.r)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, t.kind or "btn")
+end
+
+function format_stay(x, y)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=none", x, y)
+end
+
+function find_by_id(list, id)
+    if not id then return nil end
+    for i = 1, #list do
+        if list[i].id == id then return list[i], i end
+    end
+    return nil, nil
+end
+
+function nearest_target(list, x, y, only_vis)
+    local best, best_d = nil, math.huge
+    for i = 1, #list do
+        local t = list[i]
+        if not only_vis or t.vis ~= false then
+            if contains_pt(t.r, x, y) then
+                return t, i
+            end
+            local cx, cy = center_of(t.r)
+            local d = (cx - x) ^ 2 + (cy - y) ^ 2
+            if d < best_d then best, best_d = t, i end
+        end
+    end
+    return best
+end
+
+-- Прокрутка CUIScrollView так, чтобы целевой прямоугольник целиком вошёл в видимую область (P6)
+function ensure_sv_visible(sv, target_w)
+    if rawequal(sv, nil) or rawequal(target_w, nil) then return end
+    if type(sv.GetCurrentScrollPos) ~= "function" or type(sv.SetScrollPos) ~= "function" then return end
+    local vr = abs_rect(sv)
+    local tr = abs_rect(target_w)
+    if not vr or not tr then return end
+    local ok_c, cur = pcall(sv.GetCurrentScrollPos, sv)
+    if not ok_c or not tonumber(cur) then return end
+    cur = tonumber(cur)
+    local delta = 0
+    if tr.y1 < vr.y1 then
+        delta = tr.y1 - vr.y1 - 4
+    elseif tr.y2 > vr.y2 then
+        delta = tr.y2 - vr.y2 + 4
+    end
+    if delta ~= 0 then
+        local ok_n, mn = pcall(sv.GetMinScrollPos, sv)
+        local ok_x, mx = pcall(sv.GetMaxScrollPos, sv)
+        mn = ok_n and tonumber(mn) or 0
+        mx = ok_x and tonumber(mx) or (cur + math.abs(delta))
+        local next_pos = math.max(mn, math.min(mx, math.floor(cur + delta + 0.5)))
+        pcall(sv.SetScrollPos, sv, next_pos)
+    end
+end
+
+function scroll_sv_analog(sv, acc_tbl, acc_key, y, dt)
+    if rawequal(sv, nil) or type(sv.GetCurrentScrollPos) ~= "function" or type(sv.SetScrollPos) ~= "function" then
+        return false
+    end
+    local ok_c, cur = pcall(sv.GetCurrentScrollPos, sv)
+    cur = ok_c and tonumber(cur) or nil
+    if not cur then return false end
+    local acc = acc_tbl[acc_key]
+    if not acc or math.floor(acc + 0.5) ~= cur then acc = cur end
+    local ok_n, mn = pcall(sv.GetMinScrollPos, sv)
+    local ok_x, mx = pcall(sv.GetMaxScrollPos, sv)
+    mn = ok_n and tonumber(mn) or 0
+    mx = ok_x and tonumber(mx) or cur
+    acc = math.max(mn, math.min(mx, acc + (tonumber(y) or 0) * LIST_SCROLL_SPEED * (tonumber(dt) or 0) / 1000))
+    acc_tbl[acc_key] = acc
+    local ip = math.floor(acc + 0.5)
+    if ip ~= cur then pcall(sv.SetScrollPos, sv, ip) end
+    return true
+end
+
+-- Отрисовка кнопок полевого окна со значком gp_icons слева от текста и возвратом родной подписи на мыши (P2, P11)
+function paint_buttons_with_icons(host, key_tag, parent, specs, show_icons)
+    local xml = xmlh()
+    if not xml or rawequal(parent, nil) then return end
+    host[key_tag] = host[key_tag] or {}
+    local cache = host[key_tag]
+    local font = "letterica16"
+    local vis_px = math.max(10, math.floor(CIRCLE_K * ui_cap_px(font) + 0.5))
+    local gap_ui = ui_px_w(math.max(6, ui_cap_px(font) * 0.6))
+    for i = 1, #specs do
+        local sp = specs[i]
+        local btn = host[sp.field]
+        local e = cache[sp.field]
+        if not rawequal(btn, nil) and shown(btn) then
+            local tc = type(btn.TextControl) == "function" and btn:TextControl() or nil
+            if not e and tc then
+                e = {
+                    icon = xml:InitStatic("icon", parent),
+                    label = xml:InitTextWnd("measure16", parent),
+                    orig_text = tc:GetText() or "",
+                }
+                e.icon:Enable(false)
+                e.label:Enable(false)
+                cache[sp.field] = e
+            end
+            if e and tc then
+                local cur_txt = tc:GetText()
+                if cur_txt and cur_txt ~= "" then
+                    e.orig_text = cur_txt
+                end
+                if show_icons then
+                    tc:SetText("")
+                    local p = btn:GetWndPos()
+                    local bw, bh = btn:GetWidth(), btn:GetHeight()
+                    local cy = p.y + bh * 0.5
+                    local pad_x = ui_px_w(8)
+                    local act = enabled(btn)
+                    local lx = p.x + pad_x
+                    if sp.glyph then
+                        local iw = place_gp_icon(e.icon, sp.glyph, lx, cy, vis_px, act and 255 or DIM_ALPHA)
+                        lx = lx + iw + gap_ui
+                    else
+                        e.icon:Show(false)
+                    end
+                    e.label:SetText(e.orig_text)
+                    if GetARGB and type(e.label.SetTextColor) == "function" then
+                        local sh = act and 240 or 150
+                        e.label:SetTextColor(GetARGB(255, sh, sh, sh))
+                    end
+                    e.label:SetWndPos(vector2():set(lx, ui_label_y(cy, 24, font)))
+                    e.label:SetWndSize(vector2():set(math.max(4, p.x + bw - lx - ui_px_w(4)), 24))
+                    e.label:Show(true)
+                else
+                    e.icon:Show(false)
+                    e.label:Show(false)
+                    if tc:GetText() == "" and e.orig_text ~= "" then
+                        tc:SetText(e.orig_text)
+                    end
+                end
+            end
+        elseif e then
+            e.icon:Show(false)
+            e.label:Show(false)
+        end
+    end
+end
+
+-- Отрисовка компактной нижней плашки подсказок (до 5 пар значок + подпись, H4)
+function paint_footer_strip(host, key_tag, parent, cx_ui, y_ui, items, show_strip)
+    local xml = xmlh()
+    if not xml or rawequal(parent, nil) then return end
+    local st = host[key_tag]
+    if not st then
+        st = { bg = xml:InitStatic("strip", parent), slots = {} }
+        st.bg:Enable(false)
+        for i = 1, 5 do
+            local ic = xml:InitStatic("icon", parent)
+            local lb = xml:InitTextWnd("measure16", parent)
+            ic:Enable(false)
+            lb:Enable(false)
+            st.slots[i] = { icon = ic, label = lb }
+        end
+        host[key_tag] = st
+    end
+    if not show_strip or #items == 0 then
+        st.bg:Show(false)
+        for i = 1, 5 do
+            st.slots[i].icon:Show(false)
+            st.slots[i].label:Show(false)
+        end
+        return
+    end
+    local _, sh = screen_wh()
+    local vis_px = math.max(10, math.floor(STRIP_ICON_H * sh / 768 + 0.5))
+    local gap_w = ui_px_w(math.floor(STRIP_GAP_PX * sh / 1080 + 0.5))
+    local step_gap_w = ui_px_w(math.floor(STRIP_ITEM_GAP_PX * sh / 1080 + 0.5))
+    local widths = {}
+    local total_w = 0
+    local count = math.min(#items, 5)
+    for i = 1, count do
+        local it = items[i]
+        local slot = st.slots[i]
+        slot.label:SetText(it.text)
+        if type(slot.label.AdjustWidthToText) == "function" then
+            slot.label:AdjustWidthToText()
+        end
+        local tw = math.max(24, slot.label:GetWidth())
+        local _, _, vis_h, tex_w, tex_h, scale = icon_spec(it.btn)
+        local ch = math.max(8, math.floor(vis_px * (tex_h / math.max(1, vis_h)) * scale + 0.5))
+        local cw = math.max(8, math.floor(ch * (tex_w / math.max(1, tex_h)) + 0.5))
+        local iw = ui_px_w(cw)
+        widths[i] = { iw = iw, tw = tw }
+        total_w = total_w + iw + gap_w + tw + (i < count and step_gap_w or 0)
+    end
+    local strip_w = total_w + ui_px_w(28)
+    local strip_h = 28
+    local sx = math.max(4, math.min(1020 - strip_w, cx_ui - strip_w * 0.5))
+    st.bg:SetWndPos(vector2():set(ui_snap_x(sx), ui_snap_y(y_ui)))
+    st.bg:SetWndSize(vector2():set(strip_w, strip_h))
+    st.bg:Show(true)
+    local cy = y_ui + strip_h * 0.5
+    local x = sx + ui_px_w(14)
+    for i = 1, 5 do
+        local slot = st.slots[i]
+        if i <= count then
+            local it = items[i]
+            local iw = place_gp_icon(slot.icon, it.btn, x, cy, vis_px, 255)
+            local lx = x + iw + gap_w
+            slot.label:SetWndPos(vector2():set(ui_snap_x(lx), ui_label_y(cy, 24, "letterica16")))
+            slot.label:SetWndSize(vector2():set(widths[i].tw + 6, 24))
+            slot.label:Show(true)
+            x = lx + widths[i].tw + step_gap_w
+        else
+            slot.icon:Show(false)
+            slot.label:Show(false)
+        end
+    end
+end
+
+-- Универсальный 2D-шаг крестовиной по списку целей {id, r, ...} без зацикливания через край (В11)
+function step_2d(list, cur, dir)
+    if not cur or #list == 0 then return list[1], false end
+    local cx, cy = center_of(cur.r)
+    local best, best_score = nil, math.huge
+    for i = 1, #list do
+        local c = list[i]
+        if c.id ~= cur.id then
+            local tx, ty = center_of(c.r)
+            local dx, dy = tx - cx, ty - cy
+            local valid, primary, ortho = false, 0, 0
+            if dir == DIR_UP and dy < -4 then
+                valid, primary, ortho = true, -dy, math.abs(dx)
+            elseif dir == DIR_DOWN and dy > 4 then
+                valid, primary, ortho = true, dy, math.abs(dx)
+            elseif dir == DIR_LEFT and dx < -4 then
+                valid, primary, ortho = true, -dx, math.abs(dy)
+            elseif dir == DIR_RIGHT and dx > 4 then
+                valid, primary, ortho = true, dx, math.abs(dy)
+            end
+            if valid then
+                local same_band = ortho <= 22
+                local score = same_band and (primary + ortho * 0.25) or (10000 + primary + ortho * 2.5)
+                if score < best_score then
+                    best, best_score = c, score
+                end
+            end
+        end
+    end
+    if not best then return cur, true end
+    return best, false
+end
+
+-- ---------------------------------------------------------------------------
+-- 2. Инвентарь обмена с напарником UICompanionInv (PORT-A + PORT-G, §4.4, В4)
+-- ---------------------------------------------------------------------------
+
+function collect_panel_cells(cells_tbl, sv, panel_name, out)
+    if type(cells_tbl) ~= "table" then return 0 end
+    local vr = sv and abs_rect(sv) or nil
+    local temp = {}
+    for item_id, entry in pairs(cells_tbl) do
+        local btn = type(entry) == "table" and entry.btn or nil
+        if not rawequal(btn, nil) and shown(btn) then
+            local r = abs_rect(btn)
+            if r then
+                temp[#temp + 1] = {
+                    id = panel_name .. ":" .. tostring(item_id),
+                    item_id = item_id,
+                    panel = panel_name,
+                    w = btn,
+                    sv = sv,
+                    r = r,
+                    kind = "cell",
+                    vis = inside_view(r, vr),
+                }
+            end
+        end
+    end
+    table.sort(temp, function(a, b)
+        local ra = math.floor(a.r.y1 / 8)
+        local rb = math.floor(b.r.y1 / 8)
+        if ra ~= rb then return ra < rb end
+        if math.abs(a.r.x1 - b.r.x1) > 1 then return a.r.x1 < b.r.x1 end
+        return tostring(a.item_id) < tostring(b.item_id)
+    end)
+    for i = 1, #temp do
+        temp[i].grid_idx = i
+        out[#out + 1] = temp[i]
+    end
+    return #temp
+end
+
+function collect_comp_inv(g, panel_filter)
+    local list = {}
+    if not panel_filter or panel_filter == "npc" then
+        collect_panel_cells(g.cells_npc, g.npc_inv, "npc", list)
+        if not rawequal(g.btn_takeall, nil) and shown(g.btn_takeall) then
+            local r = abs_rect(g.btn_takeall)
+            if r then
+                list[#list + 1] = {
+                    id = "npc:btn_takeall",
+                    panel = "npc",
+                    w = g.btn_takeall,
+                    r = r,
+                    kind = "btn",
+                    vis = true,
+                    action = "take_all",
+                }
+            end
+        end
+    end
+    if not panel_filter or panel_filter == "player" then
+        collect_panel_cells(g.cells_player, g.player_inv, "player", list)
+        if not rawequal(g.btn_giveall, nil) and shown(g.btn_giveall) then
+            local r = abs_rect(g.btn_giveall)
+            if r then
+                list[#list + 1] = {
+                    id = "player:btn_giveall",
+                    panel = "player",
+                    w = g.btn_giveall,
+                    r = r,
+                    kind = "btn",
+                    vis = true,
+                    action = "give_all",
+                }
+            end
+        end
+    end
+    return list
+end
+
+function focus_comp_target(g, t)
+    if not t then return nil end
+    if t.sv and t.kind == "cell" then
+        ensure_sv_visible(t.sv, t.w)
+        local nr = abs_rect(t.w)
+        if nr then t.r = nr end
+    end
+    state.comp_panel = t.panel
+    state.comp_cur_id = t.id
+    state.comp_mem[t.panel] = t.id
+    local cx, cy = center_of(t.r)
+    move_cursor_to(cx, cy, g)
+    return t
+end
+
+function switch_comp_panel(g, target_panel)
+    local p_list = collect_comp_inv(g, target_panel)
+    if #p_list == 0 then return nil end
+    local mem_t = find_by_id(p_list, state.comp_mem[target_panel])
+    local chosen = mem_t or p_list[1]
+    return focus_comp_target(g, chosen)
+end
+
+function paint_comp_inv(g, show_h)
+    local take_spec = { { field = "btn_takeall", glyph = state.comp_panel == "npc" and "X" or nil, id = "take" } }
+    local give_spec = { { field = "btn_giveall", glyph = state.comp_panel == "player" and "X" or nil, id = "give" } }
+    if not rawequal(g.npc_side, nil) then
+        paint_buttons_with_icons(g, "_gpcf_npc_btns", g.npc_side, take_spec, show_h)
+    end
+    if not rawequal(g.player_side, nil) then
+        paint_buttons_with_icons(g, "_gpcf_plr_btns", g.player_side, give_spec, show_h)
+    end
+    local xml = xmlh()
+    if xml and not rawequal(g.npc_side, nil) and not rawequal(g.player_side, nil) then
+        if not g._gpcf_panel_badges then
+            local lb = xml:InitStatic("icon", g.npc_side)
+            local rb = xml:InitStatic("icon", g.player_side)
+            lb:Enable(false)
+            rb:Enable(false)
+            g._gpcf_panel_badges = { lb = lb, rb = rb }
+        end
+        local b = g._gpcf_panel_badges
+        if show_h then
+            local _, sh = screen_wh()
+            local px = math.max(10, math.floor(18 * sh / 768 + 0.5))
+            place_gp_icon(b.lb, "LB", 18, 92, px, state.comp_panel == "npc" and 255 or DIM_ALPHA)
+            place_gp_icon(b.rb, "RB", 18, 92, px, state.comp_panel == "player" and 255 or DIM_ALPHA)
+        else
+            b.lb:Show(false)
+            b.rb:Show(false)
+        end
+    end
+    local items = {
+        { btn = "A", text = loc("transfer") },
+        { btn = "X", text = state.comp_panel == "npc" and loc("take_all") or loc("give_all") },
+        { btn = "Y", text = loc("desc") },
+        { btn = "View", text = loc("panel") },
+        { btn = "B", text = loc("close") },
+    }
+    paint_footer_strip(g, "_gpcf_strip", g, 512, 738, items, show_h)
+end
+
+function tick_comp_inv(g)
+    set_wnd_name(g, "UICompanionInv")
+    drain_queue()
+    if not shown(g) then return end
+    local pad = is_gamepad()
+    if not rawequal(state.comp_gui, g) then
+        state.comp_gui = g
+        state.comp_cur_id = nil
+        state.comp_pending = nil
+        local npc_cells = collect_panel_cells(g.cells_npc, g.npc_inv, "npc", {})
+        state.comp_panel = npc_cells > 0 and "npc" or "player"
+    end
+    local pend = state.comp_pending
+    if pend then
+        if now_ms() - pend.at > PENDING_RECOVER_MS then
+            state.comp_pending = nil
+        else
+            local plist = collect_comp_inv(g, pend.panel)
+            local still_there = find_by_id(plist, pend.prev_id)
+            if not still_there then
+                state.comp_pending = nil
+                local cells_only = {}
+                for i = 1, #plist do
+                    if plist[i].kind == "cell" then cells_only[#cells_only + 1] = plist[i] end
+                end
+                if #cells_only > 0 then
+                    local idx = math.min(pend.grid_idx or 1, #cells_only)
+                    focus_comp_target(g, cells_only[idx])
+                else
+                    local other = pend.panel == "npc" and "player" or "npc"
+                    if not switch_comp_panel(g, other) and #plist > 0 then
+                        focus_comp_target(g, plist[1])
+                    end
+                end
+            end
+        end
+    end
+    if pad then
+        local cur_list = collect_comp_inv(g, state.comp_panel)
+        if #cur_list == 0 then
+            local other = state.comp_panel == "npc" and "player" or "npc"
+            state.comp_panel = other
+            cur_list = collect_comp_inv(g, other)
+        end
+        if not find_by_id(cur_list, state.comp_cur_id) and #cur_list > 0 then
+            focus_comp_target(g, cur_list[1])
+        end
+        if state.desc_hidden and not rawequal(g.hint_wnd, nil) then
+            pcall(g.hint_wnd.Show, g.hint_wnd, false)
+        end
+    end
+    paint_comp_inv(g, hints_allowed())
+end
+
+function comp_inv_button(g, name, phase)
+    if phase ~= "press" then
+        local h = state.hold
+        state.hold = nil
+        if phase == "hold" and h and h.kind == "comp_inv" and is_gamepad() then
+            if h.action == "take_all" then
+                return defer(function()
+                    if shown(g) and type(g.OnBtn_TakeAll) == "function" then
+                        g:OnBtn_TakeAll()
+                        switch_comp_panel(g, "player")
+                    end
+                end)
+            elseif h.action == "give_all" then
+                return defer(function()
+                    if shown(g) and not g.overweight and shown(g.btn_giveall) and type(g.OnBtn_GiveAll) == "function" then
+                        g:OnBtn_GiveAll()
+                        switch_comp_panel(g, "npc")
+                    end
+                end)
+            end
+        end
+        return "used"
+    end
+
+    if name == "LB" or name == "LT" then
+        if state.comp_panel == "npc" and find_by_id(collect_comp_inv(g, "npc"), state.comp_cur_id) then
+            return "used"
+        end
+        if not switch_comp_panel(g, "npc") then return deny() end
+        return "used"
+    end
+    if name == "RB" or name == "RT" then
+        if state.comp_panel == "player" and find_by_id(collect_comp_inv(g, "player"), state.comp_cur_id) then
+            return "used"
+        end
+        if not switch_comp_panel(g, "player") then return deny() end
+        return "used"
+    end
+    if name == "View" then
+        local next_p = state.comp_panel == "npc" and "player" or "npc"
+        if not switch_comp_panel(g, next_p) then return deny() end
+        return "used"
+    end
+    if name == "Y" then
+        state.desc_hidden = not state.desc_hidden
+        local rw = rawget(_G, "gp_inv_rework")
+        if type(rw) == "table" and type(rw.state) == "table" then
+            rw.state.desc_hidden = state.desc_hidden
+        end
+        return "used"
+    end
+    if name == "B" then
+        return defer(function()
+            if shown(g) and type(g.Close) == "function" then g:Close() end
+        end)
+    end
+
+    local plist = collect_comp_inv(g, state.comp_panel)
+    local cur = find_by_id(plist, state.comp_cur_id) or plist[1]
+
+    local function start_bulk_hold(act)
+        if act == "take_all" then
+            local n = collect_panel_cells(g.cells_npc, g.npc_inv, "npc", {})
+            if n == 0 or rawequal(g.btn_takeall, nil) or not shown(g.btn_takeall) or not enabled(g.btn_takeall) then
+                return deny()
+            end
+            state.hold = { kind = "comp_inv", action = "take_all" }
+            local ic = g._gpcf_npc_btns and g._gpcf_npc_btns.btn_takeall and g._gpcf_npc_btns.btn_takeall.icon
+            return hold_cmd(ic or g.btn_takeall)
+        else
+            local n = collect_panel_cells(g.cells_player, g.player_inv, "player", {})
+            if n == 0 or g.overweight or rawequal(g.btn_giveall, nil) or not shown(g.btn_giveall) or not enabled(g.btn_giveall) then
+                return deny()
+            end
+            state.hold = { kind = "comp_inv", action = "give_all" }
+            local ic = g._gpcf_plr_btns and g._gpcf_plr_btns.btn_giveall and g._gpcf_plr_btns.btn_giveall.icon
+            return hold_cmd(ic or g.btn_giveall)
+        end
+    end
+
+    if name == "X" then
+        return start_bulk_hold(state.comp_panel == "npc" and "take_all" or "give_all")
+    end
+
+    if name == "A" then
+        if not cur then return deny() end
+        if cur.kind == "btn" then
+            return start_bulk_hold(cur.action)
+        end
+        if g.block_input then return deny() end
+        if cur.panel == "player" then
+            if g.overweight then return deny() end
+            local item_id, gidx = cur.item_id, cur.grid_idx
+            return defer(function()
+                if not shown(g) or g.block_input or g.overweight then return end
+                state.comp_pending = { panel = "player", prev_id = cur.id, grid_idx = gidx, at = now_ms() }
+                g.highlight_player = item_id
+                if type(g.OnInvClicked_player) == "function" then g:OnInvClicked_player() end
+            end)
+        else
+            local item_id, gidx = cur.item_id, cur.grid_idx
+            return defer(function()
+                if not shown(g) or g.block_input then return end
+                state.comp_pending = { panel = "npc", prev_id = cur.id, grid_idx = gidx, at = now_ms() }
+                g.highlight_npc = item_id
+                if type(g.OnInvClicked_comp) == "function" then g:OnInvClicked_comp() end
+            end)
+        end
+    end
+    return "used"
+end
+
+-- ---------------------------------------------------------------------------
+-- 3. Быстрое контекстное меню напарников addonCompanionsContextMenu (§4.1, В11, В32)
+-- ---------------------------------------------------------------------------
+
+function collect_quick_menu(g)
+    local list, seen = {}, {}
+    for i = 1, #QUICK_MENU_ORDER do
+        local fname = QUICK_MENU_ORDER[i]
+        local btn = g[fname]
+        if not rawequal(btn, nil) and shown(btn) then
+            local r = abs_rect(btn)
+            if r then
+                seen[fname] = true
+                list[#list + 1] = {
+                    id = "qm:" .. fname,
+                    fname = fname,
+                    cb_name = "On" .. fname,
+                    w = btn,
+                    r = r,
+                    kind = "btn",
+                    vis = true,
+                }
+            end
+        end
+    end
+    for k, v in pairs(g) do
+        if type(k) == "string" and k:sub(1, 4) == "btn_" and not seen[k] and not rawequal(v, nil) and shown(v) then
+            local r = abs_rect(v)
+            if r then
+                list[#list + 1] = {
+                    id = "qm:" .. k,
+                    fname = k,
+                    cb_name = "On" .. k,
+                    w = v,
+                    r = r,
+                    kind = "btn",
+                    vis = true,
+                }
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        local ya = math.floor(a.r.y1 / 12)
+        local yb = math.floor(b.r.y1 / 12)
+        if ya ~= yb then return ya < yb end
+        return a.r.x1 < b.r.x1
+    end)
+    for i = 1, #list do list[i].seq_idx = i end
+    return list
+end
+
+function focus_quick_target(g, t)
+    if not t then return nil end
+    state.quick_cur_id = t.id
+    local cx, cy = center_of(t.r)
+    move_cursor_to(cx, cy, g)
+    return t
+end
+
+function tick_quick_menu(g)
+    set_wnd_name(g, "addonCompanionsContextMenu")
+    drain_queue()
+    if not shown(g) then
+        if rawequal(state.quick_gui, g) then state.quick_gui = nil end
+        return
+    end
+    state.quick_gui = g
+    local list = collect_quick_menu(g)
+    if is_gamepad() and #list > 0 and not find_by_id(list, state.quick_cur_id) then
+        focus_quick_target(g, list[1])
+    end
+    local items = {
+        { btn = "A", text = loc("order") },
+        { btn = "B", text = loc("close") },
+    }
+    paint_footer_strip(g, "_gpcf_strip", g, 512, 492, items, hints_allowed())
+end
+
+function close_quick_menu(g)
+    if type(g.HideDialog) == "function" then pcall(g.HideDialog, g) end
+    if type(g.Show) == "function" then pcall(g.Show, g, false) end
+    if rawequal(state.quick_gui, g) then state.quick_gui = nil end
+    local b = rawget(_G, "gp_bridge")
+    if type(b) == "table" and type(b.sync_context_hints) == "function" then
+        pcall(b.sync_context_hints, true)
+    end
+end
+
+function quick_menu_button(g, name, phase)
+    if phase ~= "press" then return "used" end
+    if name == "B" then
+        return defer(function() close_quick_menu(g) end)
+    end
+    if name == "A" then
+        local list = collect_quick_menu(g)
+        local cur = find_by_id(list, state.quick_cur_id) or list[1]
+        if not cur or not enabled(cur.w) then return deny() end
+        local cb = g[cur.cb_name]
+        return defer(function()
+            if not shown(g) then return end
+            if type(cb) == "function" then
+                cb(g)
+            else
+                close_quick_menu(g)
+            end
+            if not shown(g) and rawequal(state.quick_gui, g) then
+                state.quick_gui = nil
+            end
+        end)
+    end
+    return deny()
+end
+
+-- ---------------------------------------------------------------------------
+-- 4. Тактическое колесо/панель отряда UIWheelCompanion (Useful Idiots, В32, В4)
+-- ---------------------------------------------------------------------------
+
+function collect_wheel_tabs(g)
+    local tabs = {}
+    if not rawequal(g.globalTab, nil) and shown(g.globalTab) and enabled(g.globalTab) then
+        local r = abs_rect(g.globalTab)
+        if r then
+            tabs[#tabs + 1] = {
+                id = "wtab:0",
+                tab_idx = 0,
+                row_kind = "tab",
+                w = g.globalTab,
+                r = r,
+                kind = "tab",
+                vis = true,
+            }
+        end
+    end
+    if type(g.tabs) == "table" then
+        for i = 1, #g.tabs do
+            local tb = g.tabs[i]
+            if not rawequal(tb, nil) and shown(tb) and enabled(tb) then
+                local r = abs_rect(tb)
+                if r then
+                    tabs[#tabs + 1] = {
+                        id = "wtab:" .. tostring(i),
+                        tab_idx = i,
+                        row_kind = "tab",
+                        w = tb,
+                        r = r,
+                        kind = "tab",
+                        vis = true,
+                    }
+                end
+            end
+        end
+    end
+    return tabs
+end
+
+function collect_wheel_targets(g)
+    local list = collect_wheel_tabs(g)
+    local btns = {}
+    local tb_rect = not rawequal(g.titlebar, nil) and abs_rect(g.titlebar) or nil
+    local tb_bottom = tb_rect and (tb_rect.y2 + 4) or 0
+    if type(g.buttons) == "table" then
+        for id, btn in pairs(g.buttons) do
+            if not rawequal(btn, nil) and shown(btn) then
+                local r = abs_rect(btn)
+                if r then
+                    local is_tb = tb_rect ~= nil and r.y2 <= tb_bottom
+                    btns[#btns + 1] = {
+                        id = "wbtn:" .. tostring(id),
+                        btn_id = id,
+                        group = btn.group,
+                        act_name = btn.name,
+                        row_kind = is_tb and "titlebar" or "grid",
+                        w = btn,
+                        r = r,
+                        kind = "btn",
+                        vis = true,
+                    }
+                end
+            end
+        end
+    end
+    table.sort(btns, function(a, b)
+        local ya = math.floor(a.r.y1 / 10)
+        local yb = math.floor(b.r.y1 / 10)
+        if ya ~= yb then return ya < yb end
+        return a.r.x1 < b.r.x1
+    end)
+    for i = 1, #btns do list[#list + 1] = btns[i] end
+    return list
+end
+
+function focus_wheel_target(g, t)
+    if not t then return nil end
+    state.wheel_cur_id = t.id
+    if t.row_kind == "grid" then
+        state.wheel_last_grid_id = t.id
+    end
+    local cx, cy = center_of(t.r)
+    move_cursor_to(cx, cy, g)
+    return t
+end
+
+function active_wheel_tab_pos(g, tabs)
+    if #tabs == 0 then return 0 end
+    if g.ID == nil then
+        for i = 1, #tabs do
+            if tabs[i].tab_idx == 0 then return i end
+        end
+    end
+    for i = 1, #tabs do
+        local idx = tabs[i].tab_idx
+        if idx > 0 and g._gpcf_active_tab == idx then return i end
+    end
+    return 1
+end
+
+function step_wheel_tab(g, delta)
+    local tabs = collect_wheel_tabs(g)
+    if #tabs <= 1 or g.singleMode then return deny() end
+    local pos = active_wheel_tab_pos(g, tabs)
+    local next_pos = ((pos - 1 + delta) % #tabs) + 1
+    local chosen = tabs[next_pos]
+    return defer(function()
+        if shown(g) and type(g.OnClickTab) == "function" then
+            g._gpcf_active_tab = chosen.tab_idx
+            g:OnClickTab(chosen.tab_idx)
+        end
+    end)
+end
+
+function tick_wheel(g)
+    set_wnd_name(g, "UIWheelCompanion")
+    drain_queue()
+    if not shown(g) then return end
+    if not rawequal(state.wheel_gui, g) then
+        state.wheel_gui = g
+        state.wheel_cur_id = nil
+        state.wheel_last_grid_id = nil
+        g._gpcf_active_tab = g.ID and 1 or 0
+    end
+    local list = collect_wheel_targets(g)
+    if is_gamepad() and #list > 0 and not find_by_id(list, state.wheel_cur_id) then
+        local first_grid = find_by_id(list, "wbtn:movement_follow")
+        if not first_grid then
+            for i = 1, #list do
+                if list[i].row_kind == "grid" then first_grid = list[i]; break end
+            end
+        end
+        focus_wheel_target(g, first_grid or list[1])
+    end
+    local dlg_r = not rawequal(g.dialog, nil) and abs_rect(g.dialog) or nil
+    local cx = dlg_r and ((dlg_r.x1 + dlg_r.x2) * 0.5) or 512
+    local sy = dlg_r and math.min(736, dlg_r.y2 + 8) or 700
+    local items = {
+        { btn = "dpad", text = loc("order") },
+        { btn = "A", text = loc("transfer") },
+        { btn = "LB", text = loc("squad") },
+        { btn = "Y", text = loc("inv") },
+        { btn = "B", text = loc("close") },
+    }
+    paint_footer_strip(g, "_gpcf_strip", g, cx, sy, items, hints_allowed())
+end
+
+function on_wheel_dpad(dir_code)
+    local mod = rawget(_G, "idiots_ui")
+    local g = type(mod) == "table" and mod.GUI or nil
+    if rawequal(g, nil) or not shown(g) then return "snap:0" end
+    local dir = tonumber(dir_code) or 0
+    if dir < 1 or dir > 4 then return "snap:0" end
+    local list = collect_wheel_targets(g)
+    if #list == 0 then return "snap:0" end
+    local x, y = cursor_xy()
+    local cur = find_by_id(list, state.wheel_cur_id) or nearest_target(list, x, y, false) or list[1]
+    local nxt, hit_edge = step_2d(list, cur, dir)
+    if hit_edge then
+        deny()
+        return format_snap(cur)
+    end
+    focus_wheel_target(g, nxt)
+    return format_snap(nxt)
+end
+
+function wheel_button(g, name, phase)
+    if phase ~= "press" then
+        local h = state.hold
+        state.hold = nil
+        if phase == "hold" and h and h.kind == "wheel_reset" and is_gamepad() then
+            return defer(function()
+                if shown(g) and type(g.OnClickButton) == "function" then
+                    g:OnClickButton(h.group, "reset")
+                    if type(g.UpdateButtons) == "function" then g:UpdateButtons() end
+                end
+            end)
+        end
+        return "used"
+    end
+
+    if name == "B" then
+        return defer(function()
+            if shown(g) and type(g.Close) == "function" then g:Close() end
+        end)
+    end
+    if name == "LB" or name == "LT" then
+        return step_wheel_tab(g, -1)
+    end
+    if name == "RB" or name == "RT" then
+        return step_wheel_tab(g, 1)
+    end
+
+    local list = collect_wheel_targets(g)
+    local cur = find_by_id(list, state.wheel_cur_id) or list[1]
+
+    if name == "View" then
+        if not cur then return deny() end
+        local want = cur.row_kind == "titlebar" and "grid" or "titlebar"
+        local target = want == "grid" and find_by_id(list, state.wheel_last_grid_id) or nil
+        if not target then
+            for i = 1, #list do
+                if list[i].row_kind == want and enabled(list[i].w) then
+                    target = list[i]
+                    break
+                end
+            end
+        end
+        if not target then return deny() end
+        focus_wheel_target(g, target)
+        return "used"
+    end
+
+    if name == "Y" then
+        local inv_btn = type(g.buttons) == "table" and g.buttons["inventory"] or nil
+        if g.ID == nil or rawequal(inv_btn, nil) or not enabled(inv_btn) then return deny() end
+        return defer(function()
+            if shown(g) and g.ID ~= nil and type(g.OnClickButton) == "function" then
+                g:OnClickButton(nil, "inventory")
+            end
+        end)
+    end
+
+    if name == "X" then
+        if cur and cur.act_name == "reset" then
+            if not enabled(cur.w) then return deny() end
+            state.hold = { kind = "wheel_reset", group = cur.group }
+            return hold_cmd(cur.w)
+        end
+        local wp_btn = type(g.buttons) == "table" and g.buttons["add_waypoint"] or nil
+        if g.ID == nil or rawequal(wp_btn, nil) or not enabled(wp_btn) then return deny() end
+        return defer(function()
+            if shown(g) and g.ID ~= nil and type(g.OnClickButton) == "function" then
+                g:OnClickButton(nil, "add_waypoint")
+            end
+        end)
+    end
+
+    if name == "A" then
+        if not cur or not enabled(cur.w) then return deny() end
+        if cur.row_kind == "tab" then
+            local idx = cur.tab_idx
+            return defer(function()
+                if shown(g) and type(g.OnClickTab) == "function" then
+                    g._gpcf_active_tab = idx
+                    g:OnClickTab(idx)
+                end
+            end)
+        end
+        if cur.act_name == "reset" then
+            state.hold = { kind = "wheel_reset", group = cur.group }
+            return hold_cmd(cur.w)
+        end
+        local grp, act = cur.group, cur.act_name
+        return defer(function()
+            if shown(g) and type(g.OnClickButton) == "function" then
+                g:OnClickButton(grp, act)
+                if type(g.UpdateButtons) == "function" then g:UpdateButtons() end
+            end
+        end)
+    end
+
+    return "used"
+end
+
+-- ---------------------------------------------------------------------------
+-- 5. Лампа / керосинка убежища UIFurnitureLight (§4.6, В4, ловушка ui_sleep_dialog)
+-- ---------------------------------------------------------------------------
+
+function fix_light_registered_path()
+    local guis = rawget(_G, "_GUIs")
+    if type(guis) == "table" and type(guis["UIFurnitureLight"]) == "table" then
+        guis["UIFurnitureLight"].path = "ui_furniture_light"
+    end
+    local inst = rawget(_G, "_GUIsInstances")
+    if type(inst) == "table" and type(inst["UIFurnitureLight"]) == "table" then
+        inst["UIFurnitureLight"].path = "ui_furniture_light"
+    end
+end
+
+function collect_light_targets(g)
+    local list = {}
+    for i = 1, #LIGHT_BUTTONS do
+        local sp = LIGHT_BUTTONS[i]
+        local btn = g[sp.field]
+        if not rawequal(btn, nil) and shown(btn) then
+            local r = abs_rect(btn)
+            if r then
+                list[#list + 1] = {
+                    id = sp.id,
+                    spec = sp,
+                    w = btn,
+                    r = r,
+                    kind = "btn",
+                    vis = true,
+                }
+            end
+        end
+    end
+    return list
+end
+
+function focus_light_target(g, t)
+    if not t then return nil end
+    state.light_cur_id = t.id
+    local cx, cy = center_of(t.r)
+    move_cursor_to(cx, cy, g)
+    return t
+end
+
+function tick_light(g)
+    set_wnd_name(g, "UIFurnitureLight")
+    fix_light_registered_path()
+    drain_queue()
+    if not shown(g) then return end
+    if not rawequal(state.light_gui, g) then
+        state.light_gui = g
+        state.light_cur_id = nil
+    end
+    local list = collect_light_targets(g)
+    if is_gamepad() and #list > 0 and not find_by_id(list, state.light_cur_id) then
+        focus_light_target(g, list[1])
+    end
+    local parent = g.back or g
+    paint_buttons_with_icons(g, "_gpcf_light_btns", parent, LIGHT_BUTTONS, hints_allowed())
+end
+
+function light_button(g, name, phase)
+    if phase ~= "press" then
+        local h = state.hold
+        state.hold = nil
+        if phase == "hold" and h and h.kind == "light_pickup" and is_gamepad() then
+            return defer(function()
+                if shown(g) and enabled(g.btn_pickup) and type(g.Pickup) == "function" then
+                    g:Pickup()
+                end
+            end)
+        end
+        return "used"
+    end
+
+    local function start_pickup_hold()
+        if rawequal(g.btn_pickup, nil) or not shown(g.btn_pickup) or not enabled(g.btn_pickup) then
+            return deny()
+        end
+        state.hold = { kind = "light_pickup" }
+        local ic = g._gpcf_light_btns and g._gpcf_light_btns.btn_pickup and g._gpcf_light_btns.btn_pickup.icon
+        return hold_cmd(ic or g.btn_pickup)
+    end
+
+    if name == "B" then
+        return defer(function()
+            if shown(g) and type(g.Close) == "function" then g:Close() end
+        end)
+    end
+    if name == "Y" then
+        if rawequal(g.btn_add_fuel, nil) or not shown(g.btn_add_fuel) or not enabled(g.btn_add_fuel) then
+            return deny()
+        end
+        return defer(function()
+            if shown(g) and enabled(g.btn_add_fuel) and type(g.Refuel) == "function" then
+                g:Refuel()
+            end
+        end)
+    end
+    if name == "X" then
+        return start_pickup_hold()
+    end
+    if name == "A" then
+        local list = collect_light_targets(g)
+        local cur = find_by_id(list, state.light_cur_id) or list[1]
+        if not cur or not enabled(cur.w) then return deny() end
+        if cur.spec.hold then
+            return start_pickup_hold()
+        end
+        local fn_name = cur.spec.fn
+        return defer(function()
+            if shown(g) and enabled(cur.w) and type(g[fn_name]) == "function" then
+                g[fn_name](g)
+            end
+        end)
+    end
+    return deny()
+end
+
+-- ---------------------------------------------------------------------------
+-- 6. Радио убежища UIFurnitureRadio (§4.6, В4, В35: станции по A, громкость крестовиной)
+-- ---------------------------------------------------------------------------
+
+function radio_combo_expanded(box)
+    if rawequal(box, nil) or type(box.GamepadIsExpanded) ~= "function" then return false end
+    local ok, res = pcall(box.GamepadIsExpanded, box)
+    return ok and res == true
+end
+
+function collect_radio_combo_items(box)
+    local items = {}
+    if not radio_combo_expanded(box) or type(box.GamepadListItem) ~= "function" then
+        return items
+    end
+    local sv = type(box.GamepadList) == "function" and box:GamepadList() or nil
+    local vr = sv and abs_rect(sv) or nil
+    for i = 0, 63 do
+        local ok, it = pcall(box.GamepadListItem, box, i)
+        if not ok or rawequal(it, nil) then break end
+        if shown(it) and enabled(it) then
+            local r = abs_rect(it)
+            if r then
+                items[#items + 1] = {
+                    id = "radio:ch:" .. tostring(i),
+                    ch_idx = i,
+                    field = "combo_item",
+                    w = it,
+                    sv = sv,
+                    r = r,
+                    kind = "combo_item",
+                    vis = inside_view(r, vr),
+                }
+            end
+        end
+    end
+    return items
+end
+
+function collect_radio_targets(g)
+    local box = g.list_channel
+    if radio_combo_expanded(box) then
+        local rows = collect_radio_combo_items(box)
+        if #rows > 0 then return rows end
+    end
+    local list = {}
+    if not rawequal(box, nil) and shown(box) then
+        local r = abs_rect(box)
+        if r then
+            list[#list + 1] = {
+                id = "radio:channel",
+                field = "combo",
+                w = box,
+                r = r,
+                kind = "combo",
+                vis = true,
+            }
+        end
+    end
+    for i = 1, #RADIO_BUTTONS do
+        local sp = RADIO_BUTTONS[i]
+        local btn = g[sp.field]
+        if not rawequal(btn, nil) and shown(btn) then
+            local r = abs_rect(btn)
+            if r then
+                list[#list + 1] = {
+                    id = sp.id,
+                    field = "btn",
+                    spec = sp,
+                    w = btn,
+                    r = r,
+                    kind = "btn",
+                    vis = true,
+                }
+            end
+        end
+    end
+    return list
+end
+
+function focus_radio_target(g, t)
+    if not t then return nil end
+    if t.sv and t.field == "combo_item" then
+        ensure_sv_visible(t.sv, t.w)
+        local nr = abs_rect(t.w)
+        if nr then t.r = nr end
+    end
+    state.radio_cur_id = t.id
+    local cx, cy = center_of(t.r)
+    move_cursor_to(cx, cy, g)
+    return t
+end
+
+function step_radio_volume(g, delta)
+    local fn_name = delta < 0 and "On_Radio_Volume_Down" or "On_Radio_Volume_Up"
+    local btn = delta < 0 and g.btn_radio_v_down or g.btn_radio_v_up
+    if not rawequal(btn, nil) and (not shown(btn) or not enabled(btn)) then
+        return deny()
+    end
+    return defer(function()
+        if shown(g) and type(g[fn_name]) == "function" then
+            g[fn_name](g)
+        end
+    end)
+end
+
+function tick_radio(g)
+    set_wnd_name(g, "UIFurnitureRadio")
+    drain_queue()
+    if not shown(g) then
+        if rawequal(state.radio_gui, g) then state.radio_gui = nil end
+        return
+    end
+    state.radio_gui = g
+    local list = collect_radio_targets(g)
+    if is_gamepad() and #list > 0 and not find_by_id(list, state.radio_cur_id) then
+        focus_radio_target(g, list[1])
+    end
+    local show_h = hints_allowed()
+    paint_buttons_with_icons(g, "_gpcf_radio_btns", g, {
+        { field = "btn_pickup", glyph = "X", fn = "Pickup", id = "radio:pickup", hold = true },
+        { field = "btn_close", glyph = "B", fn = "Close", id = "radio:close" },
+    }, show_h)
+    local exp = radio_combo_expanded(g.list_channel)
+    local items = {
+        { btn = "A", text = loc("station") },
+        { btn = "dpad", text = loc("volume") },
+        { btn = "Y", text = loc("order") },
+        { btn = "B", text = exp and loc("back") or loc("close") },
+    }
+    paint_footer_strip(g, "_gpcf_strip", g, 512, 534, items, show_h)
+end
+
+function radio_button(g, name, phase)
+    if phase ~= "press" then
+        local h = state.hold
+        state.hold = nil
+        if phase == "hold" and h and h.kind == "radio_pickup" and is_gamepad() then
+            return defer(function()
+                if shown(g) and enabled(g.btn_pickup) and type(g.Pickup) == "function" then
+                    g:Pickup()
+                end
+            end)
+        end
+        return "used"
+    end
+
+    local box = g.list_channel
+    local expanded = radio_combo_expanded(box)
+
+    if name == "LB" or name == "LT" then
+        return step_radio_volume(g, -1)
+    end
+    if name == "RB" or name == "RT" then
+        return step_radio_volume(g, 1)
+    end
+
+    if name == "B" then
+        if expanded then
+            return defer(function()
+                if not rawequal(box, nil) and type(box.GamepadShowList) == "function" then
+                    box:GamepadShowList(false)
+                end
+                state.radio_cur_id = "radio:channel"
+                local list = collect_radio_targets(g)
+                local ch_t = find_by_id(list, "radio:channel")
+                if ch_t then focus_radio_target(g, ch_t) end
+            end)
+        end
+        return defer(function()
+            if shown(g) and type(g.Close) == "function" then g:Close() end
+        end)
+    end
+
+    if name == "Y" then
+        return defer(function()
+            if not shown(g) then return end
+            if state.radio_playing then
+                state.radio_playing = false
+                if type(g.On_Radio_Stop) == "function" then g:On_Radio_Stop() end
+            else
+                state.radio_playing = true
+                if type(g.On_Radio_Start) == "function" then g:On_Radio_Start() end
+            end
+        end)
+    end
+
+    local function start_radio_pickup_hold()
+        if rawequal(g.btn_pickup, nil) or not shown(g.btn_pickup) or not enabled(g.btn_pickup) then
+            return deny()
+        end
+        state.hold = { kind = "radio_pickup" }
+        local ic = g._gpcf_radio_btns and g._gpcf_radio_btns.btn_pickup and g._gpcf_radio_btns.btn_pickup.icon
+        return hold_cmd(ic or g.btn_pickup)
+    end
+
+    if name == "X" then
+        if expanded then return deny() end
+        return start_radio_pickup_hold()
+    end
+
+    if name == "A" then
+        local list = collect_radio_targets(g)
+        local cur = find_by_id(list, state.radio_cur_id) or list[1]
+        if not cur or not enabled(cur.w) then return deny() end
+        if cur.field == "combo" then
+            return defer(function()
+                if rawequal(box, nil) then return end
+                if type(box.GamepadShowList) == "function" then
+                    box:GamepadShowList(true)
+                    local cur_idx = type(box.GetCurrentIdx) == "function" and tonumber(box:GetCurrentIdx()) or 0
+                    local rows = collect_radio_combo_items(box)
+                    local pick = rows[(cur_idx or 0) + 1] or rows[1]
+                    if pick then focus_radio_target(g, pick) end
+                elseif type(g.OnSelectChannel) == "function" then
+                    g:OnSelectChannel()
+                end
+            end)
+        elseif cur.field == "combo_item" then
+            local idx = cur.ch_idx
+            return defer(function()
+                if not rawequal(box, nil) and type(box.GamepadSelect) == "function" then
+                    box:GamepadSelect(idx)
+                    if type(box.GamepadShowList) == "function" then
+                        box:GamepadShowList(false)
+                    end
+                    state.radio_playing = true
+                    local collapsed = collect_radio_targets(g)
+                    local ch_t = find_by_id(collapsed, "radio:channel")
+                    if ch_t then focus_radio_target(g, ch_t) end
+                end
+            end)
+        elseif cur.spec then
+            if cur.spec.hold then
+                return start_radio_pickup_hold()
+            end
+            local fn_name = cur.spec.fn
+            return defer(function()
+                if shown(g) and enabled(cur.w) and type(g[fn_name]) == "function" then
+                    if fn_name == "On_Radio_Start" then state.radio_playing = true end
+                    if fn_name == "On_Radio_Stop" then state.radio_playing = false end
+                    g[fn_name](g)
+                end
+            end)
+        end
+    end
+
+    return deny()
+end
+
+-- ---------------------------------------------------------------------------
+-- 7. Диспетчеризация активного окна и мост gp_bridge (без правки чужих файлов)
+-- ---------------------------------------------------------------------------
+
+function active_comp_inv()
+    local m = rawget(_G, "ui_companion_inv")
+    local g = type(m) == "table" and m.GUI or nil
+    if not rawequal(g, nil) and is_top_dialog("UICompanionInv", g) then return g end
+    return nil
+end
+
+function active_quick_menu()
+    local g = state.quick_gui
+    if not rawequal(g, nil) and is_top_dialog("addonCompanionsContextMenu", g) then return g end
+    return nil
+end
+
+function active_light()
+    local m = rawget(_G, "ui_furniture_light")
+    local g = type(m) == "table" and m.GUI or nil
+    if not rawequal(g, nil) and is_top_dialog("UIFurnitureLight", g) then return g end
+    return nil
+end
+
+function active_radio()
+    local g = state.radio_gui
+    if not rawequal(g, nil) and is_top_dialog("UIFurnitureRadio", g) then return g end
+    return nil
+end
+
+function active_wheel()
+    local m = rawget(_G, "idiots_ui")
+    local g = type(m) == "table" and m.GUI or nil
+    if not rawequal(g, nil) and shown(g) then return g end
+    return nil
+end
+
+-- Возвращает (kind, gui) для активного модального окна MenuUI_Modal (без радиального колеса)
+function current_modal()
+    if not is_gamepad() then return nil, nil end
+    local q = active_quick_menu()
+    if q then return "quick_menu", q end
+    local r = active_radio()
+    if r then return "radio", r end
+    local l = active_light()
+    if l then return "light", l end
+    local c = active_comp_inv()
+    if c then return "comp_inv", c end
+    return nil, nil
+end
+
+function focus_frame_active()
+    install_hooks()
+    local kind = current_modal()
+    return kind ~= nil
+end
+
+function query(x, y)
+    local kind, g = current_modal()
+    if not kind then return nil end
+    local list, cur_id
+    if kind == "comp_inv" then
+        list = collect_comp_inv(g, state.comp_panel)
+        if #list == 0 then
+            local other = state.comp_panel == "npc" and "player" or "npc"
+            state.comp_panel = other
+            list = collect_comp_inv(g, other)
+        end
+        cur_id = state.comp_cur_id
+    elseif kind == "quick_menu" then
+        list = collect_quick_menu(g)
+        cur_id = state.quick_cur_id
+    elseif kind == "light" then
+        list = collect_light_targets(g)
+        cur_id = state.light_cur_id
+    else
+        list = collect_radio_targets(g)
+        cur_id = state.radio_cur_id
+    end
+    if #list == 0 then
+        return string.format("hit:1;cx=%.1f;cy=%.1f;w=0;h=0;kind=none", x, y)
+    end
+    local hit = nearest_target(list, x, y, true) or find_by_id(list, cur_id) or list[1]
+    if kind == "comp_inv" then
+        state.comp_cur_id = hit.id
+        state.comp_mem[hit.panel] = hit.id
+    elseif kind == "quick_menu" then
+        state.quick_cur_id = hit.id
+    elseif kind == "light" then
+        state.light_cur_id = hit.id
+    else
+        state.radio_cur_id = hit.id
+    end
+    return format_hit(hit)
+end
+
+function snap(x, y, dir)
+    local kind, g = current_modal()
+    if not kind then return nil end
+    if kind == "comp_inv" then
+        local plist = collect_comp_inv(g, state.comp_panel)
+        if #plist == 0 then
+            deny()
+            return format_stay(x, y)
+        end
+        local cur = find_by_id(plist, state.comp_cur_id) or nearest_target(plist, x, y, true) or plist[1]
+        local nxt, edge = step_2d(plist, cur, dir)
+        if edge then
+            if dir == DIR_RIGHT and state.comp_panel == "npc" then
+                local sw = switch_comp_panel(g, "player")
+                if sw then return format_snap(sw) end
+            elseif dir == DIR_LEFT and state.comp_panel == "player" then
+                local sw = switch_comp_panel(g, "npc")
+                if sw then return format_snap(sw) end
+            end
+            deny()
+            return format_snap(cur)
+        end
+        focus_comp_target(g, nxt)
+        return format_snap(nxt)
+    elseif kind == "quick_menu" then
+        local list = collect_quick_menu(g)
+        if #list == 0 then return format_stay(x, y) end
+        local cur = find_by_id(list, state.quick_cur_id) or list[1]
+        local nxt, edge
+        if dir == DIR_UP or dir == DIR_DOWN then
+            local idx = cur.seq_idx + (dir == DIR_DOWN and 1 or -1)
+            if idx < 1 or idx > #list then
+                edge, nxt = true, cur
+            else
+                edge, nxt = false, list[idx]
+            end
+        else
+            nxt, edge = step_2d(list, cur, dir)
+        end
+        if edge then
+            deny()
+            return format_snap(cur)
+        end
+        focus_quick_target(g, nxt)
+        return format_snap(nxt)
+    elseif kind == "light" then
+        local list = collect_light_targets(g)
+        if #list == 0 then return format_stay(x, y) end
+        local cur = find_by_id(list, state.light_cur_id) or list[1]
+        local nxt, edge = step_2d(list, cur, dir)
+        if edge then
+            deny()
+            return format_snap(cur)
+        end
+        focus_light_target(g, nxt)
+        return format_snap(nxt)
+    else
+        local list = collect_radio_targets(g)
+        if #list == 0 then return format_stay(x, y) end
+        local cur = find_by_id(list, state.radio_cur_id) or list[1]
+        if (cur.field == "combo" or cur.field == "combo_item") and (dir == DIR_LEFT or dir == DIR_RIGHT) then
+            step_radio_volume(g, dir == DIR_LEFT and -1 or 1)
+            return format_snap(cur)
+        end
+        local nxt, edge
+        if cur.field == "combo_item" and (dir == DIR_UP or dir == DIR_DOWN) then
+            local _, pos = find_by_id(list, cur.id)
+            local npos = (pos or 1) + (dir == DIR_DOWN and 1 or -1)
+            if npos < 1 or npos > #list then
+                edge, nxt = true, cur
+            else
+                edge, nxt = false, list[npos]
+            end
+        else
+            nxt, edge = step_2d(list, cur, dir)
+        end
+        if edge then
+            deny()
+            return format_snap(cur)
+        end
+        focus_radio_target(g, nxt)
+        return format_snap(nxt)
+    end
+end
+
+function rs_analog(y, dt)
+    local kind, g = current_modal()
+    if not kind then return nil end
+    if kind == "comp_inv" then
+        local sv = state.comp_panel == "npc" and g.npc_inv or g.player_inv
+        return scroll_sv_analog(sv, state.comp_scroll_acc, state.comp_panel, y, dt)
+    elseif kind == "radio" then
+        local box = g.list_channel
+        if radio_combo_expanded(box) and type(box.GamepadList) == "function" then
+            return scroll_sv_analog(box:GamepadList(), state, "radio_scroll_acc", y, dt)
+        end
+        return true
+    end
+    return true
+end
+
+-- Единая точка входа кнопок из C++ StepRadialWheelButtons (StepHoldButtonProtocol) и моста ws_button
+function on_gamepad_button(name, phase)
+    install_hooks()
+    name, phase = tostring(name or ""), tostring(phase or "press")
+    if phase ~= "press" and state.hold then
+        local hk = state.hold.kind
+        if hk == "wheel_reset" then
+            local wg = active_wheel()
+            if wg then return wheel_button(wg, name, phase) end
+        elseif hk == "comp_inv" then
+            local cg = active_comp_inv()
+            if cg then return comp_inv_button(cg, name, phase) end
+        elseif hk == "light_pickup" then
+            local lg = active_light()
+            if lg then return light_button(lg, name, phase) end
+        elseif hk == "radio_pickup" then
+            local rg = active_radio()
+            if rg then return radio_button(rg, name, phase) end
+        end
+        state.hold = nil
+        return "used"
+    end
+    local wg = is_gamepad() and active_wheel() or nil
+    if wg then
+        return wheel_button(wg, name, phase)
+    end
+    local kind, mg = current_modal()
+    if not kind then return "" end
+    if kind == "comp_inv" then return comp_inv_button(mg, name, phase) end
+    if kind == "quick_menu" then return quick_menu_button(mg, name, phase) end
+    if kind == "light" then return light_button(mg, name, phase) end
+    return radio_button(mg, name, phase)
+end
+
+-- ---------------------------------------------------------------------------
+-- 8. Неинтрузивная установка хуков на классы окон и мост gp_bridge (P23)
+-- ---------------------------------------------------------------------------
+
+function hook_companion_inv()
+    local mod = rawget(_G, "ui_companion_inv")
+    local cls = type(mod) == "table" and mod.UICompanionInv or nil
+    if not cls or cls._gpcf_hooked then return false end
+    cls._gpcf_hooked = true
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            set_wnd_name(self, "UICompanionInv")
+        end
+    end
+    local orig_reset = cls.Reset
+    if type(orig_reset) == "function" then
+        cls.Reset = function(self, ...)
+            local res = orig_reset(self, ...)
+            set_wnd_name(self, "UICompanionInv")
+            state.comp_cur_id = nil
+            return res
+        end
+    end
+    local orig_update = cls.Update
+    if type(orig_update) == "function" then
+        cls.Update = function(self, ...)
+            local res = orig_update(self, ...)
+            pcall(tick_comp_inv, self)
+            return res
+        end
+    end
+    return true
+end
+
+function hook_quick_menu()
+    local mod = rawget(_G, "ui_addon_companion_quick_menu")
+    local cls = type(mod) == "table" and mod.addonCompanionsContextMenu or nil
+    if not cls or cls._gpcf_hooked then return false end
+    cls._gpcf_hooked = true
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            set_wnd_name(self, "addonCompanionsContextMenu")
+            state.quick_gui = self
+            state.quick_cur_id = nil
+            if type(self) == "userdata" and type(self.HideDialog) == "function" then
+                local inst_hide = self.HideDialog
+                self.HideDialog = function(s, ...)
+                    if rawequal(state.quick_gui, s) then state.quick_gui = nil end
+                    return inst_hide(s, ...)
+                end
+            end
+        end
+    end
+    local orig_update = cls.Update
+    if type(orig_update) == "function" then
+        cls.Update = function(self, ...)
+            local res = orig_update(self, ...)
+            pcall(tick_quick_menu, self)
+            return res
+        end
+    end
+    local orig_hide = (type(cls) == "table") and cls.HideDialog or nil
+    if type(orig_hide) == "function" then
+        cls.HideDialog = function(self, ...)
+            if rawequal(state.quick_gui, self) then state.quick_gui = nil end
+            return orig_hide(self, ...)
+        end
+    end
+    return true
+end
+
+function hook_wheel_companion()
+    local mod = rawget(_G, "idiots_ui")
+    local cls = type(mod) == "table" and mod.UIWheelCompanion or nil
+    if not cls or cls._gpcf_hooked then return false end
+    cls._gpcf_hooked = true
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            set_wnd_name(self, "UIWheelCompanion")
+        end
+    end
+    local orig_update = cls.Update
+    cls.Update = function(self, ...)
+        local res
+        if type(orig_update) == "function" then
+            res = orig_update(self, ...)
+        elseif CUIScriptWnd and type(CUIScriptWnd.Update) == "function" then
+            res = CUIScriptWnd.Update(self, ...)
+        end
+        pcall(tick_wheel, self)
+        return res
+    end
+    return true
+end
+
+function hook_furniture_light()
+    local mod = rawget(_G, "ui_furniture_light")
+    local cls = type(mod) == "table" and mod.UIFurnitureLight or nil
+    if not cls or cls._gpcf_hooked then return false end
+    cls._gpcf_hooked = true
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            set_wnd_name(self, "UIFurnitureLight")
+        end
+    end
+    local orig_show = cls.TestAndShow
+    if type(orig_show) == "function" then
+        cls.TestAndShow = function(self, ...)
+            set_wnd_name(self, "UIFurnitureLight")
+            local res = orig_show(self, ...)
+            fix_light_registered_path()
+            state.light_gui = self
+            state.light_cur_id = nil
+            return res
+        end
+    end
+    local orig_update = cls.Update
+    if type(orig_update) == "function" then
+        cls.Update = function(self, ...)
+            local res = orig_update(self, ...)
+            pcall(tick_light, self)
+            return res
+        end
+    end
+    return true
+end
+
+function hook_furniture_radio()
+    local mod = rawget(_G, "placeable_radio")
+    local cls = type(mod) == "table" and mod.UIFurnitureRadio or nil
+    if not cls or cls._gpcf_hooked then return false end
+    cls._gpcf_hooked = true
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            set_wnd_name(self, "UIFurnitureRadio")
+            state.radio_gui = self
+        end
+    end
+    local orig_show = cls.TestAndShow
+    if type(orig_show) == "function" then
+        cls.TestAndShow = function(self, ...)
+            set_wnd_name(self, "UIFurnitureRadio")
+            state.radio_gui = self
+            state.radio_cur_id = nil
+            return orig_show(self, ...)
+        end
+    end
+    local orig_update = cls.Update
+    if type(orig_update) == "function" then
+        cls.Update = function(self, ...)
+            local res = orig_update(self, ...)
+            pcall(tick_radio, self)
+            return res
+        end
+    end
+    local orig_close = cls.Close
+    if type(orig_close) == "function" then
+        cls.Close = function(self, ...)
+            if rawequal(state.radio_gui, self) then state.radio_gui = nil end
+            return orig_close(self, ...)
+        end
+    end
+    return true
+end
+
+function install_bridge_hooks()
+    local b = rawget(_G, "gp_bridge")
+    if type(b) ~= "table" or b._gpcf_wrapped then return false end
+    b._gpcf_wrapped = true
+
+    local orig_focus = b.inv_focus_frame_active
+    b.inv_focus_frame_active = function(...)
+        if focus_frame_active() then return true end
+        return orig_focus and orig_focus(...) or false
+    end
+
+    local orig_query = b.cursor_query_target
+    b.cursor_query_target = function(x, y, ...)
+        local res = query(tonumber(x) or 0, tonumber(y) or 0)
+        if type(res) == "string" then return res end
+        return orig_query and orig_query(x, y, ...) or "hit:0"
+    end
+
+    local orig_snap = b.cursor_dpad_snap
+    b.cursor_dpad_snap = function(x, y, dir_code, ...)
+        local d = tonumber(dir_code) or 0
+        if d >= 1 and d <= 4 then
+            local res = snap(tonumber(x) or 0, tonumber(y) or 0, d)
+            if type(res) == "string" then return res end
+        end
+        return orig_snap and orig_snap(x, y, dir_code, ...) or "snap:0"
+    end
+
+    local orig_rs = b.cursor_rs_analog
+    b.cursor_rs_analog = function(y, dt, ...)
+        local res = rs_analog(y, dt)
+        if res ~= nil then return res end
+        return orig_rs and orig_rs(y, dt, ...) or false
+    end
+
+    local orig_ws = b.ws_button
+    b.ws_button = function(name, phase, ...)
+        local kind = current_modal()
+        if kind then return on_gamepad_button(name, phase) end
+        return orig_ws and orig_ws(name, phase, ...) or ""
+    end
+
+    return true
+end
+
+function install_hooks()
+    hook_companion_inv()
+    hook_quick_menu()
+    hook_wheel_companion()
+    hook_furniture_light()
+    hook_furniture_radio()
+    install_bridge_hooks()
+end
+
+function on_gui_show()
+    install_hooks()
+end
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    install_hooks()
+    if RegisterScriptCallback then
+        RegisterScriptCallback("GUI_on_show", on_gui_show)
+    end
+end

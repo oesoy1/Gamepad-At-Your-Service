@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<string_table>
+	<string id="ui_mm_desc_gamepad_inventory">
+		<text>G.A.M.M.A. inventory: pause while open and choose inventory style.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_gp_inventory_pause">
+		<text>Inventory pause</text>
+	</string>
+	<string id="ui_mm_control_gamepad_gp_inventory_pause_desc">
+		<text>While the inventory, looting, trade, or repair window is open, the world pauses. Tooltips, comparison, and weight keep updating. Animations (eating, healing, changing outfits) play right after the window closes.</text>
+	</string>
+	<string id="ui_mm_control_gamepad_gp_inventory_mode">
+		<text>Inventory style</text>
+	</string>
+	<string id="ui_mm_control_gamepad_gp_inventory_mode_desc">
+		<text>Classic G.A.M.M.A. inventory with the gamepad cursor (default) or the new fullscreen mode (optional, available when ready).</text>
+	</string>
+	<string id="ui_mm_lst_gp_inv_mode_gamma">
+		<text>Classic G.A.M.M.A. (cursor)</text>
+	</string>
+	<string id="ui_mm_lst_gp_inv_mode_full">
+		<text>New fullscreen (optional)</text>
+	</string>
+	<string id="ui_gp_inv_hint_select">
+		<text>Take</text>
+	</string>
+	<string id="ui_gp_inv_hint_use">
+		<text>Use</text>
+	</string>
+	<string id="ui_gp_inv_hint_menu">
+		<text>Menu</text>
+	</string>
+	<string id="ui_gp_inv_hint_filter">
+		<text>Filter</text>
+	</string>
+	<string id="ui_gp_inv_hint_panel">
+		<text>Panel</text>
+	</string>
+	<string id="ui_gp_inv_hint_close">
+		<text>Close</text>
+	</string>
+	<string id="ui_gp_inv_hint_panel_bag">
+		<text>Backpack / Equipment</text>
+	</string>
+	<string id="ui_gp_inv_hint_item_actions">
+		<text>Take / Equip / Menu</text>
+	</string>
+
+	<string id="ui_gp_inv_hint_unequip">
+		<text>Remove</text>
+	</string>
+	<string id="ui_gp_inv_hint_desc">
+		<text>Details</text>
+	</string>
+</string_table>

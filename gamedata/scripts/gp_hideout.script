@@ -1,0 +1,1516 @@
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+-- =============================================================================
+-- gp_hideout.script — W5-HIDEOUT-PROG (2026-11-14)
+-- Адаптер геймпада для окон убежища и набора карт по единому концепту
+-- (docs/ui/concept/00-windows-concept.md, ТЗ 20-hideout-furniture.md):
+--   1. Установка мебели в мире + точная подгонка (placeable_furniture, UIAdvancedControls,
+--      hf_placement_hud.UIHFPlacementHUD): В35 — LS двигает по горизонтали XZ,
+--      RS крутит вокруг оси (влево/вправо) и меняет высоту Y (вверх/вниз),
+--      удержание LT замедляет движение и поворот в 10 раз (0.1x).
+--   2. Ноутбук торговца (ui_trading_computer.UITradingComputer): ловушка local GUI = nil
+--      и повторной регистрации под "ui_sleep_dialog"; В35 — нажатие A на строке
+--      торговца сразу открывает торговлю (OpenSelected), X обновляет список, B закрывает.
+--   3. Пианино (ui_furniture_piano.UIFurniturePiano): ноты, фильтр меток, настройка
+--      темпа/тональности/громкости, плавная прокрутка партитуры RS (P12),
+--      В4 (P7) — «Забрать мебель» (btn_pickup) удержанием X 0,3 + 0,7 с.
+--   4. Набор карт (item_map_kit.UIMapKit — ваниль Anomaly 1.5.3 и G.A.M.M.A.):
+--      листание LB / RB и крестовиной, закрытие B, значки gp_icons.
+--
+-- Лампа и радио принадлежат W4-COMPANIONS-FURN и здесь НЕ перехватываются.
+-- Совместимость с чистой Anomaly (PORT-A, P23): если модов убежища нет в _G,
+-- соответствующие хуки тихо спят без ошибок; item_map_kit работает везде.
+-- =============================================================================
+
+ENABLED = true
+
+HOLD_PAUSE_MS = 300
+HOLD_FILL_MS  = 700
+SCROLL_SPEED  = 520
+
+ADV_MOVE_SPEED   = 1.20 -- м/с при полном отклонении LS
+ADV_HEIGHT_SPEED = 0.80 -- м/с при полном отклонении RS по вертикали
+ADV_ROT_SPEED    = 120.0 -- град/с при полном отклонении RS по горизонтали / LB-RB
+ADV_FINE_MULT    = 0.10 -- В35: удержание LT замедляет подгонку в 10 раз
+
+local DIR_UP    = 1
+local DIR_DOWN  = 2
+local DIR_LEFT  = 3
+local DIR_RIGHT = 4
+
+local GP_BIT_LB        = 512  -- 1 << 9  (GP_BTN_LEFT_SHOULDER)
+local GP_BIT_RB        = 1024 -- 1 << 10 (GP_BTN_RIGHT_SHOULDER)
+local GP_BIT_DPAD_UP   = 2048 -- 1 << 11 (GP_BTN_DPAD_UP)
+local GP_BIT_DPAD_DOWN = 4096 -- 1 << 12 (GP_BTN_DPAD_DOWN)
+
+local CIRCLE_K   = 1.5
+local STRIP_STEP = 41
+local DIM_ALPHA  = 110
+
+local TEXT_RU = {
+    trade       = "Торговать",
+    select      = "Выбрать",
+    refresh     = "Обновить",
+    close       = "Закрыть",
+    back        = "Назад",
+    pickup_hold = "Забрать (удерж.)",
+    prev_page   = "Пред. карта",
+    next_page   = "След. карта",
+    adjust      = "Изменить",
+    hud_hold    = "[A] Поставить  [B] Отмена  [LB/RB] Поворот  [LT] Точно x10  [X] Столкновения  [Y] Ось  [View] Точный режим",
+    hud_preview = "[A] Поставить  [B] Отмена  [RS/LB/RB] Поворот  [LT] Точно x10  [X] Столкновения  [Y] Ось  [View] Обычный вид",
+    hud_adv     = "[LS] Сдвиг XZ  [RS] Поворот / Высота  [LT] Точно x10  [A] Поставить  [X] Столкновения  [Y] Ось  [View] Предпросмотр  [B] Назад",
+}
+
+local TEXT_EN = {
+    trade       = "Trade",
+    select      = "Select",
+    refresh     = "Refresh",
+    close       = "Close",
+    back        = "Back",
+    pickup_hold = "Pick up (hold)",
+    prev_page   = "Prev map",
+    next_page   = "Next map",
+    adjust      = "Adjust",
+    hud_hold    = "[A] Place  [B] Cancel  [LB/RB] Rotate  [LT] Fine x10  [X] Collision  [Y] Align  [View] Precision mode",
+    hud_preview = "[A] Place  [B] Cancel  [RS/LB/RB] Rotate  [LT] Fine x10  [X] Collision  [Y] Align  [View] Normal view",
+    hud_adv     = "[LS] Move XZ  [RS] Rotate / Height  [LT] Fine x10  [A] Place  [X] Collision  [Y] Align  [View] Preview  [B] Back",
+}
+
+local PIANO_SLIDERS = {
+    { id = "config.tempo",     field = "tempo_trackbar",     update = "UpdateTempo",     step = 5,   min = 30,  max = 240 },
+    { id = "config.transpose", field = "transpose_trackbar", update = "UpdateTranspose", step = 1,   min = -12, max = 12  },
+    { id = "config.volume",    field = "volume_trackbar",    update = "UpdateVolume",    step = 0.05, min = 0,  max = 1   },
+}
+
+state = {
+    hooks_installed   = false,
+    active_trading_pc = nil,
+    active_adv_ctrl   = nil,
+    denies            = 0,
+    rot_accum_holding = 0,
+}
+
+local XML = nil
+
+-- -----------------------------------------------------------------------------
+-- 1. Безопасные примитивы UI и геометрии
+-- -----------------------------------------------------------------------------
+
+function now()
+    local d = rawget(_G, "device") and device()
+    if not d or not d.time_continual then return 0 end
+    local ok, t = pcall(d.time_continual, d)
+    return ok and tonumber(t) or 0
+end
+
+function shown(w)
+    if rawequal(w, nil) or type(w.IsShown) ~= "function" then return false end
+    local ok, res = pcall(w.IsShown, w)
+    return ok and res == true
+end
+
+function enabled(w)
+    if rawequal(w, nil) then return false end
+    if type(w.IsEnabled) ~= "function" then return true end
+    local ok, res = pcall(w.IsEnabled, w)
+    return ok and res == true
+end
+
+function is_gamepad()
+    local b = rawget(_G, "gp_bridge")
+    if b and type(b.is_gamepad_active) == "function" then
+        local ok, res = pcall(b.is_gamepad_active)
+        if ok then return res == true end
+    end
+    local g = rawget(_G, "game")
+    if g and type(g.is_gamepad_active_source) == "function" then
+        local ok, res = pcall(g.is_gamepad_active_source)
+        if ok then return res == true end
+    end
+    return false
+end
+
+function hints_visible(where)
+    local ic = rawget(_G, "gp_icons")
+    if ic and type(ic.hints_visible) == "function" then
+        local ok, res = pcall(ic.hints_visible, where or "menu")
+        if ok then return res == true end
+    end
+    return true
+end
+
+function is_top_dialog(w)
+    if not shown(w) then return false end
+    local g = rawget(_G, "game")
+    if g and type(g.gamepad_is_top_dialog) == "function" then
+        local ok, res = pcall(g.gamepad_is_top_dialog, w)
+        return ok and res == true
+    end
+    return true
+end
+
+function abs_rect(w)
+    if rawequal(w, nil) or type(w.GetAbsoluteRect) ~= "function" or not rawget(_G, "Frect") then
+        return nil
+    end
+    local r = Frect()
+    local ok = pcall(w.GetAbsoluteRect, w, r)
+    if ok and r and r.x1 and r.x2 and (r.x2 - r.x1) > 1 and (r.y2 - r.y1) > 1 then
+        return { x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2 }
+    end
+    return nil
+end
+
+function center(r)
+    return (r.x1 + r.x2) * 0.5, (r.y1 + r.y2) * 0.5
+end
+
+function contains(r, x, y)
+    return r ~= nil and x >= r.x1 and x <= r.x2 and y >= r.y1 and y <= r.y2
+end
+
+function inside(r, v)
+    if not v then return true end
+    return r.y1 >= v.y1 - 1 and r.y2 <= v.y2 + 1 and r.x1 >= v.x1 - 1 and r.x2 <= v.x2 + 1
+end
+
+function cursor_xy()
+    local fn = rawget(_G, "GetCursorPosition")
+    if type(fn) == "function" then
+        local ok, p = pcall(fn)
+        if ok and p then return tonumber(p.x) or 0, tonumber(p.y) or 0 end
+    end
+    return 0, 0
+end
+
+function move_cursor(x, y)
+    local fn = rawget(_G, "SetCursorPosition")
+    local v2 = rawget(_G, "vector2")
+    if type(fn) == "function" and type(v2) == "function" then
+        pcall(function() fn(v2():set(x, y)) end)
+    end
+end
+
+function deny()
+    state.denies = state.denies + 1
+    local rw = rawget(_G, "gp_inv_rework")
+    if type(rw) == "table" and type(rw.deny) == "function" then
+        pcall(rw.deny)
+    else
+        local g = rawget(_G, "game")
+        if g and type(g.gamepad_inv_focus_deny) == "function" then
+            pcall(g.gamepad_inv_focus_deny)
+        end
+    end
+    return "used"
+end
+
+function is_russian()
+    local g = rawget(_G, "game")
+    local s = g and type(g.translate_string) == "function" and g.translate_string("ui_total_weight") or ""
+    return type(s) == "string" and s:find("[\192-\255]") ~= nil
+end
+
+function txt(key)
+    local tbl = is_russian() and TEXT_RU or TEXT_EN
+    return tbl[key] or key
+end
+
+function xmlh()
+    if not XML and rawget(_G, "CScriptXmlInit") then
+        local x = CScriptXmlInit()
+        local ok = pcall(x.ParseFile, x, "ui_gp_workshop.xml")
+        if ok then XML = x end
+    end
+    return XML
+end
+
+-- -----------------------------------------------------------------------------
+-- 2. Значки Dot Marks (gp_icons) и выравнивание по заглавным (gp_hint_align S1–S5)
+-- -----------------------------------------------------------------------------
+
+function icon_metrics(button, font)
+    local ic = rawget(_G, "gp_icons")
+    local al = rawget(_G, "gp_hint_align")
+    local tex = ic and type(ic.tex) == "function" and ic.tex(button, "round") or ("ui_gp_white_xbox_" .. tostring(button):lower())
+    local vis_w, vis_h, tex_w, tex_h = 22, 22, 28, 28
+    if ic and type(ic.dims) == "function" then
+        vis_w, vis_h, tex_w, tex_h = ic.dims(button, "round")
+    end
+    local scale_k = ic and type(ic.scale_k) == "function" and ic.scale_k() or 1.0
+    local cap = al and type(al.cap_px) == "function" and al.cap_px(font or "letterica16") or 14
+    local extra = al and type(al.icon_scale) == "function" and al.icon_scale(tex) or 1.0
+    local px_h_total = math.max(8, math.floor(CIRCLE_K * cap * scale_k * (tex_h / math.max(1, vis_h)) * extra + 0.5))
+    local px_w_total = math.max(8, math.floor(px_h_total * (tex_w / math.max(1, tex_h)) + 0.5))
+    local iw = al and al.px_w(px_w_total) or (px_w_total * 1024 / 1920)
+    local ih = al and al.px_h(px_h_total) or (px_h_total * 768 / 1080)
+    return tex, iw, ih, px_w_total, px_h_total
+end
+
+function place_badge(st, button, x, cy, font, alpha)
+    if not st then return 0 end
+    local al = rawget(_G, "gp_hint_align")
+    local tex, iw, ih = icon_metrics(button, font)
+    local ix = al and al.snap_x(x) or x
+    local iy = al and al.snap_y(cy - ih * 0.5) or (cy - ih * 0.5)
+    if st._gp_tex ~= tex then
+        pcall(st.InitTexture, st, tex)
+        st._gp_tex = tex
+    end
+    local v2 = rawget(_G, "vector2")
+    if v2 then
+        pcall(st.SetWndPos, st, v2():set(ix, iy))
+        pcall(st.SetWndSize, st, v2():set(iw, ih))
+    end
+    if rawget(_G, "GetARGB") and st.SetTextureColor then
+        pcall(st.SetTextureColor, st, GetARGB(alpha or 255, 255, 255, 255))
+    end
+    pcall(st.Show, st, true)
+    return iw
+end
+
+function ring_suffix(st)
+    local r = st and shown(st) and abs_rect(st)
+    if not r then return "" end
+    return string.format(":%.1f,%.1f,%.1f,%.1f", r.x1, r.y1, r.x2, r.y2)
+end
+
+function paint_btn_with_badge(holder, slot_key, parent, btn, glyph, font)
+    if not btn or not parent then return nil end
+    local entry = holder[slot_key]
+    local show = is_gamepad() and hints_visible("menu") and shown(btn)
+    if not show then
+        if entry then
+            if entry.icon then pcall(entry.icon.Show, entry.icon, false) end
+            if entry.label then pcall(entry.label.Show, entry.label, false) end
+            if entry.orig_text and btn.TextControl then
+                local tc = btn:TextControl()
+                if tc then pcall(tc.SetText, tc, entry.orig_text) end
+            end
+        end
+        return nil
+    end
+    local x = xmlh()
+    if not x then return nil end
+    if not entry then
+        local tc = btn.TextControl and btn:TextControl() or nil
+        local orig = tc and tc:GetText() or ""
+        local ic = x:InitStatic("icon", parent)
+        local lb = x:InitTextWnd("measure16", parent)
+        if ic and ic.Enable then pcall(ic.Enable, ic, false) end
+        if lb and lb.Enable then pcall(lb.Enable, lb, false) end
+        entry = { icon = ic, label = lb, orig_text = orig }
+        holder[slot_key] = entry
+    end
+    local tc = btn.TextControl and btn:TextControl() or nil
+    local cur_t = tc and tc:GetText() or ""
+    if cur_t ~= "" then entry.orig_text = cur_t end
+    if tc then pcall(tc.SetText, tc, "") end
+
+    local p = btn:GetWndPos()
+    local bw, bh = btn:GetWidth(), btn:GetHeight()
+    local cy = p.y + bh * 0.5
+    local al = rawget(_G, "gp_hint_align")
+    local gap = al and al.px_w(6) or (6 * 1024 / 1920)
+    local alpha = enabled(btn) and 255 or DIM_ALPHA
+    local iw = place_badge(entry.icon, glyph, p.x + gap, cy, font or "letterica16", alpha)
+    local v2 = rawget(_G, "vector2")
+    if entry.label and v2 then
+        pcall(entry.label.SetText, entry.label, entry.orig_text or "")
+        local ly = al and al.label_y(cy, 24, font or "letterica16") or (cy - 12)
+        pcall(entry.label.SetWndPos, entry.label, v2():set(p.x + iw + gap * 2, ly))
+        pcall(entry.label.SetWndSize, entry.label, v2():set(math.max(16, bw - iw - gap * 2), 24))
+        pcall(entry.label.Show, entry.label, true)
+    end
+    return entry.icon
+end
+
+function paint_strip(holder, key, parent, x, y, w, items, show)
+    local strip = holder[key]
+    if not (show and is_gamepad() and hints_visible("menu")) then
+        if strip and strip.bg then pcall(strip.bg.Show, strip.bg, false) end
+        return nil
+    end
+    local xinit = xmlh()
+    if not xinit or not parent then return nil end
+    if not strip then
+        local bg = xinit:InitStatic("strip", parent)
+        if not bg then return nil end
+        if bg.Enable then pcall(bg.Enable, bg, false) end
+        strip = { bg = bg, slots = {} }
+        holder[key] = strip
+    end
+    local v2 = rawget(_G, "vector2")
+    local al = rawget(_G, "gp_hint_align")
+    local _, sh = al and al.screen() or 1920, 1080
+    if al and type(al.screen) == "function" then
+        local _, hh = al.screen()
+        sh = hh
+    end
+    local h = 28
+    if v2 then
+        pcall(strip.bg.SetWndPos, strip.bg, v2():set(x, y))
+        pcall(strip.bg.SetWndSize, strip.bg, v2():set(w, h))
+    end
+    pcall(strip.bg.Show, strip.bg, true)
+
+    local gap = al and al.px_w(math.floor(6 * sh / 1080 + 0.5)) or 4
+    local step = al and al.px_w(math.floor(STRIP_STEP * sh / 1080 + 0.5)) or 22
+    local cy = h * 0.5
+
+    while #strip.slots < #items do
+        local ic = xinit:InitStatic("icon", strip.bg)
+        local lb = xinit:InitTextWnd("label18", strip.bg)
+        if ic and ic.Enable then pcall(ic.Enable, ic, false) end
+        if lb and lb.Enable then pcall(lb.Enable, lb, false) end
+        strip.slots[#strip.slots + 1] = { icon = ic, label = lb }
+    end
+
+    local total_w = 0
+    local measured = {}
+    for i, it in ipairs(items) do
+        local sl = strip.slots[i]
+        local _, iw = icon_metrics(it.glyph, "letterica18")
+        local tw = 48
+        if sl.label then
+            pcall(sl.label.SetText, sl.label, it.text or "")
+            if sl.label.AdjustWidthToText then pcall(sl.label.AdjustWidthToText, sl.label) end
+            local ok_w, gw = pcall(sl.label.GetWidth, sl.label)
+            if ok_w and tonumber(gw) and gw > 4 then tw = gw end
+        end
+        measured[i] = { iw = iw, tw = tw }
+        total_w = total_w + iw + gap + tw + (i < #items and step or 0)
+    end
+
+    local cx = math.max(8, (w - total_w) * 0.5)
+    for i = 1, #strip.slots do
+        local sl = strip.slots[i]
+        local it = items[i]
+        if it then
+            local m = measured[i]
+            local iw = place_badge(sl.icon, it.glyph, cx, cy, "letterica18", it.dim and DIM_ALPHA or 255)
+            local ly = al and al.label_y(cy, 24, "letterica18") or (cy - 12)
+            if sl.label and v2 then
+                pcall(sl.label.SetWndPos, sl.label, v2():set(cx + iw + gap, ly))
+                pcall(sl.label.SetWndSize, sl.label, v2():set(m.tw + 4, 24))
+                pcall(sl.label.Show, sl.label, true)
+            end
+            cx = cx + iw + gap + m.tw + step
+        else
+            if sl.icon then pcall(sl.icon.Show, sl.icon, false) end
+            if sl.label then pcall(sl.label.Show, sl.label, false) end
+        end
+    end
+    return strip
+end
+
+-- -----------------------------------------------------------------------------
+-- 3. Плавная прокрутка и навигация по целям рамки (P12, P13)
+-- -----------------------------------------------------------------------------
+
+function sv_scroll(sv, holder, key, y, dt, speed)
+    if not sv or not shown(sv) or type(sv.GetCurrentScrollPos) ~= "function" then return false end
+    local okc, cur = pcall(sv.GetCurrentScrollPos, sv)
+    cur = okc and tonumber(cur) or 0
+    local acc = holder[key]
+    if not acc or math.abs(acc - cur) > 2 then acc = cur end
+    local okn, mn = pcall(sv.GetMinScrollPos, sv)
+    local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+    mn = okn and tonumber(mn) or 0
+    mx = okx and tonumber(mx) or cur
+    if mx < mn then mx = mn end
+    acc = math.max(mn, math.min(mx, acc + (tonumber(y) or 0) * (speed or SCROLL_SPEED) * (tonumber(dt) or 16) / 1000))
+    holder[key] = acc
+    local target = math.floor(acc + 0.5)
+    if target ~= cur and type(sv.SetScrollPos) == "function" then
+        pcall(sv.SetScrollPos, sv, target)
+    end
+    return true
+end
+
+function ensure_visible(t)
+    if not t or not t.sv or not t.view or type(t.sv.GetCurrentScrollPos) ~= "function" then return t end
+    local sv, v, r = t.sv, t.view, t.r
+    local dy = 0
+    if r.y1 < v.y1 + 2 then
+        dy = r.y1 - (v.y1 + 2)
+    elseif r.y2 > v.y2 - 2 then
+        dy = r.y2 - (v.y2 - 2)
+    end
+    if math.abs(dy) > 0.5 then
+        local ok0, old = pcall(sv.GetCurrentScrollPos, sv)
+        old = ok0 and tonumber(old) or 0
+        local p = old + dy
+        local okn, mn = pcall(sv.GetMinScrollPos, sv)
+        local okx, mx = pcall(sv.GetMaxScrollPos, sv)
+        if okn and tonumber(mn) then p = math.max(tonumber(mn), p) end
+        if okx and tonumber(mx) then p = math.min(tonumber(mx), p) end
+        p = math.floor(p + 0.5)
+        pcall(sv.SetScrollPos, sv, p)
+        local ok1, nw = pcall(sv.GetCurrentScrollPos, sv)
+        local shift = (ok1 and tonumber(nw) or p) - old
+        t.r = { x1 = r.x1, x2 = r.x2, y1 = r.y1 - shift, y2 = r.y2 - shift }
+    end
+    t.vis = true
+    return t
+end
+
+function add_target(list, id, field, w, r, kind, extra)
+    if not r then return nil end
+    local t = extra or {}
+    t.id, t.field, t.w, t.r, t.kind = id, field, w, r, kind or "btn"
+    if t.vis == nil then t.vis = true end
+    list[#list + 1] = t
+    return t
+end
+
+function by_id(list, id)
+    if not id then return nil end
+    for i = 1, #list do
+        if list[i].id == id then return list[i] end
+    end
+    return nil
+end
+
+function target_at(list, x, y)
+    local best, best_area
+    for i = 1, #list do
+        local t = list[i]
+        if t.vis ~= false and contains(t.r, x, y) then
+            local a = (t.r.x2 - t.r.x1) * (t.r.y2 - t.r.y1)
+            if not best_area or a < best_area then
+                best, best_area = t, a
+            end
+        end
+    end
+    return best
+end
+
+function reading_first(list)
+    local best
+    for i = 1, #list do
+        local t = list[i]
+        if not best or t.r.y1 < best.r.y1 - 4 or (math.abs(t.r.y1 - best.r.y1) <= 4 and t.r.x1 < best.r.x1) then
+            best = t
+        end
+    end
+    return best
+end
+
+function step_target(list, cur, dir)
+    if #list == 0 then return nil end
+    if not cur then return reading_first(list) end
+    local cx, cy = center(cur.r)
+    local best, best_score
+    for i = 1, #list do
+        local c = list[i]
+        if c.id ~= cur.id then
+            local tx, ty = center(c.r)
+            local dx, dy = tx - cx, ty - cy
+            local ok_dir = false
+            local pri, sec = 0, 0
+            if dir == DIR_UP and dy < -2 then
+                ok_dir, pri, sec = true, -dy, math.abs(dx)
+            elseif dir == DIR_DOWN and dy > 2 then
+                ok_dir, pri, sec = true, dy, math.abs(dx)
+            elseif dir == DIR_LEFT and dx < -2 then
+                ok_dir, pri, sec = true, -dx, math.abs(dy)
+            elseif dir == DIR_RIGHT and dx > 2 then
+                ok_dir, pri, sec = true, dx, math.abs(dy)
+            end
+            if ok_dir then
+                local score = pri + sec * 2.2
+                if not best_score or score < best_score then
+                    best, best_score = c, score
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- -----------------------------------------------------------------------------
+-- 4. Установка мебели в мире и точный режим UIAdvancedControls (В35)
+-- -----------------------------------------------------------------------------
+
+local function bit_set(mask, bit_val)
+    local m = math.floor(tonumber(mask) or 0)
+    return math.floor(m / bit_val) % 2 == 1
+end
+
+local function update_upvalue_by_name(fn, target_name, updater)
+    local dbg = rawget(_G, "debug")
+    if type(fn) ~= "function" or type(dbg) ~= "table" or type(dbg.getupvalue) ~= "function" or type(dbg.setupvalue) ~= "function" then
+        return false
+    end
+    for idx = 1, 20 do
+        local name, val = dbg.getupvalue(fn, idx)
+        if not name then break end
+        if name == target_name then
+            local new_val = updater(val)
+            if new_val ~= nil then
+                dbg.setupvalue(fn, idx, new_val)
+                return true
+            end
+            return false
+        end
+    end
+    return false
+end
+
+function apply_adv_offsets(gui)
+    if not gui or not gui._gp_orig_update or not gui.states then return false end
+    local cx, cy = cursor_xy()
+    local cur_pos = { x = cx, y = cy }
+    gui.prev_pos = cur_pos
+    local saved_snap = gui.snap
+    local saved_fine = gui.fine_control
+    gui.snap = false
+    gui.fine_control = false
+
+    -- 1. Записываем все 3 координаты (X, Y, Z) из gui.prev_offset в location_offset (diff_x=0, diff_y=0)
+    gui.state = gui.states.XZ_DRAG_LOC
+    pcall(gui._gp_orig_update, gui)
+
+    -- 2. Записываем gui.prev_rot в rotation_offset (diff_x=0)
+    gui.prev_pos = cur_pos
+    gui.state = gui.states.Y_DRAG_ROT
+    pcall(gui._gp_orig_update, gui)
+
+    gui.state = gui.states.IDLE
+    gui.snap = saved_snap
+    gui.fine_control = saved_fine
+    gui._gp_dirty = false
+    return true
+end
+
+function placement_tick(lx, ly, rx, ry, lt_held, btn_mask, dt_ms)
+    if not ENABLED then return false end
+    local pf = rawget(_G, "placeable_furniture")
+    if type(pf) ~= "table" or type(pf.get_state) ~= "function" or type(pf.states) ~= "table" then
+        return false
+    end
+    local ok_st, st = pcall(pf.get_state)
+    if not ok_st or not st or st == pf.states.IDLE then
+        return false
+    end
+
+    local dt = math.max(0, math.min(0.1, (tonumber(dt_ms) or 16) / 1000.0))
+    local mult = lt_held and ADV_FINE_MULT or 1.0
+    local lb = bit_set(btn_mask, GP_BIT_LB)
+    local rb = bit_set(btn_mask, GP_BIT_RB)
+    local dp_up = bit_set(btn_mask, GP_BIT_DPAD_UP)
+    local dp_dn = bit_set(btn_mask, GP_BIT_DPAD_DOWN)
+
+    lx = tonumber(lx) or 0
+    ly = tonumber(ly) or 0
+    rx = tonumber(rx) or 0
+    ry = tonumber(ry) or 0
+
+    local gui = pf.GUI or state.active_adv_ctrl
+    if st == pf.states.ADV_CTRL and gui then
+        -- В UIAdvancedControls первое нажатие съедается, если init == false (placeable_furniture.script:702)
+        gui.init = true
+        local rot_in = rx + (rb and 1.0 or 0.0) - (lb and 1.0 or 0.0)
+        local y_in   = ry + (dp_up and 1.0 or 0.0) - (dp_dn and 1.0 or 0.0)
+        if math.abs(lx) > 0.001 or math.abs(ly) > 0.001 or math.abs(rot_in) > 0.001 or math.abs(y_in) > 0.001 then
+            local off = gui.prev_offset
+            if off then
+                off.x = (tonumber(off.x) or 0) + lx * ADV_MOVE_SPEED * mult * dt
+                off.z = (tonumber(off.z) or 0) + ly * ADV_MOVE_SPEED * mult * dt
+                off.y = (tonumber(off.y) or 0) + y_in * ADV_HEIGHT_SPEED * mult * dt
+            end
+            gui.prev_rot = (tonumber(gui.prev_rot) or 0) + rot_in * ADV_ROT_SPEED * mult * dt
+            gui._gp_dirty = true
+            apply_adv_offsets(gui)
+        end
+        return true
+    end
+
+    -- Состояния HOLDING (2) и PREVIEW (4): поворот бамперами LB/RB (а в PREVIEW — и правым стиком RS.x)
+    local rot_world = (rb and 1.0 or 0.0) - (lb and 1.0 or 0.0)
+    if st == pf.states.PREVIEW then
+        rot_world = rot_world + rx
+    end
+    if math.abs(rot_world) > 0.001 then
+        local deg_delta = rot_world * ADV_ROT_SPEED * mult * dt
+        local applied = false
+        if type(pf.reset_offsets) == "function" then
+            applied = update_upvalue_by_name(pf.reset_offsets, "rotation_offset", function(old)
+                return (tonumber(old) or 0) + deg_delta
+            end)
+        end
+        if not applied and gui and gui._gp_orig_update then
+            gui.prev_rot = (tonumber(gui.prev_rot) or 0) + deg_delta
+            applied = apply_adv_offsets(gui)
+        end
+        state.rot_accum_holding = state.rot_accum_holding + deg_delta
+        return applied or true
+    end
+    return true
+end
+
+function format_placement_hud_text(st)
+    local pf = rawget(_G, "placeable_furniture")
+    local states = pf and pf.states or { HOLDING = 2, ADV_CTRL = 3, PREVIEW = 4 }
+    if st == states.ADV_CTRL then return txt("hud_adv") end
+    if st == states.PREVIEW then return txt("hud_preview") end
+    return txt("hud_hold")
+end
+
+function refresh_placement_hud(hud)
+    if not hud or not hud.text or not hud.bg then return end
+    local pf = rawget(_G, "placeable_furniture")
+    if not pf or type(pf.get_state) ~= "function" then return end
+    local ok_st, st = pcall(pf.get_state)
+    if not ok_st or not st or (pf.states and st == pf.states.IDLE) then return end
+
+    local want_gp = is_gamepad() and hints_visible("world")
+    if want_gp then
+        local line = format_placement_hud_text(st)
+        if hud._gp_last_mode ~= "gp" or hud._gp_last_state ~= st or hud._gp_last_line ~= line then
+            hud._gp_last_mode = "gp"
+            hud._gp_last_state = st
+            hud._gp_last_line = line
+            pcall(hud.text.SetText, hud.text, line)
+            if hud.text.AdjustHeightToText then pcall(hud.text.AdjustHeightToText, hud.text) end
+            local ok_h, th = pcall(hud.text.GetHeight, hud.text)
+            if ok_h and tonumber(th) and hud.bg.SetHeight then
+                pcall(hud.bg.SetHeight, hud.bg, th + 24)
+            end
+        end
+    elseif hud._gp_last_mode == "gp" then
+        -- P10: мгновенный возврат к родным подсказкам мыши/клавиатуры
+        hud._gp_last_mode = "kbm"
+        hud._gp_last_line = nil
+        if hud._gp_orig_refresh then
+            pcall(hud._gp_orig_refresh, hud, st)
+        end
+    end
+end
+
+-- -----------------------------------------------------------------------------
+-- 5. Ноутбук торговца: ui_trading_computer.UITradingComputer (В35)
+-- -----------------------------------------------------------------------------
+
+local function wnd_state(g, key)
+    local k = "_gp_" .. key
+    if not g[k] then
+        g[k] = { cur_id = nil, mem = {}, queue = {}, hold = nil, ui = {} }
+    end
+    return g[k]
+end
+
+local function defer(s, fn)
+    s.queue[#s.queue + 1] = fn
+    return "used"
+end
+
+local function drain_queue(s)
+    if #s.queue == 0 then return end
+    local copy = {}
+    for i = 1, #s.queue do copy[i] = s.queue[i] end
+    for i = #s.queue, 1, -1 do s.queue[i] = nil end
+    for i = 1, #copy do
+        pcall(copy[i])
+    end
+end
+
+function get_trading_pc()
+    local g = state.active_trading_pc
+    if g and is_top_dialog(g) then return g end
+    return nil
+end
+
+function collect_trading(g)
+    local list = {}
+    local lb = g.list_box
+    if shown(lb) and type(lb.GetSize) == "function" then
+        local ok_n, n = pcall(lb.GetSize, lb)
+        local view = abs_rect(lb)
+        for i = 0, (ok_n and tonumber(n) or 0) - 1 do
+            local ok_it, it = pcall(lb.GetItemByIndex, lb, i)
+            local r = ok_it and abs_rect(it) or nil
+            if r then
+                add_target(list, "row:" .. i, "rows", it, r, "row", {
+                    row_idx = i, sv = lb, view = view, vis = inside(r, view),
+                })
+            end
+        end
+    end
+    if shown(g.btn_open) then
+        add_target(list, "btn:open", "footer", g.btn_open, abs_rect(g.btn_open), "btn", { action = "open" })
+    end
+    if shown(g.btn_refresh) then
+        add_target(list, "btn:refresh", "footer", g.btn_refresh, abs_rect(g.btn_refresh), "btn", { action = "refresh" })
+    end
+    if shown(g.btn_close) then
+        add_target(list, "btn:close", "footer", g.btn_close, abs_rect(g.btn_close), "btn", { action = "close" })
+    end
+    return list
+end
+
+function step_trading_button(g, s, name)
+    if name == "B" then
+        return defer(s, function() if g.Close then g:Close() end end)
+    end
+    if name == "X" then
+        if not shown(g.btn_refresh) or not enabled(g.btn_refresh) or type(g.RefreshList) ~= "function" then
+            return deny()
+        end
+        return defer(s, function() g:RefreshList() end)
+    end
+    if name == "A" then
+        local list = collect_trading(g)
+        local cur = by_id(list, s.cur_id) or reading_first(list)
+        if not cur then return deny() end
+        if cur.row_idx ~= nil then
+            -- В35: A прямо на строке торговца выбирает строку и открывает торговлю
+            return defer(s, function()
+                if g.list_box and g.list_box.SetSelectedIndex then
+                    pcall(g.list_box.SetSelectedIndex, g.list_box, cur.row_idx)
+                end
+                if g.OnSelectTrader then pcall(g.OnSelectTrader, g) end
+                if g.OpenSelected then g:OpenSelected() end
+            end)
+        elseif cur.action == "open" then
+            local ok_sel, sel = false, -1
+            if g.list_box and g.list_box.GetSelectedIndex then
+                ok_sel, sel = pcall(g.list_box.GetSelectedIndex, g.list_box)
+            end
+            if not ok_sel or not sel or sel < 0 or sel >= 65000 then return deny() end
+            return defer(s, function() if g.OpenSelected then g:OpenSelected() end end)
+        elseif cur.action == "refresh" then
+            return defer(s, function() if g.RefreshList then g:RefreshList() end end)
+        elseif cur.action == "close" then
+            return defer(s, function() if g.Close then g:Close() end end)
+        end
+    end
+    return "used"
+end
+
+function paint_trading(g, s)
+    local parent = g.dialog or g.back or g
+    paint_btn_with_badge(s.ui, "btn_open", parent, g.btn_open, "A", "letterica16")
+    paint_btn_with_badge(s.ui, "btn_refresh", parent, g.btn_refresh, "X", "letterica16")
+    paint_btn_with_badge(s.ui, "btn_close", parent, g.btn_close, "B", "letterica16")
+
+    local items = {}
+    if shown(g.list_box) then
+        items[#items + 1] = { glyph = "A", text = txt("trade") }
+    end
+    if shown(g.btn_refresh) then
+        items[#items + 1] = { glyph = "X", text = txt("refresh") }
+    end
+    items[#items + 1] = { glyph = "B", text = txt("close") }
+
+    local dr = abs_rect(parent)
+    local sx = dr and dr.x1 or 262
+    local sy = dr and math.min(736, dr.y2 + 6) or 680
+    local sw = dr and math.max(240, dr.x2 - dr.x1) or 500
+    paint_strip(s.ui, "strip", g, sx, sy, sw, items, true)
+end
+
+-- -----------------------------------------------------------------------------
+-- 6. Пианино: ui_furniture_piano.UIFurniturePiano (В4, P4, P12)
+-- -----------------------------------------------------------------------------
+
+function get_piano()
+    local m = rawget(_G, "ui_furniture_piano")
+    local g = type(m) == "table" and m.GUI or nil
+    if g and is_top_dialog(g) then return g end
+    return nil
+end
+
+local function combo_expanded(cb)
+    if not cb then return false end
+    if type(cb.GamepadIsExpanded) == "function" then
+        local ok, ex = pcall(cb.GamepadIsExpanded, cb)
+        if ok then return ex == true end
+    end
+    if cb.list_frame and shown(cb.list_frame) then return true end
+    return false
+end
+
+function piano_layer(g, s)
+    if s.combo and combo_expanded(s.combo) then return "combo" end
+    s.combo = nil
+    if shown(g.tag_select_bg) then return "tags" end
+    if shown(g.piano_config_bg) then return "config" end
+    return "main"
+end
+
+function collect_piano(g, s, layer)
+    layer = layer or piano_layer(g, s)
+    local list = {}
+    if layer == "combo" and s.combo then
+        local cb = s.combo
+        local lb = type(cb.GamepadList) == "function" and cb:GamepadList() or cb.list
+        local view = abs_rect(lb)
+        for i = 0, 128 do
+            local row = nil
+            if type(cb.GamepadListItem) == "function" then
+                local ok_r, r_it = pcall(cb.GamepadListItem, cb, i)
+                if ok_r then row = r_it end
+            elseif lb and type(lb.GetItemByIndex) == "function" then
+                local ok_r, r_it = pcall(lb.GetItemByIndex, lb, i)
+                if ok_r then row = r_it end
+            end
+            if not row then break end
+            add_target(list, "combo:" .. i, "combo", row, abs_rect(row), "row", {
+                combo_idx = i, sv = lb, view = view, vis = inside(abs_rect(row), view),
+            })
+        end
+        return list
+    end
+    if layer == "tags" then
+        local view = abs_rect(g.tag_select_scroll)
+        if type(g.tag_checkboxes) == "table" then
+            for i, entry in ipairs(g.tag_checkboxes) do
+                local chk = type(entry) == "table" and (entry.check or entry.ctrl) or entry
+                if shown(chk) then
+                    local r = abs_rect(chk)
+                    add_target(list, "tag:" .. i, "tags", chk, r, "btn", {
+                        tag_idx = i, sv = g.tag_select_scroll, view = view, vis = inside(r, view),
+                    })
+                end
+            end
+        end
+        return list
+    end
+    if layer == "config" then
+        for _, sl in ipairs(PIANO_SLIDERS) do
+            local ctrl = g[sl.field]
+            if shown(ctrl) then
+                add_target(list, sl.id, "config", ctrl, abs_rect(ctrl), "slider", { slider = sl })
+            end
+        end
+        return list
+    end
+
+    if shown(g.sheet_select) then
+        add_target(list, "main:sheet", "main", g.sheet_select, abs_rect(g.sheet_select), "btn", { action = "combo", combo = g.sheet_select })
+    end
+    if shown(g.tag_select_btn) then
+        add_target(list, "main:tags", "main", g.tag_select_btn, abs_rect(g.tag_select_btn), "btn", { action = "toggle_tags" })
+    end
+    if shown(g.autoplay_btn) then
+        add_target(list, "main:autoplay", "main", g.autoplay_btn, abs_rect(g.autoplay_btn), "btn", { action = "autoplay" })
+    end
+    if shown(g.instrument_select) then
+        add_target(list, "main:instrument", "main", g.instrument_select, abs_rect(g.instrument_select), "btn", { action = "combo", combo = g.instrument_select })
+    end
+    if shown(g.piano_config_btn) then
+        add_target(list, "main:config", "main", g.piano_config_btn, abs_rect(g.piano_config_btn), "btn", { action = "toggle_config" })
+    end
+    if shown(g.btn_pickup) then
+        add_target(list, "main:pickup", "main", g.btn_pickup, abs_rect(g.btn_pickup), "btn", { action = "pickup_hold" })
+    end
+    if shown(g.btn_close) then
+        add_target(list, "main:close", "main", g.btn_close, abs_rect(g.btn_close), "btn", { action = "close" })
+    end
+    return list
+end
+
+function step_piano_slider(g, target, delta)
+    local sl = target and target.slider
+    local ctrl = sl and g[sl.field]
+    if not ctrl or type(ctrl.GetFValue) ~= "function" or type(ctrl.SetFValue) ~= "function" then
+        return false
+    end
+    local ok_v, cur = pcall(ctrl.GetFValue, ctrl)
+    cur = ok_v and tonumber(cur) or 0
+    local next_v = math.max(sl.min, math.min(sl.max, cur + delta * sl.step))
+    if math.abs(next_v - cur) < 1e-6 then
+        deny()
+        return true
+    end
+    pcall(ctrl.SetFValue, ctrl, next_v)
+    if sl.update and type(g[sl.update]) == "function" then
+        pcall(g[sl.update], g)
+    end
+    return true
+end
+
+function step_piano_button(g, s, name, phase)
+    local layer = piano_layer(g, s)
+    if phase ~= "press" then
+        local h = s.hold
+        s.hold = nil
+        if phase == "hold" and h == "pickup" and name == "X" then
+            return defer(s, function() if g.Pickup then g:Pickup() end end)
+        end
+        return "used"
+    end
+
+    if name == "X" and layer == "main" then
+        if not shown(g.btn_pickup) or not enabled(g.btn_pickup) or type(g.Pickup) ~= "function" then
+            return deny()
+        end
+        s.hold = "pickup"
+        return string.format("hold:%d:%d", HOLD_PAUSE_MS, HOLD_FILL_MS) .. ring_suffix(s.ui.pickup_icon)
+    end
+
+    if name == "B" then
+        s.hold = nil
+        if layer == "combo" and s.combo then
+            return defer(s, function()
+                if s.combo and s.combo.GamepadShowList then pcall(s.combo.GamepadShowList, s.combo, false)
+                elseif s.combo and s.combo.ShowList then pcall(s.combo.ShowList, s.combo, false) end
+                s.combo = nil
+            end)
+        elseif layer == "tags" then
+            return defer(s, function()
+                if g.tag_select_btn and g.tag_select_btn.SetCheck then pcall(g.tag_select_btn.SetCheck, g.tag_select_btn, false) end
+                if g.OnTagMenuToggle then pcall(g.OnTagMenuToggle, g)
+                elseif g.tag_select_bg then pcall(g.tag_select_bg.Show, g.tag_select_bg, false) end
+            end)
+        elseif layer == "config" then
+            return defer(s, function()
+                if g.piano_config_btn and g.piano_config_btn.SetCheck then pcall(g.piano_config_btn.SetCheck, g.piano_config_btn, false) end
+                if g.OnConfigToggle then pcall(g.OnConfigToggle, g)
+                elseif g.piano_config_bg then pcall(g.piano_config_bg.Show, g.piano_config_bg, false) end
+            end)
+        end
+        return defer(s, function() if g.Close then g:Close() end end)
+    end
+
+    local list = collect_piano(g, s, layer)
+    local cur = by_id(list, s.cur_id) or reading_first(list)
+
+    if layer == "config" and cur and cur.slider and (name == "LB" or name == "RB") then
+        step_piano_slider(g, cur, name == "LB" and -4 or 4)
+        return "used"
+    end
+
+    if name == "A" then
+        if not cur then return deny() end
+        if layer == "combo" and s.combo then
+            return defer(s, function()
+                local cb = s.combo
+                s.combo = nil
+                if cb and cb.GamepadSelect then pcall(cb.GamepadSelect, cb, cur.combo_idx) end
+            end)
+        elseif layer == "tags" and cur.w then
+            return defer(s, function()
+                if cur.w.GetCheck and cur.w.SetCheck then
+                    pcall(cur.w.SetCheck, cur.w, not cur.w:GetCheck())
+                end
+                if g.OnTagFilterChanged then pcall(g.OnTagFilterChanged, g)
+                elseif g.PopulateSheetSelect then pcall(g.PopulateSheetSelect, g) end
+            end)
+        elseif cur.action == "combo" and cur.combo then
+            return defer(s, function()
+                if cur.combo.GamepadShowList then
+                    s.combo = cur.combo
+                    pcall(cur.combo.GamepadShowList, cur.combo, true)
+                end
+            end)
+        elseif cur.action == "toggle_tags" then
+            return defer(s, function()
+                if g.tag_select_btn and g.tag_select_btn.GetCheck and g.tag_select_btn.SetCheck then
+                    pcall(g.tag_select_btn.SetCheck, g.tag_select_btn, not g.tag_select_btn:GetCheck())
+                end
+                if g.OnTagMenuToggle then pcall(g.OnTagMenuToggle, g) end
+            end)
+        elseif cur.action == "autoplay" then
+            return defer(s, function()
+                if g.autoplay_btn and g.autoplay_btn.GetCheck and g.autoplay_btn.SetCheck then
+                    pcall(g.autoplay_btn.SetCheck, g.autoplay_btn, not g.autoplay_btn:GetCheck())
+                end
+                if g.OnAutoplayToggle then pcall(g.OnAutoplayToggle, g) end
+            end)
+        elseif cur.action == "toggle_config" then
+            return defer(s, function()
+                if g.piano_config_btn and g.piano_config_btn.GetCheck and g.piano_config_btn.SetCheck then
+                    pcall(g.piano_config_btn.SetCheck, g.piano_config_btn, not g.piano_config_btn:GetCheck())
+                end
+                if g.OnConfigToggle then pcall(g.OnConfigToggle, g) end
+            end)
+        elseif cur.action == "pickup_hold" then
+            -- В4: «Забрать мебель» срабатывает только через удержание X (нажатие A даёт отказ)
+            return deny()
+        elseif cur.action == "close" then
+            return defer(s, function() if g.Close then g:Close() end end)
+        end
+    end
+    return "used"
+end
+
+function paint_piano(g, s)
+    local parent = g.dialog or g.bg or g
+    s.ui.pickup_icon = paint_btn_with_badge(s.ui, "btn_pickup", parent, g.btn_pickup, "X", "letterica16")
+    paint_btn_with_badge(s.ui, "btn_close", parent, g.btn_close, "B", "letterica16")
+
+    local layer = piano_layer(g, s)
+    local items = {}
+    if layer == "config" then
+        items[#items + 1] = { glyph = "LB", text = txt("adjust") }
+        items[#items + 1] = { glyph = "B",  text = txt("back") }
+    elseif layer == "tags" or layer == "combo" then
+        items[#items + 1] = { glyph = "A", text = txt("select") }
+        items[#items + 1] = { glyph = "B", text = txt("back") }
+    else
+        items[#items + 1] = { glyph = "A", text = txt("select") }
+        if shown(g.btn_pickup) then
+            items[#items + 1] = { glyph = "X", text = txt("pickup_hold") }
+        end
+        items[#items + 1] = { glyph = "B", text = txt("close") }
+    end
+
+    local dr = abs_rect(parent)
+    local sx = dr and dr.x1 or 160
+    local sy = dr and math.min(736, dr.y2 + 4) or 712
+    local sw = dr and math.max(280, dr.x2 - dr.x1) or 704
+    paint_strip(s.ui, "strip", g, sx, sy, sw, items, true)
+end
+
+-- -----------------------------------------------------------------------------
+-- 7. Набор карт: item_map_kit.UIMapKit (ваниль Anomaly 1.5.3 + G.A.M.M.A.)
+-- -----------------------------------------------------------------------------
+
+function get_map_kit()
+    local m = rawget(_G, "item_map_kit")
+    local g = type(m) == "table" and m.GUI or nil
+    if g and is_top_dialog(g) then return g end
+    return nil
+end
+
+function collect_map_kit(g)
+    local list = {}
+    if shown(g.btn_previous) then
+        add_target(list, "map:prev", "footer", g.btn_previous, abs_rect(g.btn_previous), "btn", { action = "prev" })
+    end
+    if shown(g.btn_ok) then
+        add_target(list, "map:ok", "footer", g.btn_ok, abs_rect(g.btn_ok), "btn", { action = "close" })
+    end
+    if shown(g.btn_next) then
+        add_target(list, "map:next", "footer", g.btn_next, abs_rect(g.btn_next), "btn", { action = "next" })
+    end
+    return list
+end
+
+function step_map_kit_button(g, s, name)
+    if name == "B" then
+        return defer(s, function() if g.Close then g:Close() end end)
+    end
+    local multi = type(g.indexes) == "table" and #g.indexes > 1
+    if name == "LB" then
+        if not multi or not shown(g.btn_previous) or type(g.OnPrevious) ~= "function" then return deny() end
+        return defer(s, function() g:OnPrevious() end)
+    end
+    if name == "RB" then
+        if not multi or not shown(g.btn_next) or type(g.OnNext) ~= "function" then return deny() end
+        return defer(s, function() g:OnNext() end)
+    end
+    if name == "A" then
+        local list = collect_map_kit(g)
+        local cur = by_id(list, s.cur_id) or reading_first(list)
+        if not cur then return deny() end
+        if cur.action == "prev" then
+            if not multi or type(g.OnPrevious) ~= "function" then return deny() end
+            return defer(s, function() g:OnPrevious() end)
+        elseif cur.action == "next" then
+            if not multi or type(g.OnNext) ~= "function" then return deny() end
+            return defer(s, function() g:OnNext() end)
+        else
+            return defer(s, function() if g.Close then g:Close() end end)
+        end
+    end
+    return "used"
+end
+
+function paint_map_kit(g, s)
+    local parent = g.dialog or g.frame or g
+    paint_btn_with_badge(s.ui, "btn_prev", parent, g.btn_previous, "LB", "letterica16")
+    paint_btn_with_badge(s.ui, "btn_ok", parent, g.btn_ok, "B", "letterica16")
+    paint_btn_with_badge(s.ui, "btn_next", parent, g.btn_next, "RB", "letterica16")
+
+    local multi = type(g.indexes) == "table" and #g.indexes > 1
+    local items = {}
+    if multi and shown(g.btn_previous) then
+        items[#items + 1] = { glyph = "LB", text = txt("prev_page") }
+    end
+    if multi and shown(g.btn_next) then
+        items[#items + 1] = { glyph = "RB", text = txt("next_page") }
+    end
+    items[#items + 1] = { glyph = "B", text = txt("close") }
+
+    local dr = abs_rect(parent)
+    local sx = dr and dr.x1 or 262
+    local sy = dr and math.min(736, dr.y2 + 6) or 700
+    local sw = dr and math.max(240, dr.x2 - dr.x1) or 500
+    paint_strip(s.ui, "strip", g, sx, sy, sw, items, true)
+end
+
+-- -----------------------------------------------------------------------------
+-- 8. Общий диспетчер рамки фокуса и интеграция с gp_bridge
+-- -----------------------------------------------------------------------------
+
+function current()
+    if not ENABLED then return nil, nil end
+    install_hooks()
+    local tr = get_trading_pc()
+    if tr then return "trading", tr end
+    local pn = get_piano()
+    if pn then return "piano", pn end
+    local mk = get_map_kit()
+    if mk then return "map_kit", mk end
+    return nil, nil
+end
+
+local function collect_for(kind, g, s)
+    if kind == "trading" then return collect_trading(g), "main" end
+    if kind == "piano" then
+        local layer = piano_layer(g, s)
+        return collect_piano(g, s, layer), layer
+    end
+    if kind == "map_kit" then return collect_map_kit(g), "main" end
+    return {}, "main"
+end
+
+local function resolve_focus(kind, g, s, x, y)
+    local list, layer = collect_for(kind, g, s)
+    if s.last_layer ~= layer then
+        s.last_layer = layer
+        s.cur_id = s.mem[layer]
+    end
+    local hit = (x and y) and target_at(list, x, y) or nil
+    local cur = hit or by_id(list, s.cur_id) or by_id(list, s.mem[layer]) or reading_first(list)
+    if cur then
+        s.cur_id = cur.id
+        s.mem[layer] = cur.id
+    end
+    return cur, list, layer
+end
+
+function focus_frame_active()
+    local kind = current()
+    return kind ~= nil
+end
+
+function query(x, y)
+    local kind, g = current()
+    if not kind then return nil end
+    x, y = tonumber(x) or 0, tonumber(y) or 0
+    local s = wnd_state(g, kind)
+    local cur = resolve_focus(kind, g, s, x, y)
+    if not cur or cur.vis == false then
+        return string.format("hit:1;cx=%.1f;cy=%.1f;w=0;h=0;kind=none", x, y)
+    end
+    local cx, cy = center(cur.r)
+    return string.format("hit:1;cx=%.1f;cy=%.1f;w=%.1f;h=%.1f;kind=%s",
+        cx, cy, cur.r.x2 - cur.r.x1, cur.r.y2 - cur.r.y1, cur.kind)
+end
+
+function snap(x, y, dir)
+    local kind, g = current()
+    if not kind then return nil end
+    x, y, dir = tonumber(x) or 0, tonumber(y) or 0, tonumber(dir) or 0
+    local s = wnd_state(g, kind)
+    local cur, list, layer = resolve_focus(kind, g, s, x, y)
+
+    if kind == "piano" and layer == "config" and cur and cur.slider and (dir == DIR_LEFT or dir == DIR_RIGHT) then
+        step_piano_slider(g, cur, dir == DIR_LEFT and -1 or 1)
+        local cx, cy = center(cur.r)
+        return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, cur.kind)
+    end
+
+    local nxt = step_target(list, cur, dir)
+    if not nxt then
+        if cur then x, y = center(cur.r) end
+        return string.format("snap:1;cx=%.1f;cy=%.1f;kind=none", x, y)
+    end
+    ensure_visible(nxt)
+    s.cur_id = nxt.id
+    s.mem[layer] = nxt.id
+    local cx, cy = center(nxt.r)
+    move_cursor(cx, cy)
+    return string.format("snap:1;cx=%.1f;cy=%.1f;kind=%s", cx, cy, nxt.kind)
+end
+
+function rs_analog(y, dt)
+    local kind, g = current()
+    if not kind then return false end
+    local s = wnd_state(g, kind)
+    if kind == "trading" then
+        return sv_scroll(g.list_box, s, "scroll_acc", y, dt, SCROLL_SPEED)
+    elseif kind == "piano" then
+        local layer = piano_layer(g, s)
+        if layer == "tags" then
+            return sv_scroll(g.tag_select_scroll, s, "tag_acc", y, dt, SCROLL_SPEED)
+        end
+        return sv_scroll(g.score_scroll, s, "score_acc", y, dt, SCROLL_SPEED)
+    end
+    return true
+end
+
+function ws_button(name, phase)
+    local kind, g = current()
+    if not kind then return nil end
+    local s = wnd_state(g, kind)
+    if kind == "piano" then
+        return step_piano_button(g, s, name, phase)
+    end
+    if phase ~= "press" then return "used" end
+    if kind == "trading" then
+        return step_trading_button(g, s, name)
+    elseif kind == "map_kit" then
+        return step_map_kit_button(g, s, name)
+    end
+    return ""
+end
+
+function tick_window(kind, g)
+    local s = wnd_state(g, kind)
+    drain_queue(s)
+    local active_kind, active_g = current()
+    local active = (active_kind == kind) and rawequal(active_g, g) and is_gamepad()
+    if active then
+        local cur = resolve_focus(kind, g, s)
+        if cur and not s.placed_initial then
+            s.placed_initial = true
+            ensure_visible(cur)
+            move_cursor(center(cur.r))
+        end
+    else
+        s.placed_initial = false
+        s.hold = nil
+    end
+    if kind == "trading" then
+        paint_trading(g, s)
+    elseif kind == "piano" then
+        paint_piano(g, s)
+    elseif kind == "map_kit" then
+        paint_map_kit(g, s)
+    end
+end
+
+-- -----------------------------------------------------------------------------
+-- 9. Установка хуков на классы модов (с защитой P23 для чистой Anomaly)
+-- -----------------------------------------------------------------------------
+
+local function hook_trading_computer()
+    local m = rawget(_G, "ui_trading_computer")
+    local cls = type(m) == "table" and m.UITradingComputer or nil
+    if not cls or cls._gp_hideout_hooked then return false end
+    cls._gp_hideout_hooked = true
+
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UITradingComputer") end
+            state.active_trading_pc = self
+        end
+    end
+    for _, open_fn in ipairs({ "TestAndShow", "ShowNoConnection" }) do
+        local orig = cls[open_fn]
+        if type(orig) == "function" then
+            cls[open_fn] = function(self, ...)
+                if self.SetWindowName then pcall(self.SetWindowName, self, "UITradingComputer") end
+                state.active_trading_pc = self
+                return orig(self, ...)
+            end
+        end
+    end
+    local orig_upd = cls.Update
+    if type(orig_upd) == "function" then
+        cls.Update = function(self, ...)
+            local r = orig_upd(self, ...)
+            tick_window("trading", self)
+            return r
+        end
+    end
+    local orig_close = cls.Close
+    if type(orig_close) == "function" then
+        cls.Close = function(self, ...)
+            if rawequal(state.active_trading_pc, self) then state.active_trading_pc = nil end
+            return orig_close(self, ...)
+        end
+    end
+    return true
+end
+
+local function hook_piano()
+    local m = rawget(_G, "ui_furniture_piano")
+    local cls = type(m) == "table" and m.UIFurniturePiano or nil
+    if not cls or cls._gp_hideout_hooked then return false end
+    cls._gp_hideout_hooked = true
+
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UIFurniturePiano") end
+        end
+    end
+    local orig_upd = cls.Update
+    if type(orig_upd) == "function" then
+        cls.Update = function(self, ...)
+            local r = orig_upd(self, ...)
+            tick_window("piano", self)
+            return r
+        end
+    end
+    return true
+end
+
+local function hook_map_kit()
+    local m = rawget(_G, "item_map_kit")
+    local cls = type(m) == "table" and m.UIMapKit or nil
+    if not cls or cls._gp_hideout_hooked then return false end
+    cls._gp_hideout_hooked = true
+
+    local orig_init = cls.__init
+    if type(orig_init) == "function" then
+        cls.__init = function(self, ...)
+            orig_init(self, ...)
+            if self.SetWindowName then pcall(self.SetWindowName, self, "UIMapKit") end
+        end
+    end
+    local orig_upd = cls.Update
+    if type(orig_upd) == "function" then
+        cls.Update = function(self, ...)
+            local r = orig_upd(self, ...)
+            tick_window("map_kit", self)
+            return r
+        end
+    end
+    return true
+end
+
+local function hook_furniture_placement()
+    local pf = rawget(_G, "placeable_furniture")
+    local cls = type(pf) == "table" and pf.UIAdvancedControls or nil
+    if cls and not cls._gp_hideout_hooked then
+        cls._gp_hideout_hooked = true
+        local orig_init = cls.__init
+        if type(orig_init) == "function" then
+            cls.__init = function(self, ...)
+                orig_init(self, ...)
+                if self.SetWindowName then pcall(self.SetWindowName, self, "UIAdvancedControls") end
+                if is_gamepad() then self.init = true end
+                state.active_adv_ctrl = self
+            end
+        end
+        local orig_reset = cls.Reset
+        if type(orig_reset) == "function" then
+            cls.Reset = function(self, ...)
+                local r = orig_reset(self, ...)
+                if self.SetWindowName then pcall(self.SetWindowName, self, "UIAdvancedControls") end
+                if is_gamepad() then self.init = true end
+                state.active_adv_ctrl = self
+                return r
+            end
+        end
+        local orig_upd = cls.Update
+        if type(orig_upd) == "function" then
+            cls._gp_orig_update = orig_upd
+            cls.Update = function(self, ...)
+                self._gp_orig_update = orig_upd
+                state.active_adv_ctrl = self
+                if is_gamepad() then self.init = true end
+                if self._gp_dirty then
+                    apply_adv_offsets(self)
+                end
+                return orig_upd(self, ...)
+            end
+        end
+        local orig_close = cls.Close
+        if type(orig_close) == "function" then
+            cls.Close = function(self, ...)
+                if rawequal(state.active_adv_ctrl, self) then state.active_adv_ctrl = nil end
+                return orig_close(self, ...)
+            end
+        end
+    end
+
+    local hud_mod = rawget(_G, "hf_placement_hud")
+    local hud_cls = type(hud_mod) == "table" and hud_mod.UIHFPlacementHUD or nil
+    if hud_cls and not hud_cls._gp_hideout_hooked then
+        hud_cls._gp_hideout_hooked = true
+        local orig_ref = hud_cls.Refresh
+        if type(orig_ref) == "function" then
+            hud_cls._gp_orig_refresh = orig_ref
+            hud_cls.Refresh = function(self, st, ...)
+                self._gp_orig_refresh = orig_ref
+                local r = orig_ref(self, st, ...)
+                self._gp_last_mode = "kbm"
+                refresh_placement_hud(self)
+                return r
+            end
+        end
+        local orig_hupd = hud_cls.Update
+        if type(orig_hupd) == "function" then
+            hud_cls.Update = function(self, ...)
+                local r = orig_hupd(self, ...)
+                refresh_placement_hud(self)
+                return r
+            end
+        end
+    end
+    return cls ~= nil or hud_cls ~= nil
+end
+
+function install_hooks()
+    hook_furniture_placement()
+    hook_trading_computer()
+    hook_piano()
+    hook_map_kit()
+    state.hooks_installed = true
+    return true
+end
+
+function install_bridge_wrap()
+    local b = rawget(_G, "gp_bridge")
+    if type(b) ~= "table" or b._gp_hideout_wrapped then return false end
+    b._gp_hideout_wrapped = true
+
+    local prev_active = b.inv_focus_frame_active
+    b.inv_focus_frame_active = function(...)
+        if focus_frame_active() then return true end
+        return type(prev_active) == "function" and prev_active(...) or false
+    end
+
+    local prev_query = b.cursor_query_target
+    b.cursor_query_target = function(x, y, ...)
+        local r = query(x, y)
+        if r ~= nil then return r end
+        return type(prev_query) == "function" and prev_query(x, y, ...) or nil
+    end
+
+    local prev_snap = b.cursor_dpad_snap
+    b.cursor_dpad_snap = function(x, y, dir, ...)
+        local r = snap(x, y, dir)
+        if r ~= nil then return r end
+        return type(prev_snap) == "function" and prev_snap(x, y, dir, ...) or nil
+    end
+
+    local prev_rs = b.cursor_rs_analog
+    b.cursor_rs_analog = function(y, dt, ...)
+        if focus_frame_active() then return rs_analog(y, dt) end
+        return type(prev_rs) == "function" and prev_rs(y, dt, ...) or false
+    end
+
+    local prev_ws = b.ws_button
+    b.ws_button = function(name, phase, ...)
+        local r = ws_button(name, phase)
+        if r ~= nil then return r end
+        return type(prev_ws) == "function" and prev_ws(name, phase, ...) or ""
+    end
+    return true
+end
+
+function on_game_start()
+    if gp_compat and gp_compat.is_engine_compatible and not gp_compat.is_engine_compatible() then return end
+    install_hooks()
+    install_bridge_wrap()
+    local reg = rawget(_G, "RegisterScriptCallback")
+    if type(reg) == "function" then
+        reg("actor_on_first_update", function()
+            install_hooks()
+            install_bridge_wrap()
+        end)
+    end
+end

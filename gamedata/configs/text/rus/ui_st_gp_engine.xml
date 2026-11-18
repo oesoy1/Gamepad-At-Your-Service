@@ -1,0 +1,1296 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+	<string id="ui_gp_eng_talk_select">
+		<text>Выбрать</text>
+	</string>
+	<string id="ui_gp_eng_talk_exit">
+		<text>Выйти</text>
+	</string>
+	<string id="ui_gp_eng_talk_trade">
+		<text>Торговать</text>
+	</string>
+	<string id="ui_gp_eng_talk_scroll">
+		<text>Листать</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_cross">
+		<text>[Крест]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_circle">
+		<text>[Круг]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_square">
+		<text>[Квадрат]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_ps_triangle">
+		<text>[Треугольник]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_up">
+		<text>[Крест. Вверх]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_down">
+		<text>[Крест. Вниз]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_left">
+		<text>[Крест. Влево]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_dpad_right">
+		<text>[Крест. Вправо]</text>
+	</string>
+	<string id="ui_gp_eng_glyph_hold_prefix">
+		<text>Удерж. </text>
+	</string>
+	<string id="ui_gp_eng_err_seh_av">
+		<text>EXCEPTION_ACCESS_VIOLATION (обращение к недоступной памяти / нулевому указателю)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_div0">
+		<text>EXCEPTION_INT_DIVIDE_BY_ZERO (деление целого числа на ноль)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_bounds">
+		<text>EXCEPTION_ARRAY_BOUNDS_EXCEEDED (выход за границы массива)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_ill">
+		<text>EXCEPTION_ILLEGAL_INSTRUCTION (недопустимая инструкция процессора)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_stack">
+		<text>EXCEPTION_STACK_OVERFLOW (переполнение стека)</text>
+	</string>
+	<string id="ui_gp_eng_err_seh_cpp">
+		<text>CPP_STD_EXCEPTION (исключение C++)</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_main_menu">
+		<text>В главном меню или в окне настроек игры.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_wheel">
+		<text>Во время открытия или выбора предмета в колесе быстрого доступа.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_pda">
+		<text>Во время работы с КПК (карта Зоны, задания или вкладки КПК).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_menu_ui">
+		<text>Во время работы с открытым окном (инвентарь, обыск, торговля, ремонт или окно действия).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_dialog">
+		<text>Во время разговора с персонажем (диалог).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_osk">
+		<text>Во время набора текста на экранной клавиатуре.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_sleep">
+		<text>В окне выбора времени сна.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_placement">
+		<text>В режиме расстановки мебели или предметов в убежище.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_console">
+		<text>При открытой командной строке игры (~).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_world">
+		<text>Во время обычной игры в мире (ходьба, осмотр по сторонам или бой).</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_generic">
+		<text>Во время очередного кадра обработки управления геймпадом.</text>
+	</string>
+	<string id="ui_gp_eng_err_moment_paused_suffix">
+		<text> Игра в этот момент стояла на паузе.</text>
+	</string>
+	<string id="ui_gp_eng_err_unknown_stage">
+		<text>неизвестный участок</text>
+	</string>
+	<string id="ui_gp_eng_err_unexpected_fault">
+		<text>непредвиденный сбой</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_wheel">
+		<text>Произошла непредвиденная ошибка при обработке быстрого колеса выбора для геймпада.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_pda">
+		<text>Произошла непредвиденная ошибка при управлении КПК с геймпада.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_ui">
+		<text>Произошла непредвиденная ошибка при обработке кнопки или курсора геймпада в окне инвентаря / меню.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_field">
+		<text>Произошла непредвиденная ошибка при выполнении полевого или оружейного действия с геймпада.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_lua_generic">
+		<text>В одном из вспомогательных обработчиков геймпада возникла непредвиденная ошибка.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_seh">
+		<text>При опросе геймпада внутри ядра игры возникла критическая ошибка памяти или вычислений, которую перехватила встроенная броня.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_update">
+		<text>Во время покадрового опроса кнопок и стиков геймпада произошёл непредвиденный сбой.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_look">
+		<text>Во время расчёта поворота камеры правым стиком геймпада произошёл непредвиденный сбой.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_move">
+		<text>Во время расчёта движения персонажа левым стиком геймпада произошёл непредвиденный сбой.</text>
+	</string>
+	<string id="ui_gp_eng_err_what_frame_fmt">
+		<text>При обработке кадра управления геймпадом произошла непредвиденная ошибка (%s).</text>
+	</string>
+	<string id="ui_gp_eng_err_recovery_default">
+		<text>Проблемный кадр геймпада безопасно пропущен. Все кнопки, курки, стики и вибрация геймпада мгновенно сброшены в нейтральное положение (персонаж не бежит и не стреляет сам по себе), управление автоматически переключено на клавиатуру и мышь, а игра продолжила работу без вылета и без закрытия окна.</text>
+	</string>
+	<string id="ui_gp_eng_err_hdr_title">
+		<text>АВАРИЙНЫЙ ОТЧЁТ ЗАЩИТЫ ГЕЙМПАДА (gamepad_last_error.log)</text>
+	</string>
+	<string id="ui_gp_eng_err_hdr_time">
+		<text>Время записи: </text>
+	</string>
+	<string id="ui_gp_eng_err_sec_what">
+		<text>1. ЧТО ПРОИЗОШЛО:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_when">
+		<text>2. В КАКОЙ МОМЕНТ ИГРЫ:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_recovery">
+		<text>3. ЧТО СДЕЛАЛА ЗАЩИТА:</text>
+	</string>
+	<string id="ui_gp_eng_err_sec_tech">
+		<text>ТЕХНИЧЕСКИЕ ДЕТАЛИ ДЛЯ БЫСТРОЙ ПОЧИНКИ:</text>
+	</string>
+	<string id="ui_gp_eng_ctx_world_gameplay">
+		<text>Мир / Полевая игра</text>
+	</string>
+	<string id="ui_gp_eng_ctx_menu_ui">
+		<text>Меню / Инвентарь / Интерфейс</text>
+	</string>
+	<string id="ui_gp_eng_ctx_main_menu">
+		<text>Главное меню</text>
+	</string>
+	<string id="ui_gp_eng_ctx_dialog_npc">
+		<text>Диалог с НПС</text>
+	</string>
+	<string id="ui_gp_eng_ctx_radial_wheel">
+		<text>Колесо быстрого доступа</text>
+	</string>
+	<string id="ui_gp_eng_ctx_world_3dpda">
+		<text>3D-КПК</text>
+	</string>
+	<string id="ui_gp_eng_ctx_placement">
+		<text>Расстановка в убежище</text>
+	</string>
+	<string id="ui_gp_eng_ctx_vehicle">
+		<text>Транспорт / Турель</text>
+	</string>
+	<string id="ui_gp_eng_ctx_console">
+		<text>Консоль</text>
+	</string>
+	<string id="ui_gp_eng_ctx_text_entry">
+		<text>Ввод текста</text>
+	</string>
+	<string id="ui_gp_eng_ctx_cutscene">
+		<text>Кат-сцена</text>
+	</string>
+	<string id="ui_gp_eng_ctx_sleep">
+		<text>Сон</text>
+	</string>
+	<string id="ui_gp_eng_ctx_unknown">
+		<text>Неизвестно</text>
+	</string>
+	<string id="ui_gp_eng_act_menu">
+		<text>Пауза / Меню [ЗАЩИЩЕНО]</text>
+	</string>
+	<string id="ui_gp_eng_act_confirm">
+		<text>Подтвердить / Выбрать [ЗАЩИЩЕНО]</text>
+	</string>
+	<string id="ui_gp_eng_act_back">
+		<text>Назад / Закрыть [ЗАЩИЩЕНО]</text>
+	</string>
+	<string id="ui_gp_eng_act_context_menu">
+		<text>Контекстное меню предмета</text>
+	</string>
+	<string id="ui_gp_eng_act_quick_action">
+		<text>Быстрое действие / Перенос</text>
+	</string>
+	<string id="ui_gp_eng_act_tab_prev">
+		<text>Предыдущая вкладка (LB)</text>
+	</string>
+	<string id="ui_gp_eng_act_tab_next">
+		<text>Следующая вкладка (RB)</text>
+	</string>
+	<string id="ui_gp_eng_act_page_prev">
+		<text>Предыдущая страница / подвкладка</text>
+	</string>
+	<string id="ui_gp_eng_act_page_next">
+		<text>Следующая страница / подвкладка</text>
+	</string>
+	<string id="ui_gp_eng_act_jump">
+		<text>Прыжок / Паркур</text>
+	</string>
+	<string id="ui_gp_eng_act_crouch">
+		<text>Присед (перекл.)</text>
+	</string>
+	<string id="ui_gp_eng_act_low_crouch">
+		<text>Низкий присед</text>
+	</string>
+	<string id="ui_gp_eng_act_sprint">
+		<text>Спринт</text>
+	</string>
+	<string id="ui_gp_eng_act_freelook">
+		<text>Свободный обзор</text>
+	</string>
+	<string id="ui_gp_eng_act_melee_quick">
+		<text>Быстрый удар</text>
+	</string>
+	<string id="ui_gp_eng_act_fire">
+		<text>Огонь</text>
+	</string>
+	<string id="ui_gp_eng_act_aim">
+		<text>Прицеливание (ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_context_use_reload">
+		<text>Взаимодействие / Перезарядка / Клин</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_check">
+		<text>Проверка магазина</text>
+	</string>
+	<string id="ui_gp_eng_act_fast_reload">
+		<text>Быстрая перезарядка</text>
+	</string>
+	<string id="ui_gp_eng_act_next_weapon">
+		<text>Смена оружия</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_wheel">
+		<text>Колесо оружия / быстрого доступа</text>
+	</string>
+	<string id="ui_gp_eng_act_grenade_quick">
+		<text>Быстрая граната</text>
+	</string>
+	<string id="ui_gp_eng_act_lean_left">
+		<text>Наклон влево (в ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_lean_right">
+		<text>Наклон вправо (в ADS)</text>
+	</string>
+	<string id="ui_gp_eng_act_torch_toggle">
+		<text>Налобный фонарь</text>
+	</string>
+	<string id="ui_gp_eng_act_night_vision">
+		<text>ПНВ (прибор ночного видения)</text>
+	</string>
+	<string id="ui_gp_eng_act_detector_toggle">
+		<text>Детектор</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_3d_toggle">
+		<text>Достать / убрать 3D-КПК</text>
+	</string>
+	<string id="ui_gp_eng_act_mask_clean">
+		<text>Протереть маску</text>
+	</string>
+	<string id="ui_gp_eng_act_underbarrel_toggle">
+		<text>Подствольник (ПГ)</text>
+	</string>
+	<string id="ui_gp_eng_act_fire_mode_next">
+		<text>Режим огня</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_type_next">
+		<text>Смена типа патронов</text>
+	</string>
+	<string id="ui_gp_eng_act_pause_menu">
+		<text>Меню паузы (в мире)</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_full_toggle">
+		<text>КПК / Карта</text>
+	</string>
+	<string id="ui_gp_eng_act_dialog_select">
+		<text>Выбрать реплику</text>
+	</string>
+	<string id="ui_gp_eng_act_dialog_exit">
+		<text>Выйти из диалога</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_confirm">
+		<text>Выбрать сектор колеса</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_cancel">
+		<text>Закрыть колесо</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_tab_prev">
+		<text>Предыдущая вкладка колеса</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_tab_next">
+		<text>Следующая вкладка колеса</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_interactive">
+		<text>Курсор / интерактив КПК</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_close">
+		<text>Убрать 3D-КПК</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_confirm">
+		<text>Установить предмет</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_cancel">
+		<text>Отменить установку</text>
+	</string>
+	<string id="ui_gp_eng_act_placement_rotate">
+		<text>Повернуть предмет</text>
+	</string>
+	<string id="ui_gp_eng_act_quick_bolt_slot">
+		<text>Быстрый болт / слот</text>
+	</string>
+	<string id="ui_gp_eng_act_switch_panel">
+		<text>Сменить панель (Рюкзак / Обыск)</text>
+	</string>
+	<string id="ui_gp_eng_act_cancel_queue">
+		<text>Отменить очередь действий</text>
+	</string>
+	<string id="ui_gp_eng_act_knife_draw">
+		<text>Достать нож</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_lower">
+		<text>Опустить / поднять оружие</text>
+	</string>
+	<string id="ui_gp_eng_act_pda_flat">
+		<text>КПК (2D-экран)</text>
+	</string>
+	<string id="ui_gp_eng_act_ammo_wheel">
+		<text>Колесо выбора патронов</text>
+	</string>
+	<string id="ui_gp_eng_act_bolt_throw">
+		<text>Болт</text>
+	</string>
+	<string id="ui_gp_eng_act_weapon_select">
+		<text>Выбор огнестрельного оружия</text>
+	</string>
+	<string id="ui_gp_eng_act_force_reload">
+		<text>Принудительная перезарядка / Клин</text>
+	</string>
+	<string id="ui_gp_eng_act_tutorial_prompt">
+		<text>Открыть / скрыть подсказку обучения</text>
+	</string>
+	<string id="ui_gp_eng_act_unknown">
+		<text>Неизвестное действие</text>
+	</string>
+	<string id="ui_gp_eng_trig_unbound">
+		<text>[Не назначено]</text>
+	</string>
+	<string id="ui_gp_eng_trig_press_fmt">
+		<text>Нажатие [%s]</text>
+	</string>
+	<string id="ui_gp_eng_trig_hold_fmt">
+		<text>Удержание [%s] (%u мс)</text>
+	</string>
+	<string id="ui_gp_eng_trig_chord_fmt">
+		<text>Сочетание [%s + %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_title">
+		<text>КАЛИБРОВКА ОСЕЙ И КУРКОВ ГЕЙМПАДА</text>
+	</string>
+	<string id="ui_gp_eng_cal_subtitle_fmt">
+		<text>Профиль v%u | МЗ арбитра=%.2f | LB/RB (Q/E): Группа | Крестовина: Выбор/Шаг | X (R): Сброс вкладки | B (Esc): Сохранить и выйти</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_short_radial">
+		<text>радиальная</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_short_axial">
+		<text>осевая</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_linear">
+		<text>линейная</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_power">
+		<text>степенная</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_scurve">
+		<text>S-кривая</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_short_twozone">
+		<text>2-зонная</text>
+	</string>
+	<string id="ui_gp_eng_cal_ls_title_fmt">
+		<text>Левый стик (Ходьба) [%s, %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_stick_readout_fmt">
+		<text>Вход: (%+.2f, %+.2f) |v|=%.2f  -&gt;  Выход: (%+.2f, %+.2f) |v|=%.2f   [МЗ=%.2f Нас.=%.2f]</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_title_fmt">
+		<text>Кривая: %s</text>
+	</string>
+	<string id="ui_gp_eng_cal_curve_readout_fmt">
+		<text>gamma=%.2f  s_exp=%.2f  излом=(%.2f -&gt; %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_rs_title_fmt">
+		<text>Правый стик (Камера) [%s, %s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_trig_pressed">
+		<text>НАЖАТО</text>
+	</string>
+	<string id="ui_gp_eng_cal_trig_released">
+		<text>ОТПУЩЕНО</text>
+	</string>
+	<string id="ui_gp_eng_cal_lt_readout_fmt">
+		<text>LT: Вход=%.2f Выход=%.2f [%s] (МЗ=%.2f Отп.=%.2f Сраб.=%.2f Нас.=%.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_rt_readout_fmt">
+		<text>RT: Вход=%.2f Выход=%.2f [%s] (МЗ=%.2f Отп.=%.2f Сраб.=%.2f Нас.=%.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_ls">
+		<text>Левый стик (Движение)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_rs">
+		<text>Правый стик (Обзор камерой)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_ui">
+		<text>Стик интерфейса (Навигация в меню)</text>
+	</string>
+	<string id="ui_gp_eng_cal_tab_trig">
+		<text>Курки LT / RT (Аналог и пороги)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_target_fmt">
+		<text>Целевая группа             :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_radial_full">
+		<text>Радиальная (длина вектора)</text>
+	</string>
+	<string id="ui_gp_eng_cal_shape_axial_full">
+		<text>Осевая (крест по осям)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_shape_fmt">
+		<text>Форма мёртвой зоны         :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_inner_dz_fmt">
+		<text>Внутренняя мёртвая зона    :  &lt;  %.2f  &gt;   (мин. %.2f .. макс. %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_outer_sat_fmt">
+		<text>Внешний порог насыщения    :  &lt;  %.2f  &gt;   (мин. %.2f .. макс. %.2f)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_curve_fmt">
+		<text>Кривая отклика             :  &lt;  %s  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_gamma_fmt">
+		<text>Степень кривой (gamma)     :  &lt;  %.2f  &gt;   (0.50 .. 4.00)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_sexp_fmt">
+		<text>Крутизна S-кривой          :  &lt;  %.2f  &gt;   (0.50 .. 4.00)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_knee_in_fmt">
+		<text>Точка излома по входу (X)  :  &lt;  %.2f  &gt;   (0.05 .. 0.95)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_linear_param">
+		<text>Параметр кривой            :  (Линейная f(t) = t)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_knee_out_fmt">
+		<text>Точка излома по выходу (Y) :  &lt;  %.2f  &gt;   (0.05 .. 0.95)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_omega_fmt">
+		<text>Скорость обзора (Г / В)    :  &lt;  %.2f / %.2f рад/с  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_sec_none">
+		<text>Доп. параметр кривой       :  ---</text>
+	</string>
+	<string id="ui_gp_eng_cal_on">
+		<text>ВКЛ</text>
+	</string>
+	<string id="ui_gp_eng_cal_off">
+		<text>ВЫКЛ</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_invert_fmt">
+		<text>Инверсия осей (X / Y)      :  Влево: Инв. X [%s]  |  Вправо: Инв. Y [%s]</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_reset_fmt">
+		<text>[ Действие: A / Enter или X — сбросить «%s» по умолчанию ]</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_dz_fmt">
+		<text>LT Внутренняя мёртвая зона :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_sat_fmt">
+		<text>LT Внешнее насыщение       :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_press_fmt">
+		<text>LT Порог нажатия           :  &lt;  %.2f  &gt;   (гистерезис сраб.)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_lt_rel_fmt">
+		<text>LT Порог отпускания        :  &lt;  %.2f  &gt;   (&lt;= наж. - 0.05)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_dz_fmt">
+		<text>RT Внутренняя мёртвая зона :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_sat_fmt">
+		<text>RT Внешнее насыщение       :  &lt;  %.2f  &gt;</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_press_fmt">
+		<text>RT Порог нажатия           :  &lt;  %.2f  &gt;   (гистерезис сраб.)</text>
+	</string>
+	<string id="ui_gp_eng_cal_row_rt_rel_fmt">
+		<text>RT Порог отпускания        :  &lt;  %.2f  &gt;   (&lt;= наж. - 0.05)</text>
+	</string>
+	<string id="ui_gp_eng_cal_footer_fmt">
+		<text>Файл: %s | Жёлтый=Сырой стик, Зелёный=Выход, Оранжевый=Мёртвая зона, Голубой=Насыщение</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_01_title">
+		<text>1/21: Нижняя кнопка (A / Крест)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_01_prompt">
+		<text>Нажмите НИЖНЮЮ лицевую кнопку (A / Крест)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_02_title">
+		<text>2/21: Правая кнопка (B / Круг)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_02_prompt">
+		<text>Нажмите ПРАВУЮ лицевую кнопку (B / Круг)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_03_title">
+		<text>3/21: Левая кнопка (X / Квадрат)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_03_prompt">
+		<text>Нажмите ЛЕВУЮ лицевую кнопку (X / Квадрат)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_04_title">
+		<text>4/21: Верхняя кнопка (Y / Треугольник)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_04_prompt">
+		<text>Нажмите ВЕРХНЮЮ лицевую кнопку (Y / Треугольник)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_05_title">
+		<text>5/21: Back / Select / Share / View</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_05_prompt">
+		<text>Нажмите кнопку BACK / SELECT / VIEW / SHARE</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_06_title">
+		<text>6/21: Guide / Home (необязательно)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_06_prompt">
+		<text>Нажмите кнопку GUIDE / HOME (или ПРОБЕЛ/TAB для пропуска)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_07_title">
+		<text>7/21: Start / Menu / Options</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_07_prompt">
+		<text>Нажмите кнопку START / MENU / OPTIONS</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_08_title">
+		<text>8/21: Нажатие левого стика (L3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_08_prompt">
+		<text>Нажмите ЛЕВЫЙ СТИК вертикально вниз (L3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_09_title">
+		<text>9/21: Нажатие правого стика (R3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_09_prompt">
+		<text>Нажмите ПРАВЫЙ СТИК вертикально вниз (R3)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_10_title">
+		<text>10/21: Левый бампер (LB / L1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_10_prompt">
+		<text>Нажмите ЛЕВЫЙ БАМПЕР (LB / L1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_11_title">
+		<text>11/21: Правый бампер (RB / R1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_11_prompt">
+		<text>Нажмите ПРАВЫЙ БАМПЕР (RB / R1)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_12_title">
+		<text>12/21: Крестовина ВВЕРХ</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_12_prompt">
+		<text>Нажмите ВВЕРХ на крестовине (D-Pad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_13_title">
+		<text>13/21: Крестовина ВНИЗ</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_13_prompt">
+		<text>Нажмите ВНИЗ на крестовине (D-Pad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_14_title">
+		<text>14/21: Крестовина ВЛЕВО</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_14_prompt">
+		<text>Нажмите ВЛЕВО на крестовине (D-Pad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_15_title">
+		<text>15/21: Крестовина ВПРАВО</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_15_prompt">
+		<text>Нажмите ВПРАВО на крестовине (D-Pad)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_16_title">
+		<text>16/21: Левый стик по горизонтали (+X)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_16_prompt">
+		<text>Отклоните ЛЕВЫЙ СТИК до упора ВПРАВО</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_17_title">
+		<text>17/21: Левый стик по вертикали (+Y)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_17_prompt">
+		<text>Отклоните ЛЕВЫЙ СТИК до упора ВНИЗ (на себя)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_18_title">
+		<text>18/21: Правый стик по горизонтали (+X)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_18_prompt">
+		<text>Отклоните ПРАВЫЙ СТИК до упора ВПРАВО</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_19_title">
+		<text>19/21: Правый стик по вертикали (+Y)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_19_prompt">
+		<text>Отклоните ПРАВЫЙ СТИК до упора ВНИЗ (на себя)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_20_title">
+		<text>20/21: Левый курок (LT / L2)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_20_prompt">
+		<text>Выжмите ЛЕВЫЙ КУРОК (LT / L2) до упора</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_21_title">
+		<text>21/21: Правый курок (RT / R2)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_21_prompt">
+		<text>Выжмите ПРАВЫЙ КУРОК (RT / R2) до упора</text>
+	</string>
+	<string id="ui_gp_eng_remap_ready">
+		<text>Готово. Выберите действие и нажмите [A / Enter] для привязки или [Y / F2] для мастера Class C.</text>
+	</string>
+	<string id="ui_gp_eng_remap_mode_active">
+		<text>Режим переназначения: [LB/RB] Контекст, [A] Назначить, [X] Снять, [Y/F2] Мастер Class C, [B/Start] Выход.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_exited">
+		<text>Выход из мастера Class C обратно к экрану переназначения.</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_cancelled_kbd">
+		<text>Захват кнопки отменён.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_started">
+		<text>Мастер настройки геймпада Class C запущен. Нажимайте запрашиваемые кнопки или [ПРОБЕЛ/TAB] для пропуска.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_skipped">
+		<text>Шаг пропущен. Верните стики и кнопки в нейтральное положение...</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_prev">
+		<text>Возврат к предыдущему шагу.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_captured_fmt">
+		<text>Записано: %s = %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_err_disconnected">
+		<text>Ошибка мастера Class C: целевой контроллер больше не подключён.</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_saved_ok">
+		<text>Контроллер Class C переведён в режим SDL_Gamepad (Class B), раскладка сохранена!</text>
+	</string>
+	<string id="ui_gp_eng_remap_wiz_save_fail">
+		<text>Не удалось применить или сохранить строку раскладки SDL. Проверьте лог консоли.</text>
+	</string>
+	<string id="ui_gp_eng_remap_listening">
+		<text>Ожидание ввода... Коротко — нажатие, 0.45 с — удержание, Модификатор + 2-я кнопка — сочетание.</text>
+	</string>
+	<string id="ui_gp_eng_remap_bound_fmt">
+		<text>Назначено [%s] -&gt; %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_swapped_suffix_fmt">
+		<text> (обмен с %s)</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_status">
+		<text>Обнаружен конфликт в этом контексте! [A / Enter] — поменять местами, [B / Esc] — отмена.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_protected_trigger">
+		<text>Защищённое действие навигации (Меню/Выбрать/Назад) требует прямого нажатия или удержания обычной кнопки.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_protected_unbind">
+		<text>Защищённое действие навигации нельзя отвязать — его можно только поменять местами с другой кнопкой.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_nav_broken">
+		<text>Невозможно разрешить конфликт: это нарушит навигацию в меню.</text>
+	</string>
+	<string id="ui_gp_eng_remap_err_invalid_trigger">
+		<text>Некорректное сочетание кнопок или недопустимый триггер.</text>
+	</string>
+	<string id="ui_gp_eng_remap_confirmed_fmt">
+		<text>Подтверждено [%s] -&gt; %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_unbound_fmt">
+		<text>Привязка снята: [%s].</text>
+	</string>
+	<string id="ui_gp_eng_remap_ctx_restored_fmt">
+		<text>Восстановлены привязки по умолчанию для контекста [%s].</text>
+	</string>
+	<string id="ui_gp_eng_remap_exported_fmt">
+		<text>Раскладка экспортирована в '%s'.</text>
+	</string>
+	<string id="ui_gp_eng_remap_export_fail_fmt">
+		<text>Ошибка экспорта: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_imported_fmt">
+		<text>Импортировано привязок: %u из '%s'.</text>
+	</string>
+	<string id="ui_gp_eng_remap_import_fail_fmt">
+		<text>Ошибка импорта: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_reset_done">
+		<text>АВАРИЙНЫЙ СБРОС ВЫПОЛНЕН: все контексты возвращены к безопасным значениям по умолчанию и сохранены!</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_wiz_exit">
+		<text>Аварийный сброс (Start+Back 5 с) восстановил настройки по умолчанию и закрыл мастер.</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_held_done">
+		<text>АВАРИЙНЫЙ СБРОС (удержание Start+Back 5 с): все привязки возвращены к безопасным умолчаниям!</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_timeout">
+		<text>Время ожидания ввода истекло (8 с); сохранена прежняя привязка.</text>
+	</string>
+	<string id="ui_gp_eng_remap_capture_cancelled">
+		<text>Захват кнопки отменён с геймпада.</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_cancelled">
+		<text>Разрешение конфликта отменено; сохранена прежняя привязка.</text>
+	</string>
+	<string id="ui_gp_eng_remap_title">
+		<text>ПРИВЯЗКА И ПЕРЕНАЗНАЧЕНИЕ КНОПОК ГЕЙМПАДА</text>
+	</string>
+	<string id="ui_gp_eng_remap_inv_ok">
+		<text>ОК (защищён)</text>
+	</string>
+	<string id="ui_gp_eng_remap_inv_broken">
+		<text>НАРУШЕН</text>
+	</string>
+	<string id="ui_gp_eng_remap_subtitle_fmt">
+		<text>Профиль: %s (схема v%u) | Инвариант навигации меню: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_col_header_fmt">
+		<text>ДЕЙСТВИЕ (%s — действий: %zu)                                     ТЕКУЩАЯ ПРИВЯЗКА</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_title_fmt">
+		<text>ЗАХВАТ ВВОДА ДЛЯ: %s</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_release_all">
+		<text>Отпустите все кнопки для начала захвата...</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_prompt_1">
+		<text>Нажмите кнопку (коротко = нажатие, 0.45 с = удержание, Модификатор + 2-я кнопка = сочетание)</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_prompt_2">
+		<text>Нажмите [Start / Guide / Esc] для отмены захвата.</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_holding_fmt">
+		<text>Удерживается [%s] (%u мс) — отпустите для нажатия, держите &gt;= 450 мс для удержания или нажмите 2-ю кнопку!</text>
+	</string>
+	<string id="ui_gp_eng_remap_cap_hold_reached">
+		<text>&gt;&gt; ПОРОГ УДЕРЖАНИЯ ДОСТИГНУТ! Отпустите кнопку для подтверждения удержания (300 мс) &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_title">
+		<text>ОБНАРУЖЕН КОНФЛИКТ В ТЕКУЩЕМ КОНТЕКСТЕ!</text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_prefix_fmt">
+		<text>Кандидат %s конфликтует с: </text>
+	</string>
+	<string id="ui_gp_eng_remap_conflict_prompt">
+		<text>Нажмите [A / Enter] для обмена местами или [B / Esc] для отмены.</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_title_fmt">
+		<text>УДЕРЖАНИЕ АВАРИЙНОГО СБРОСА (Start + Back): %u / %u мс</text>
+	</string>
+	<string id="ui_gp_eng_remap_emerg_body">
+		<text>Удерживайте Start + Back 5 секунд для сброса всех привязок к безопасным умолчаниям...</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_title">
+		<text>ПРАВИЛА ЗАЩИЩЁННОЙ НАВИГАЦИИ И ЖЕСТОВ</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_body1">
+		<text>Действия Меню, Подтвердить и Назад защищены: их нельзя отвязать, только поменять местами с одиночной кнопкой.</text>
+	</string>
+	<string id="ui_gp_eng_remap_rules_body2">
+		<text>Аварийный сброс: удерживайте [Start + Back] 5 секунд на любом экране или введите 'gp_bind_reset' в консоли.</text>
+	</string>
+	<string id="ui_gp_eng_remap_footer1">
+		<text>[Крестовина] Выбор | [LB/RB] Контекст | [A/Enter] Назначить | [X/Del] Очистить | [R3/R] Сброс контекста | [B/Start/Esc] Сохранить</text>
+	</string>
+	<string id="ui_gp_eng_remap_footer2">
+		<text>[Y / F2] Мастер устройства Class C | [F5] Экспорт | [F6] Импорт | [F8 / Start+Back 5 с] Аварийный сброс</text>
+	</string>
+	<string id="ui_gp_eng_wiz_title">
+		<text>МАСТЕР НАСТРОЙКИ КОНТРОЛЛЕРА CLASS C (SDL_AddGamepadMapping)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_c">
+		<text>C (нераспознанный джойстик)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_b">
+		<text>B (настроенный геймпад)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_class_a">
+		<text>A (консольный геймпад)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_sub_device_fmt">
+		<text>Устройство: id=%u '%s' (Класс=%s, Кнопок=%d, Осей=%d, Хат=%d, GUID=%s)</text>
+	</string>
+	<string id="ui_gp_eng_wiz_sub_no_device">
+		<text>Джойстик или геймпад не обнаружен. Подключите контроллер Class C.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_done_bar">
+		<text>&gt;&gt; МАСТЕР ЗАВЕРШЁН — РАСКЛАДКА SDL ПРИМЕНЕНА И СОХРАНЕНА &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_wiz_done_col">
+		<text>Сохранено в $app_data_root$\gamepad\user_mappings.txt (gamecontrollerdb.txt не изменён):</text>
+	</string>
+	<string id="ui_gp_eng_wiz_step_bar_fmt">
+		<text>&gt;&gt; ШАГ %s &lt;&lt;</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_skipped">
+		<text>[Пропущено]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_release">
+		<text>[Отпустите все кнопки...]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_waiting">
+		<text>[Ожидание ввода...]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_state_pending">
+		<text>[Ожидает]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_gen_title">
+		<text>СФОРМИРОВАННАЯ СТРОКА РАСКЛАДКИ SDL3</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_saved_fmt">
+		<text>Файл: %s | Нажмите [A / B / Start / Enter / Esc] для возврата к привязкам.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw_title">
+		<text>ЖИВЫЕ ПОКАЗАНИЯ СЫРОГО HID-ДЖОЙСТИКА</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw1_fmt">
+		<text>Маска кнопок: 0x%08X | Крестовина Hat[0]: 0x%02X</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_raw2_fmt">
+		<text>Оси Axes[0..5]: [%d, %d, %d, %d, %d, %d]</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_wait_title">
+		<text>ОЖИДАНИЕ УСТРОЙСТВА</text>
+	</string>
+	<string id="ui_gp_eng_wiz_modal_wait_body">
+		<text>Подключите контроллер Class C или нажмите [Esc] для возврата к экрану привязок.</text>
+	</string>
+	<string id="ui_gp_eng_wiz_footer1">
+		<text>Управление мастером: [ПРОБЕЛ / TAB] Пропустить шаг | [BACKSPACE / ВЛЕВО] Назад | [ENTER] Завершить и сохранить</text>
+	</string>
+	<string id="ui_gp_eng_wiz_footer2">
+		<text>[ESC] Назад к привязкам | Пользовательские раскладки сохраняются в $app_data_root$\gamepad\user_mappings.txt</text>
+	</string>
+	<string id="ui_gp_eng_osk_default_zone">
+		<text>Зона</text>
+	</string>
+	<string id="ui_gp_eng_osk_default_day_time">
+		<text>День 1 12-00</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_loc_date">
+		<text>Локация — Дата</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_before_fight">
+		<text>Перед боем</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_after_emission">
+		<text>После выброса</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_campfire">
+		<text>У костра</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_before_raid">
+		<text>Перед вылазкой</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_base_trade">
+		<text>База и торговля</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_weapons">
+		<text>Оружие</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_parts">
+		<text>Детали</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_meds">
+		<text>Медицина</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_ammo">
+		<text>Боеприпасы</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_armor">
+		<text>Броня</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_artefacts">
+		<text>Артефакты</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_stash">
+		<text>Тайник</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_danger">
+		<text>Опасно</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_check">
+		<text>Проверить</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_camp">
+		<text>Лагерь</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_trader">
+		<text>Торговец</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_target">
+		<text>Цель</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_stalker">
+		<text>Сталкер</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_marked_one">
+		<text>Меченый</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_strelok">
+		<text>Стрелок</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_degtyarev">
+		<text>Дегтярёв</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_scar">
+		<text>Шрам</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_strider">
+		<text>Бродяга</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_lang_ru">
+		<text>Язык: RU (R3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_lang_en">
+		<text>Язык: EN (R3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_case_upper">
+		<text>Регистр: АБВ (L3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_case_lower">
+		<text>Регистр: абв (L3)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_space">
+		<text>Пробел (Y)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_backspace">
+		<text>&lt;- Забой (X)</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_clear">
+		<text>Очистить</text>
+	</string>
+	<string id="ui_gp_eng_osk_act_done">
+		<text>Готово (Start)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_save">
+		<text>Сохранение игры (UISaveDialog)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_stash">
+		<text>Создание тайника (UICreateStash)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_waypoint">
+		<text>Метка КПК / Путевая точка (PAW)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_newgame">
+		<text>Имя персонажа (Новая игра)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_numeric">
+		<text>Числовое значение (0..255)</text>
+	</string>
+	<string id="ui_gp_eng_osk_target_generic">
+		<text>Поле ввода текста</text>
+	</string>
+	<string id="ui_gp_eng_osk_title">
+		<text>ЭКРАННАЯ КЛАВИАТУРА ГЕЙМПАДА</text>
+	</string>
+	<string id="ui_gp_eng_osk_layout_ru">
+		<text>RU (ЙЦУКЕН)</text>
+	</string>
+	<string id="ui_gp_eng_osk_layout_en">
+		<text>EN (QWERTY)</text>
+	</string>
+	<string id="ui_gp_eng_osk_case_hdr_upper">
+		<text>АБВ / ABC</text>
+	</string>
+	<string id="ui_gp_eng_osk_case_hdr_lower">
+		<text>абв / abc</text>
+	</string>
+	<string id="ui_gp_eng_osk_tmpl_caption">
+		<text>Шаблоны в 1 клик (Вверх/Вниз — переход к сетке, A — вставить):</text>
+	</string>
+	<string id="ui_gp_eng_osk_footer">
+		<text>[A] Ввод ключа/шаблона  [X] Забой  [Y] Пробел  [L3/LT] Регистр  [R3/LB/RB] RU/EN  [Start] Применить  [B] Отмена</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_equipment">
+		<text>СНАРЯЖЕНИЕ</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_backpack">
+		<text>РЮКЗАК</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_health">
+		<text>ЗДОРОВЬЕ</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_magazines">
+		<text>МАГАЗИНЫ</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_pda">
+		<text>КПК</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_skills">
+		<text>НАВЫКИ</text>
+	</string>
+	<string id="ui_gp_eng_wid_tab_settings">
+		<text>НАСТРОЙКИ</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_all">
+		<text>Все</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_weapons">
+		<text>Оружие</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_ammo">
+		<text>Боеприпасы</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_meds">
+		<text>Медицина</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_food">
+		<text>Провизия</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_armor_af">
+		<text>Броня/Арт.</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_tools">
+		<text>Инструменты</text>
+	</string>
+	<string id="ui_gp_eng_wid_cat_misc">
+		<text>Разное</text>
+	</string>
+	<string id="ui_gp_eng_wid_view_grid">
+		<text>Сетка 4xN</text>
+	</string>
+	<string id="ui_gp_eng_wid_view_list">
+		<text>Список</text>
+	</string>
+	<string id="ui_gp_eng_wid_pause_on">
+		<text>[ПАУЗА АКТИВНА]</text>
+	</string>
+	<string id="ui_gp_eng_wid_pause_off">
+		<text>[МИР АКТИВЕН]</text>
+	</string>
+	<string id="ui_gp_eng_wid_topbar_telemetry_fmt">
+		<text> [RB]  | Вес: %.1f/%.1f кг | %u RU | %s</text>
+	</string>
+	<string id="ui_gp_eng_wid_catbar_suffix_fmt">
+		<text> [RT]   (Вид: %s, предм.: %zu)</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_focused">
+		<text> &gt; [Пусто] В категории нет предметов — нажмите [LT/RT] для смены категории</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_unfocused">
+		<text>   [Пусто] В категории нет предметов</text>
+	</string>
+	<string id="ui_gp_eng_wid_empty_short">
+		<text>[Пусто]</text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_equipped">
+		<text>[Надето] </text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_junk">
+		<text>[Хлам] </text>
+	</string>
+	<string id="ui_gp_eng_wid_tag_quest">
+		<text>[Квест] </text>
+	</string>
+	<string id="ui_gp_eng_wid_weight_kg_fmt">
+		<text>  %.2f кг</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_node_title">
+		<text>Карточка сравнения (Accurate Defense Values)</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_empty_1">
+		<text>Нет выбранного предмета (пустая категория)</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_empty_2">
+		<text>Используйте [LT/RT] для выбора категории с предметами.</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_br_class">
+		<text>ADV Класс брони (BR)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_unit_class">
+		<text>кл.</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_fire_wound">
+		<text>ADV Баллистика (FireWound)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_ap_res">
+		<text>ADV Стойкость к ББ (AP Res)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_wound">
+		<text>ADV Разрыв (Wound)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_strike">
+		<text>ADV Удар (Strike)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_explosion">
+		<text>ADV Взрыв (Explosion)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_burn">
+		<text>ADV Ожог (Burn)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_shock">
+		<text>ADV Электрошок (Shock)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_acid">
+		<text>ADV Хим. ожог (Acid)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_psi">
+		<text>ADV Пси-защита (Psi)</text>
+	</string>
+	<string id="ui_gp_eng_wid_adv_radia">
+		<text>ADV Радиация (Radia)</text>
+	</string>
+	<string id="ui_gp_eng_wid_mode_100">
+		<text>[РЕЖИМ 100%]</text>
+	</string>
+	<string id="ui_gp_eng_wid_mode_cur">
+		<text>[ТЕКУЩЕЕ]</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_hdr_fmt">
+		<text>%s (%s) | Сост.: %d%% %s | Вес: %.2f кг | %u RU</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_cmp_item_fmt">
+		<text>Сравнение со слотом #%u: %s (%d%%)  [R3 — сменить слот / 100%%]</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_slot_equipped">
+		<text>этот предмет уже надет</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_slot_empty">
+		<text>слот свободен</text>
+	</string>
+	<string id="ui_gp_eng_wid_card_cmp_slot_fmt">
+		<text>Сравнение: слот #%u (%s)</text>
+	</string>
+	<string id="ui_gp_eng_wid_wpo_prefix">
+		<text>Детали WPO: </text>
+	</string>
+	<string id="ui_gp_eng_wid_actor_body_fmt">
+		<text>Актор ADV [Корпус]: BR %d (премитигация &lt;%d%%) | Огнестрел %.0f%% | Разрыв %.0f%% | Хим %.0f%% | Пси %.0f%%</text>
+	</string>
+	<string id="ui_gp_eng_wid_actor_head_fmt">
+		<text>Актор ADV [Голова]: BR %d (премитигация &lt;%d%%) | Огнестрел %.0f%% | Пси %.0f%%</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_title">
+		<text>Выбор количества</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_slider">
+		<text>Ползунок количества [&lt; / &gt; +-1 | LB/RB +-10 | LT/RT Мин/Макс]</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_confirm">
+		<text>[A] Принять выбранное количество</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_cancel">
+		<text>[B] Отмена</text>
+	</string>
+	<string id="ui_gp_eng_wid_qty_summary_fmt">
+		<text>Выбор количества: %s | %s %d / %d шт. | Вес: %.2f кг | Сумма: %u RU</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_yes">
+		<text>[Да, подтвердить]</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_no">
+		<text>[Отмена]</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_title">
+		<text>Подтверждение действия</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_mags_warn">
+		<text>Внимание (mags_patches): при смене брони магазины в разгрузке будут перенесены в рюкзак. Продолжить?</text>
+	</string>
+	<string id="ui_gp_eng_wid_confirm_item_fmt">
+		<text>Подтвердить выбор предмета «%s» (read-only тест)?</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_confirm_choice">
+		<text>Подтвердить выбор</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_select_btn">
+		<text>Выбор кнопки</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cancel_back">
+		<text>Отмена (назад)</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_qty_step">
+		<text>Кол-во +-1 (удерж.)</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_step_10">
+		<text>Шаг +-10</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_min_max">
+		<text>Мин / Макс</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_accept">
+		<text>Принять</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cancel">
+		<text>Отмена</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_view_grid">
+		<text>Вид: Сетка 4xN</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_view_list">
+		<text>Вид: Список</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_confirm_dlg">
+		<text>Диалог подтверждения</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_select_qty">
+		<text>Выбор количества</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_section">
+		<text>Раздел</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_category">
+		<text>Категория</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cmp_slot2">
+		<text>Сравн.: Слот 2</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_cmp_slot1">
+		<text>Сравн.: Слот 1</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_stats_cur">
+		<text>Статы: Текущие</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_stats_100">
+		<text>Статы: 100%</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_scroll_stats">
+		<text>Прокрутка статов</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_close">
+		<text>Закрыть</text>
+	</string>
+	<string id="ui_gp_eng_wid_prompt_switch_cat">
+		<text>Сменить категорию</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_type">
+		<text>Ввод</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_backspace">
+		<text>Удалить</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_space">
+		<text>Пробел</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_lang">
+		<text>Язык</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_done">
+		<text>Готово</text>
+	</string>
+	<string id="ui_gp_eng_osk_ftr_cancel">
+		<text>Отмена</text>
+	</string>
+	<string id="ui_gp_eng_act_mouse_cursor">
+		<text>Режим курсора-мыши</text>
+	</string>
+	<string id="ui_gp_eng_talk_repair">
+		<text>Ремонт</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_mask">
+		<text>Протереть маску (колесо)</text>
+	</string>
+	<string id="ui_gp_eng_act_wheel_laser">
+		<text>ЛЦУ (колесо)</text>
+	</string>
+</string_table>

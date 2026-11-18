@@ -1,0 +1,1740 @@
+--[[
+    Gamepad Compatibility & Capability Adapter Layer (D57, D58)
+    Target versions (D57):
+      - GAMMA Mags Reloaded 1.05 (minimum 1.05; magazines optional - engine reload_weapon() fallback)
+      - AmmoCheck Enhanced 3.3 REWORK (ammo_check_mcm, ammo_check_onekey_mcm, ammo_check_fastreload_mcm)
+      - Dynamic Reload Speeds 1.0 (ver_dynamic_reload_speeds)
+      - WPO / arti_jamming + shotgun_unjam_fix
+      - Bullet Time Enhanced (bullet_time_mcm) - capability slot reserved (D57)
+      - Quick Action Wheel replacement (D58): our wheel replaces Haru QAW 446 + G.A.M.M.A. QAW Balance
+
+    Contract rules:
+      1. Magazines (Mags) are OPTIONAL. Without Mags (or on error), reload and ammo switch
+         MUST work via the standard engine reload (db.actor:reload_weapon()), with NO key emulation.
+      2. Every foreign mod call is wrapped in pcall.
+      3. If a foreign mod function throws a runtime error, its capability is marked "broken"
+         (broken until the end of the session) for the rest of the session, logged once, and bypassed
+         in favor of the fallback path.
+      4. Mod status is exposed as a single summary string for the "Gamepad" settings tab.
+]]
+
+local gc = game.translate_string
+
+-- Session-long broken flags per provider key: once true, stays true until session ends
+local broken_providers = {}
+local broken_errors = {}
+
+-- External Haru QAW conflict detection (recorded before gp_wheel sets _G.haru_quick_action_wheel_mcm)
+-- FG.6f, решение Миши 2026-11-07: проба Haru и колесо патронов отключены флагом, используется оригинальный выбор патронов G.A.M.M.A.
+haru_qaw_ammo_wheel_enabled = false
+local external_haru_qaw_detected = false
+
+function is_haru_ammo_wheel_enabled()
+    return haru_qaw_ammo_wheel_enabled == true
+end
+
+function note_external_haru_qaw(mod_table)
+    -- FG.6f, решение Миши 2026-11-07: выключено флагом haru_qaw_ammo_wheel_enabled
+    if not haru_qaw_ammo_wheel_enabled then
+        return false
+    end
+    if mod_table and not rawequal(mod_table, gp_wheel) then
+        external_haru_qaw_detected = true
+        printf("! [gp_compat] External Quick Action Wheel (Haru/Balance) detected! Per D58, disable '446- Quick Action Wheel - HarukaSai' and 'G.A.M.M.A. Quick Action Wheel Balance' in MO2.")
+    end
+end
+
+function is_external_haru_qaw_detected()
+    if not haru_qaw_ammo_wheel_enabled then
+        return false
+    end
+    return external_haru_qaw_detected == true
+end
+
+local function tr(id, fallback)
+    if gc then
+        local ok, s = pcall(gc, id)
+        if ok and s and s ~= "" and s ~= id then
+            return s
+        end
+    end
+    return fallback or id
+end
+
+function mark_broken(provider_key, err)
+    local key = tostring(provider_key or "unknown")
+    if not broken_providers[key] then
+        broken_providers[key] = true
+        broken_errors[key] = tostring(err or "error")
+        printf("! [gp_compat] provider '%s' threw an error and is marked BROKEN for this session: %s", key, broken_errors[key])
+    end
+end
+
+function is_broken(provider_key)
+    return broken_providers[tostring(provider_key or "")] == true
+end
+
+function get_broken_error(provider_key)
+    return broken_errors[tostring(provider_key or "")]
+end
+
+--For testing/verification on bench
+function reset_broken_for_test(provider_key)
+    if provider_key then
+        broken_providers[provider_key] = nil
+        broken_errors[provider_key] = nil
+    else
+        empty_table(broken_providers)
+        empty_table(broken_errors)
+        if type(on_gamepad_jump_release) == "function" then
+            on_gamepad_jump_release()
+        end
+    end
+end
+
+-- Safe call wrapper: calls fn(...) under pcall; if it throws, marks provider_key broken for the session
+function safe_call(provider_key, fn, ...)
+    if is_broken(provider_key) then
+        return false, nil, "already_broken"
+    end
+    if type(fn) ~= "function" then
+        return false, nil, "not_a_function"
+    end
+    local ok, res = pcall(fn, ...)
+    if not ok then
+        mark_broken(provider_key, res)
+        return false, nil, res
+    end
+    return true, res, nil
+end
+
+--===========================================================================
+-- Capability Probes (Lazy, Read-Only, No Side Effects)
+--===========================================================================
+
+-- 1. Magazines (GAMMA Mags Reloaded 1.05)
+function probe_mags()
+    if is_broken("mags") then
+        return "broken", "GAMMA Mags Reloaded 1.05"
+    end
+    local m = _G.magazines
+    local mb = _G.magazine_binder
+    if not m and not mb then
+        return "absent", tr("ui_gp_compat_mod_none_std_reload", "none (standard reload)")
+    end
+    if type(m) == "table"
+        and type(m.actor_on_weapon_reload) == "function"
+        and type(m.find_magazine) == "function"
+        and type(m.count_ammo) == "function"
+        and type(m.delay_load_weapon) == "function"
+        and type(mb) == "table"
+        and type(mb.is_supported_weapon) == "function"
+        and type(mb.get_carried_mags) == "function"
+        and type(mb.is_compatible) == "function"
+    then
+        -- GAMMA Mags Reloaded 1.05 has magazines.get_dominant_round and magazine_binder.get_mags_for_weapon
+        if type(m.get_dominant_round) == "function" or type(mb.get_mags_for_weapon) == "function" then
+            return "ok", "GAMMA Mags Reloaded 1.05"
+        end
+        return "partial", "Mags Redux"
+    end
+    return "broken", "Mags (incomplete API)"
+end
+
+function is_mags_available()
+    local st = probe_mags()
+    return st == "ok" or st == "partial"
+end
+
+function mags_supported_weapon(wpn)
+    if not wpn or not is_mags_available() then
+        return false
+    end
+    local ok, res = safe_call("mags", _G.magazine_binder.is_supported_weapon, wpn)
+    return (ok and res) and true or false
+end
+
+-- 2. AmmoCheck & One-Key Reload (AmmoCheck Enhanced 3.3 REWORK)
+function probe_ammo_check()
+    if is_broken("ammo_check") then
+        return "broken", "AmmoCheck Enhanced 3.3"
+    end
+    local ac = _G.ammo_check_mcm
+    if not ac then
+        return "absent", tr("ui_gp_compat_mod_none", "none")
+    end
+    -- Detect 23-byte stub from "363- Winchester 1892" (table exists, check_Ammo is nil)
+    if type(ac) == "table" and type(ac.check_Ammo) ~= "function" then
+        return "broken", tr("ui_gp_compat_mod_stub_winchester", "empty stub (Winchester 1892)")
+    end
+    if type(ac.check_Ammo) == "function" and type(ac.ac_reload_blocked) == "function" then
+        return "ok", "AmmoCheck Enhanced 3.3"
+    end
+    if type(ac.check_Ammo) == "function" then
+        return "partial", "Ammo Check"
+    end
+    return "absent", tr("ui_gp_compat_mod_none", "none")
+end
+
+function probe_onekey()
+    if is_broken("onekey") then
+        return "broken", "AmmoCheck One-Key"
+    end
+    local okr = _G.ammo_check_onekey_mcm
+    if not okr then
+        return "absent", tr("ui_gp_compat_mod_none", "none")
+    end
+    if type(okr) == "table" and type(okr.try_reload_weapon) == "function" then
+        return "ok", "AmmoCheck One-Key 3.3"
+    end
+    return "partial", "One-Key"
+end
+
+-- 3. Fast Reload (AmmoCheck Fast Reload + Dynamic Reload Speeds 1.0)
+function probe_fast_reload()
+    if is_broken("fast_reload") then
+        return "broken", "Fast Reload + Dynamic Reload Speeds"
+    end
+    local fr = _G.ammo_check_fastreload_mcm
+    local drs = _G.ver_dynamic_reload_speeds
+    if not fr or type(fr.do_fast_reload) ~= "function" then
+        return "absent", tr("ui_gp_compat_mod_none_std_reload", "none (standard reload)")
+    end
+    if not drs or type(drs.add_reload_speed_increase) ~= "function" then
+        return "partial", "FastReload (no Dynamic Reload Speeds)"
+    end
+    if not is_mags_available() then
+        return "partial", "FastReload (no Mags)"
+    end
+    return "ok", "AmmoCheck FastReload + DRS 1.0"
+end
+
+-- 4. Jamming / Unjam (WPO arti_jamming + shotgun_unjam_fix)
+function probe_jamming()
+    if is_broken("jamming") then
+        return "broken", "WPO (arti_jamming)"
+    end
+    local aj = _G.arti_jamming
+    if not aj then
+        return "absent", tr("ui_gp_compat_mod_none", "none")
+    end
+    if type(aj.get_jammed) == "function" and type(aj.unjam) == "function" then
+        return "ok", "WPO (arti_jamming)"
+    end
+    return "partial", "arti_jamming"
+end
+
+-- 5. Bullet Time (Bullet Time Enhanced -- reserved capability slot per D57)
+function probe_bullet_time()
+    if is_broken("bullet_time") then
+        return "broken", "Bullet Time Enhanced"
+    end
+    local bt = _G.bullet_time_mcm
+    if bt and type(bt.on_key_press) == "function" then
+        return "reserved", "Bullet Time Enhanced"
+    end
+    return "absent", tr("ui_gp_compat_mod_none", "none")
+end
+
+--===========================================================================
+-- Safe Weapon Actions (D57, D58)
+--===========================================================================
+
+function is_weapon_jammed(wpn)
+    if not wpn then return false end
+    local st = probe_jamming()
+    if st ~= "ok" and st ~= "partial" then
+        return false
+    end
+    if type(_G.arti_jamming.get_jammed) ~= "function" then
+        return false
+    end
+    local ok_id, wpn_id = pcall(function() return wpn:id() end)
+    if not ok_id or not wpn_id then
+        return false
+    end
+    local ok, res = safe_call("jamming", _G.arti_jamming.get_jammed, wpn_id)
+    return (ok and res) and true or false
+end
+
+function unjam_weapon(wpn)
+    if not wpn then return false, "no_weapon" end
+    if is_broken("jamming") or not (_G.arti_jamming and type(_G.arti_jamming.unjam) == "function") then
+        return false, "unjam_unavailable"
+    end
+    local ok = safe_call("jamming", _G.arti_jamming.unjam, wpn)
+    if not ok then
+        return false, "unjam_error_fallback"
+    end
+    return true, "arti_jamming_unjam"
+end
+
+function is_shotgun_unjam_busy()
+    if is_broken("shotgun_unjam") then
+        return false
+    end
+    if not (_G.shotgun_unjam_fix and _G.animation_common and type(_G.animation_common.get_flag) == "function") then
+        return false
+    end
+    local ok, res = safe_call("shotgun_unjam", _G.animation_common.get_flag, "SHOTGUN_UNJAM")
+    return (ok and res) and true or false
+end
+
+function is_reload_blocked_by_ammo_check()
+    if is_broken("ammo_check") then
+        return false
+    end
+    if not (_G.ammo_check_mcm and type(_G.ammo_check_mcm.ac_reload_blocked) == "function") then
+        return false
+    end
+    local ok, res = safe_call("ammo_check", _G.ammo_check_mcm.ac_reload_blocked)
+    return (ok and res) and true or false
+end
+
+function run_ammo_check()
+    local st = probe_ammo_check()
+    if st == "broken" then
+        return false, "broken:ammo_check_mcm"
+    end
+    if st == "absent" or not (_G.ammo_check_mcm and type(_G.ammo_check_mcm.check_Ammo) == "function") then
+        return false, "unavailable:ammo_check_mcm_missing"
+    end
+    local ok = safe_call("ammo_check", _G.ammo_check_mcm.check_Ammo)
+    if not ok then
+        return false, "error:ammo_check_marked_broken"
+    end
+    return true, "ammo_check:check_Ammo"
+end
+
+function try_arm_fast_reload(wpn)
+    if not wpn then return false end
+    if is_broken("fast_reload") then return false end
+    if not is_mags_available() then return false end
+    if not (_G.ammo_check_fastreload_mcm and type(_G.ammo_check_fastreload_mcm.do_fast_reload) == "function") then
+        return false
+    end
+    local ok, res = safe_call("fast_reload", _G.ammo_check_fastreload_mcm.do_fast_reload, wpn)
+    return (ok and res) and true or false
+end
+
+-- Standard engine reload fallback (db.actor:reload_weapon()), no key emulation!
+function engine_reload_fallback(wpn, reason_suffix)
+    if not (db.actor and type(db.actor.reload_weapon) == "function") then
+        return "blocked:no_actor_reload_weapon"
+    end
+    local ok, err = pcall(function()
+        db.actor:reload_weapon()
+    end)
+    if not ok then
+        printf("! [gp_compat] db.actor:reload_weapon() failed: %s", tostring(err))
+        return "error:engine_reload_failed"
+    end
+    return "engine_reload" .. (reason_suffix and ("_" .. reason_suffix) or "")
+end
+
+-- Unified reload with full fallback chain:
+--   1. If Mags is available and supports `wpn`:
+--      a) Try `ammo_check_onekey_mcm.try_reload_weapon()` via pcall (if present and healthy)
+--      b) If One-Key is absent or threw an error, try `magazines.actor_on_weapon_reload(db.actor, wpn)` via pcall
+--      c) If Mags threw an error, mark Mags broken and fall back to `db.actor:reload_weapon()`!
+--   2. If Mags is absent, broken, or does not support `wpn`:
+--      - Go directly to `db.actor:reload_weapon()` (standard engine reload, D57).
+function reload_weapon(wpn)
+    if not wpn or not db.actor then
+        return "blocked:no_weapon"
+    end
+
+    local in_hands = false
+    pcall(function()
+        local active = db.actor:active_item()
+        in_hands = (active ~= nil and active:id() == wpn:id())
+    end)
+
+    if is_reload_blocked_by_ammo_check() then
+        return "blocked:ammo_check_anim"
+    end
+
+    local in_gl = false
+    if type(wpn.weapon_in_grenade_mode) == "function" then
+        local ok_gl, res_gl = pcall(wpn.weapon_in_grenade_mode, wpn)
+        in_gl = (ok_gl and res_gl) and true or false
+    end
+
+    local use_mags = (not in_gl) and mags_supported_weapon(wpn)
+
+    if use_mags then
+        -- Path A: One-Key try_reload_weapon (handles One-Key's foreign reload wrapper around magazines.actor_on_weapon_reload)
+        if not is_broken("onekey") and _G.ammo_check_onekey_mcm and type(_G.ammo_check_onekey_mcm.try_reload_weapon) == "function" then
+            local orig_mags_reload = (_G.magazines and type(_G.magazines.actor_on_weapon_reload) == "function") and _G.magazines.actor_on_weapon_reload or nil
+            if orig_mags_reload then
+                _G.magazines.actor_on_weapon_reload = function(...)
+                    local ok_m, res_m = safe_call("mags", orig_mags_reload, ...)
+                    if not ok_m then
+                        error(res_m)
+                    end
+                    return res_m
+                end
+            end
+            local ok = safe_call("onekey", _G.ammo_check_onekey_mcm.try_reload_weapon)
+            if orig_mags_reload and _G.magazines then
+                _G.magazines.actor_on_weapon_reload = orig_mags_reload
+            end
+            if ok and not is_broken("mags") then
+                return "onekey_try_reload"
+            end
+            -- If One-Key or inner Mags threw an error, it is now marked broken; fall through to direct Mags or engine reload!
+        end
+
+        -- Path B: Direct magazines.actor_on_weapon_reload
+        if not in_hands then
+            return "blocked:weapon_not_in_hands"
+        end
+        if not is_broken("mags") and _G.magazines and type(_G.magazines.actor_on_weapon_reload) == "function" then
+            local ok = safe_call("mags", _G.magazines.actor_on_weapon_reload, db.actor, wpn)
+            if ok then
+                return "mags_actor_on_weapon_reload"
+            end
+            -- Mags threw an error and is now marked broken; fall through to standard engine reload!
+        end
+
+        return engine_reload_fallback(wpn, "mags_broken_fallback")
+    else
+        -- Path C: Mags is absent, broken, in grenade mode, or weapon is not magazine-fed -> standard engine reload (D57)
+        if not in_hands then
+            -- If One-Key is available and healthy, let its draw-window deferral handle mid-draw reload
+            if not is_broken("onekey") and _G.ammo_check_onekey_mcm and type(_G.ammo_check_onekey_mcm.try_reload_weapon) == "function" then
+                local ok = safe_call("onekey", _G.ammo_check_onekey_mcm.try_reload_weapon)
+                if ok then
+                    return "onekey_try_reload_non_mags"
+                end
+            end
+            return "blocked:weapon_not_in_hands"
+        end
+        local suffix = is_mags_available() and "non_mags_wpn" or "no_mags_mod"
+        return engine_reload_fallback(wpn, suffix)
+    end
+end
+
+--===========================================================================
+-- Ammo Wheel & Ammo Type Switching via Mags / Engine Fallback (D57, D58)
+--===========================================================================
+
+-- Returns:
+--   ammo_list: array of compatible ammo section strings (1-based, matching engine ammo_type + 1)
+--   counts:    table [ammo_sec] -> count (carried magazines with top/dominant round if Mags, else loose rounds in inventory)
+--   loaded_sec: currently loaded ammo section in weapon (or nil)
+--   is_mags_mode: boolean (true if weapon is currently using Mags magazines)
+function get_weapon_ammo_summary(wpn)
+    if not wpn or not db.actor then
+        return {}, {}, nil, false
+    end
+
+    local ok_w, id, sec = pcall(function() return wpn:id(), wpn:section() end)
+    if not ok_w or not id or not sec then
+        return {}, {}, nil, false
+    end
+    local in_gl = false
+    if type(wpn.weapon_in_grenade_mode) == "function" then
+        local ok_gl, res_gl = pcall(wpn.weapon_in_grenade_mode, wpn)
+        in_gl = (ok_gl and res_gl) and true or false
+    end
+
+    local ammo_list = {}
+    if in_gl then
+        local ok_gl_s, gl_str = pcall(function() return ini_sys and ini_sys:r_string_ex(sec, "grenade_class") end)
+        if ok_gl_s and gl_str and str_explode then
+            local ok_ex, ex = pcall(str_explode, gl_str, ",")
+            if ok_ex and type(ex) == "table" then
+                ammo_list = ex
+            end
+        end
+    elseif utils_item and type(utils_item.get_ammo) == "function" then
+        local ok_a, list = pcall(utils_item.get_ammo, sec, id)
+        if ok_a and type(list) == "table" then
+            ammo_list = list
+        end
+    end
+    if (#ammo_list == 0) and parse_list and ini_sys then
+        local ok_pl, pl = pcall(parse_list, ini_sys, sec, in_gl and "grenade_class" or "ammo_class")
+        ammo_list = (ok_pl and type(pl) == "table") and pl or {}
+    end
+
+    local use_mags = (not in_gl) and mags_supported_weapon(wpn)
+    local counts = {}
+    for _, a_sec in ipairs(ammo_list) do
+        counts[a_sec] = 0
+    end
+    local loaded_sec = nil
+
+    -- Determine currently loaded ammo section
+    local ammo_type_idx = 0
+    if type(wpn.get_ammo_type) == "function" then
+        local ok_t, t = pcall(wpn.get_ammo_type, wpn)
+        if ok_t and type(t) == "number" then
+            ammo_type_idx = t
+        end
+    end
+    loaded_sec = ammo_list[ammo_type_idx + 1]
+
+    if use_mags then
+        -- Check loaded magazine top round if available
+        if _G.magazine_binder and type(_G.magazine_binder.get_data) == "function" then
+            local ok_md, mag_data = safe_call("mags", _G.magazine_binder.get_data, id)
+            if ok_md and type(mag_data) == "table" and type(mag_data.loaded) == "table" and #mag_data.loaded > 0 then
+                local top_round = mag_data.loaded[#mag_data.loaded]
+                if top_round then
+                    loaded_sec = top_round
+                end
+            end
+        end
+
+        -- Count rounds (or magazines) across carried magazines in vest
+        if not is_broken("mags") and _G.magazine_binder and type(_G.magazine_binder.get_carried_mags) == "function" then
+            local carried = {}
+            local ok_cm = safe_call("mags", _G.magazine_binder.get_carried_mags, carried)
+            if ok_cm and type(carried) == "table" then
+                for mag_id, data in pairs(carried) do
+                    if type(data) == "table" and data.section and type(data.loaded) == "table" and #data.loaded > 0 then
+                        local ok_comp, is_comp = safe_call("mags", _G.magazine_binder.is_compatible, wpn, data.section)
+                        if ok_comp and is_comp then
+                            local top_sec = data.loaded[#data.loaded]
+                            if top_sec then
+                                counts[top_sec] = (counts[top_sec] or 0) + #data.loaded
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- If not using Mags (or if Mags was broken during the check above), count loose ammo in inventory
+    if not use_mags or is_broken("mags") then
+        use_mags = false
+        if type(db.actor.iterate_inventory) == "function" then
+            pcall(function()
+                db.actor:iterate_inventory(function(_, itm)
+                    pcall(function()
+                        if itm and type(itm.section) == "function" then
+                            local s = itm:section()
+                            if s and counts[s] ~= nil then
+                                local cnt = 0
+                                if type(itm.ammo_get_count) == "function" then
+                                    cnt = itm:ammo_get_count() or 0
+                                elseif type(itm.box_curr) == "function" then
+                                    cnt = itm:box_curr() or 0
+                                end
+                                counts[s] = (counts[s] or 0) + cnt
+                            end
+                        end
+                    end)
+                end, nil)
+            end)
+        end
+    end
+
+    return ammo_list, counts, loaded_sec, use_mags
+end
+
+-- Select at most max_n compatible ammo types for the active weapon (D58):
+--   1. Only ammo types from the weapon's compatible ammo_list (excluding damaged "verybad" / "ammo_12x70_buck_self" if _NO_DAMAGED_AMMO)
+--   2. If compatible types > max_n, pick the most relevant:
+--      - First: currently loaded ammo type in the weapon
+--      - Next: ammo types present in inventory/pouches (count > 0), sorted by descending count
+--      - Next (if still < max_n): remaining compatible types in weapon config order
+--   Returns an array of { section = sec, ammo_idx = idx_1_based, count = count, is_loaded = bool, is_mags = bool }
+function select_ammo_wheel_entries(wpn, max_n)
+    local limit = clamp(math.floor(tonumber(max_n) or 3), 1, 6)
+    local ammo_list, counts, loaded_sec, use_mags = get_weapon_ammo_summary(wpn)
+    if #ammo_list == 0 then
+        return {}
+    end
+
+    local hide_damaged = (_G._NO_DAMAGED_AMMO ~= false)
+    local candidates = {}
+    for idx, sec in ipairs(ammo_list) do
+        local is_verybad = sec and string.find(sec, "verybad") ~= nil
+        local is_self_buck = (sec == "ammo_12x70_buck_self")
+        if sec and not is_self_buck and (not hide_damaged or not is_verybad) then
+            candidates[#candidates + 1] = {
+                section = sec,
+                ammo_idx = idx,
+                count = counts[sec] or 0,
+                is_loaded = (sec == loaded_sec),
+                is_mags = use_mags
+            }
+        end
+    end
+
+    -- Sort by priority: (1) is_loaded == true first, (2) count > 0 before count == 0, (3) higher count first, (4) original ammo_idx
+    table.sort(candidates, function(a, b)
+        if a.is_loaded ~= b.is_loaded then
+            return a.is_loaded
+        end
+        local a_avail = a.count > 0
+        local b_avail = b.count > 0
+        if a_avail ~= b_avail then
+            return a_avail
+        end
+        if a.count ~= b.count then
+            return a.count > b.count
+        end
+        return a.ammo_idx < b.ammo_idx
+    end)
+
+    local selected = {}
+    local take = math.min(#candidates, limit)
+    for i = 1, take do
+        selected[i] = candidates[i]
+    end
+
+    return selected
+end
+
+-- Switch ammo type on active weapon (D57, D58):
+--   - With Mags: uses magazines.find_magazine(wpn, desired_section) + magazines.delay_load_weapon (or ammo_check_onekey_mcm.try_switch_to_ammo_type)
+--   - Without Mags (or on error / non-mags weapon / grenade mode): standard engine switch:
+--       wpn:unload_magazine(true)
+--       wpn:set_ammo_type(ammo_idx - 1)
+--       db.actor:reload_weapon()
+function switch_ammo_type(wpn, ammo_idx, desired_section)
+    if not wpn or not db.actor then
+        return false, "blocked:no_weapon"
+    end
+    local idx = tonumber(ammo_idx) or 1
+    if idx < 1 then idx = 1 end
+
+    local in_gl = false
+    if type(wpn.weapon_in_grenade_mode) == "function" then
+        local ok_gl, res_gl = pcall(wpn.weapon_in_grenade_mode, wpn)
+        in_gl = (ok_gl and res_gl) and true or false
+    end
+
+    if is_reload_blocked_by_ammo_check() then
+        return false, "blocked:ammo_check_anim"
+    end
+
+    local use_mags = (not in_gl) and mags_supported_weapon(wpn)
+    if use_mags then
+        -- 1. Try AmmoCheck One-Key's try_switch_to_ammo_type if present and healthy
+        if not is_broken("onekey") and _G.ammo_check_onekey_mcm and type(_G.ammo_check_onekey_mcm.try_switch_to_ammo_type) == "function" then
+            local ok, switched = safe_call("onekey", _G.ammo_check_onekey_mcm.try_switch_to_ammo_type, wpn, idx)
+            if ok and not is_broken("mags") then
+                if switched then
+                    return true, "mags_onekey_switch:" .. tostring(desired_section or idx)
+                else
+                    return false, "blocked:no_carried_mag_for_ammo"
+                end
+            end
+        end
+
+        -- 2. Direct Mags Reloaded magazine switch sequence (mirrors magazines.actor_on_weapon_reload + find_magazine(wpn, desired_section))
+        if not is_broken("mags") and _G.magazines and type(_G.magazines.find_magazine) == "function" then
+            local ok_m, switched_or_reason = safe_call("mags", function()
+                local sec = desired_section
+                if not sec and utils_item and type(utils_item.get_ammo) == "function" then
+                    local map = utils_item.get_ammo(nil, wpn:id())
+                    sec = map and map[idx]
+                end
+                local mag = _G.magazines.find_magazine(wpn, sec)
+                if not mag then
+                    return "no_mag"
+                end
+                local pre_table = _G.magazines.count_ammo(wpn)
+                if _G.mag_reload_speed and type(_G.mag_reload_speed.set_pending_mag) == "function" then
+                    pcall(_G.mag_reload_speed.set_pending_mag, mag)
+                end
+                if _G.mag_bone_hider and type(_G.mag_bone_hider.begin_reload) == "function" then
+                    pcall(_G.mag_bone_hider.begin_reload, wpn)
+                end
+                wpn:switch_state(7)
+                if disable_info then pcall(disable_info, "sleep_active") end
+                _G.magazines.action_start_reload()
+                if CreateTimeEvent then
+                    local wpn_id_val = wpn:id()
+                    CreateTimeEvent("gp_compat_switch", "delay_weapon" .. tostring(wpn_id_val), 0.1, function(w_id, m_arg, pt_arg)
+                        if not _G.magazines or type(_G.magazines.delay_load_weapon) ~= "function" then
+                            return true
+                        end
+                        local ok_t, res_t = safe_call("mags", _G.magazines.delay_load_weapon, w_id, m_arg, pt_arg)
+                        if not ok_t then
+                            return true
+                        end
+                        return res_t
+                    end, wpn_id_val, mag, pre_table)
+                end
+                return "switched"
+            end)
+            if ok_m then
+                if switched_or_reason == "switched" then
+                    return true, "mags_direct_switch:" .. tostring(desired_section or idx)
+                else
+                    return false, "blocked:no_carried_mag_for_ammo"
+                end
+            end
+            -- Mags threw an error and is now marked broken -> fall through to standard engine switch!
+        end
+    end
+
+    -- Standard engine ammo switch (without Mags or after Mags error)
+    local ok_eng, err_eng = pcall(function()
+        local cur_type = wpn:get_ammo_type()
+        if cur_type == (idx - 1) and wpn:get_ammo_in_magazine() > 0 then
+            return
+        end
+        wpn:unload_magazine(true)
+        wpn:set_ammo_type(idx - 1)
+        db.actor:reload_weapon()
+    end)
+    if not ok_eng then
+        printf("! [gp_compat] engine ammo switch failed: %s", tostring(err_eng))
+        return false, "error:engine_ammo_switch_failed"
+    end
+    return true, "engine_ammo_switch:" .. tostring(desired_section or idx)
+end
+
+-- 6. Demonized Ledge Grabbing (demonized_ledge_grabbing.script)
+local gamepad_jump_held = false
+local gamepad_jump_until_ms = 0
+local wrapped_key_state_orig = nil
+local wrapped_key_state_ref = nil
+
+local function resolve_ledge_jump_dik()
+    local lg = _G.demonized_ledge_grabbing
+    if type(lg) == "table" and type(lg.settings) == "table" and tonumber(lg.settings.keybind) then
+        return tonumber(lg.settings.keybind)
+    end
+    return (DIK_keys and DIK_keys.DIK_SPACE) or 57
+end
+
+function probe_ledge_grabbing()
+    if is_broken("ledge_grabbing") then
+        return "broken", "Demonized Ledge Grabbing"
+    end
+    local lg = _G.demonized_ledge_grabbing
+    if not lg then
+        return "absent", tr("ui_gp_compat_mod_none", "none")
+    end
+    if type(lg) == "table"
+        and type(lg.checkJump) == "function"
+        and type(lg.on_key_press) == "function"
+    then
+        return "ok", "Demonized Ledge Grabbing"
+    end
+    return "broken", "Ledge Grabbing (incomplete API)"
+end
+
+function is_gamepad_jump_active()
+    if not gamepad_jump_held then
+        return false
+    end
+    if gamepad_jump_until_ms > 0 and type(time_global) == "function" then
+        local ok_t, now = pcall(time_global)
+        if ok_t and type(now) == "number" and now > gamepad_jump_until_ms then
+            gamepad_jump_held = false
+            gamepad_jump_until_ms = 0
+            return false
+        end
+    end
+    return true
+end
+
+function ensure_ledge_grabbing_hook()
+    local cur_ks = _G.key_state
+    if cur_ks ~= nil and cur_ks == wrapped_key_state_ref then
+        return true
+    end
+    wrapped_key_state_orig = type(cur_ks) == "function" and cur_ks or nil
+    wrapped_key_state_ref = function(dik)
+        if is_gamepad_jump_active() then
+            local space_dik = (DIK_keys and DIK_keys.DIK_SPACE) or 57
+            local jump_dik = resolve_ledge_jump_dik()
+            local bind_dik = nil
+            if type(bind_to_dik) == "function" and key_bindings and key_bindings.kJUMP then
+                local ok_b, bd = pcall(bind_to_dik, key_bindings.kJUMP)
+                if ok_b and type(bd) == "number" and bd > 0 then
+                    bind_dik = bd
+                end
+            end
+            if dik == jump_dik or dik == space_dik or (bind_dik and dik == bind_dik) then
+                return 1
+            end
+        end
+        if type(wrapped_key_state_orig) == "function" then
+            local ok_k, res_k = pcall(wrapped_key_state_orig, dik)
+            if ok_k and type(res_k) == "number" then
+                return res_k
+            end
+        end
+        return 0
+    end
+    _G.key_state = wrapped_key_state_ref
+    return true
+end
+
+function on_gamepad_jump_press(hold_window_ms)
+    ensure_ledge_grabbing_hook()
+    gamepad_jump_held = true
+    local win_ms = tonumber(hold_window_ms)
+    if win_ms == 0 then
+        gamepad_jump_until_ms = 0
+    else
+        local now = 0
+        if type(time_global) == "function" then
+            local ok_t, t = pcall(time_global)
+            if ok_t and type(t) == "number" then now = t end
+        end
+        gamepad_jump_until_ms = now + (win_ms or 1200)
+    end
+    if level and type(level.press_action) == "function" and key_bindings and key_bindings.kJUMP then
+        pcall(level.press_action, key_bindings.kJUMP)
+    end
+    local st = probe_ledge_grabbing()
+    if st ~= "ok" then
+        return false, "ledge_" .. tostring(st)
+    end
+    local dik = resolve_ledge_jump_dik()
+    local ok, _, err = safe_call("ledge_grabbing", _G.demonized_ledge_grabbing.on_key_press, dik)
+    if not ok then
+        return false, "error:" .. tostring(err)
+    end
+    return true, "ledge_jump_press:" .. tostring(dik)
+end
+
+function on_gamepad_jump_release()
+    gamepad_jump_held = false
+    gamepad_jump_until_ms = 0
+    if level and type(level.release_action) == "function" and key_bindings and key_bindings.kJUMP then
+        pcall(level.release_action, key_bindings.kJUMP)
+    end
+    return true, "ledge_jump_release"
+end
+
+--===========================================================================
+-- Startup Self-Diagnostics & Graceful Subsystem Auto-Disable (I2.1, D64)
+-- Targets:
+--   Primary: original G.A.M.M.A. engine (xray-monolith themrdemonized) +
+--            original G.A.M.M.A. modpack & vanilla Anomaly 1.5.2/1.5.3.
+--   Optional: PBR / DX12 build.
+-- Guarantees:
+--   1. Verifies C++ engine API presence and version (when exported) vs expected.
+--   2. Detects missing or foreign-overwritten mod files via version markers
+--      (_GP_FILE_MARKER) and module function signatures + VFS check.
+--   3. Probes dependent/conflicting mods (distinguishing G.A.M.M.A. vs vanilla
+--      Anomaly so absent G.A.M.M.A. mods are never treated as errors).
+--   4. On mismatch/overwrite/conflict: emits AT MOST ONE clear player message
+--      (RU/EN) and disables ONLY the incompatible subsystem (or switches cleanly
+--      to KBM if engine EXE / core bridge is incompatible), NEVER crashing.
+--===========================================================================
+
+MOD_VERSION = "0.2.0"
+_GP_FILE_MARKER = "GAYS_REL1_20261114"
+EXPECTED_ENGINE_API_MIN = 100
+EXPECTED_ENGINE_API_MAX = 199
+
+local CORE_ENGINE_EXPORTS = {
+    "get_active_input_source",
+    "is_gamepad_active_source",
+    "set_gamepad_lua_hints",
+    "acquire_pause_token",
+    "release_pause_token",
+}
+
+local FEATURE_ENGINE_EXPORTS = {
+    { subsystem = "dialogs",  fns = { "gamepad_is_top_dialog" } },
+    { subsystem = "new_game", fns = { "gamepad_new_game_keyboard" } },
+    { subsystem = "pda",      fns = { "gamepad_pda_map", "gamepad_pda_targets" } },
+    { subsystem = "wheel",    fns = { "reset_wheel_sector_state", "update_wheel_sector" } },
+}
+
+local EXPECTED_MOD_MODULES = {
+    { name = "gp_bridge",     subsystem = "core",     fns = { "is_gamepad_active", "get_active_source" } },
+    { name = "gp_safe_guard", subsystem = "core",     fns = { "safe_call", "wrap_handler" } },
+    { name = "gp_failover",   subsystem = "core",     fns = { "switch_to_kbm", "release_pauses_and_close_overlays" } },
+    { name = "gp_field",      subsystem = "field",    fns = { "toggle_nvg", "toggle_torch" } },
+    { name = "gp_weapon",     subsystem = "weapon",   fns = { "x_reload", "next_weapon_slot" } },
+    { name = "gp_wheel",      subsystem = "wheel",    fns = { "get_time_mode", "open_radial_menu" } },
+    { name = "gp_pda",        subsystem = "pda",      fns = { "install_hooks", "get_tab_ui" } },
+    { name = "gp_workshop",   subsystem = "workshop", fns = { "cursor_xy", "shown" } },
+    { name = "gp_new_game",   subsystem = "new_game", fns = { "update", "query" } },
+}
+
+local GAMMA_SIGNATURE_MODS = {
+    "magazines",
+    "zzz_player_injuries",
+    "arti_jamming",
+    "grok_bo",
+    "haru_quick_action_wheel_mcm",
+}
+
+local diag_state = {
+    ran = false,
+    gamepad_disabled = false,
+    disabled_subsystems = {},
+    notified_player = false,
+    logged_console = false,
+    pending_message = nil,
+    report = nil,
+}
+
+local function detect_startup_lang(override_lang)
+    if override_lang == "en" or override_lang == "eng" then
+        return "en"
+    elseif override_lang == "ru" or override_lang == "rus" then
+        return "ru"
+    end
+    if type(_G.get_console) == "function" then
+        local ok_c, con = pcall(_G.get_console)
+        if ok_c and con and type(con.get_string) == "function" then
+            local ok_l, lang_str = pcall(con.get_string, con, "g_language")
+            if ok_l and type(lang_str) == "string" then
+                if lang_str == "eng" then
+                    return "en"
+                elseif lang_str == "rus" then
+                    return "ru"
+                end
+            end
+        end
+    end
+    local sample = tr("ui_mm_return_game", "")
+    if type(sample) == "string" and sample ~= "" and sample ~= "ui_mm_return_game" then
+        for i = 1, #sample do
+            if string.byte(sample, i) >= 128 then
+                return "ru"
+            end
+        end
+        return "en"
+    end
+    return "ru"
+end
+
+local function isolate_subsystem(subsystem, reason)
+    local sub = tostring(subsystem or "unknown")
+    diag_state.disabled_subsystems[sub] = true
+    if sub == "core" then
+        diag_state.gamepad_disabled = true
+        if type(_G.gp_failover) == "table" and type(_G.gp_failover.switch_to_kbm) == "function" then
+            pcall(_G.gp_failover.switch_to_kbm, "compat_" .. tostring(reason or "core"), { silent = true })
+        end
+    end
+end
+
+local function format_startup_player_message(report, lang)
+    local ru = (lang ~= "en")
+    local eng = report.engine
+    local files = report.files
+    local mods = report.mods
+
+    if eng.state == "absent" then
+        if ru then
+            return "[Геймпад] Не обновлён файл запуска игры в папке Anomaly\\bin (возможно, перезаписан при обновлении G.A.M.M.A.). Управление с геймпада отключено, клавиатура и мышь работают штатно."
+        end
+        return "[Gamepad] Game executable in Anomaly\\bin does not contain gamepad support (possibly overwritten by G.A.M.M.A. update). Gamepad controls are disabled; keyboard and mouse work normally."
+    end
+
+    if eng.state == "outdated_api" or eng.state == "newer_incompatible_api" then
+        local got = tostring(eng.api_version or "?")
+        if ru then
+            return string.format(
+                "[Геймпад] Версия движка в Anomaly\\bin (API %s) не подходит к версии мода в MO2 (нужна %d..%d). Обновите обе папки из одного архива. Управление с геймпада отключено.",
+                got, EXPECTED_ENGINE_API_MIN, EXPECTED_ENGINE_API_MAX
+            )
+        end
+        return string.format(
+            "[Gamepad] Engine executable in Anomaly\\bin (API %s) does not match the MO2 mod version (expected %d..%d). Update both folders from the same archive. Gamepad controls are disabled.",
+            got, EXPECTED_ENGINE_API_MIN, EXPECTED_ENGINE_API_MAX
+        )
+    end
+
+    if files.state == "overwritten" or files.state == "missing_files" then
+        local list_str = table.concat(files.problem_items, ", ")
+        if list_str == "" and files.xml_missing then
+            list_str = "ui_st_gamepad.xml"
+        end
+        if report.gamepad_disabled then
+            if ru then
+                return string.format(
+                    "[Геймпад] Основные файлы мода повреждены или перезаписаны другим модом (%s). Поставьте мод GAMMA Gamepad & Tactical UI в самый низ списка MO2. Геймпад отключён.",
+                    list_str
+                )
+            end
+            return string.format(
+                "[Gamepad] Core mod files are missing or overwritten by another mod (%s). Move GAMMA Gamepad & Tactical UI to the bottom of MO2. Gamepad controls are disabled.",
+                list_str
+            )
+        else
+            if ru then
+                return string.format(
+                    "[Геймпад] Другой мод перезаписал часть файлов геймпада (%s). Переместите мод в самый низ списка MO2; затронутая часть временно отключена.",
+                    list_str
+                )
+            end
+            return string.format(
+                "[Gamepad] Another mod overwrote part of the gamepad files (%s). Move the mod to the bottom of MO2; the affected part has been disabled.",
+                list_str
+            )
+        end
+    end
+
+    if eng.state == "partial" then
+        local feat_str = table.concat(eng.missing_features, ", ")
+        if ru then
+            return string.format(
+                "[Геймпад] Установленная сборка движка ещё не поддерживает часть новых окон (%s). Эти окна переключены на обычное управление.",
+                feat_str
+            )
+        end
+        return string.format(
+            "[Gamepad] Current engine build does not yet support some UI features (%s). Those screens will use standard controls.",
+            feat_str
+        )
+    end
+
+    if mods.state == "conflict" or mods.state == "degraded" then
+        local issue_str = table.concat(mods.issues, ", ")
+        if ru then
+            return string.format(
+                "[Геймпад] Обнаружена несовместимость с внешним модом (%s). Включён безопасный запасной режим без вылета.",
+                issue_str
+            )
+        end
+        return string.format(
+            "[Gamepad] Detected an incompatible or broken external mod (%s). Safe fallback mode enabled.",
+            issue_str
+        )
+    end
+
+    return nil
+end
+
+function probe_engine_api()
+    local g = _G.game
+    local missing_core = {}
+    if type(g) ~= "table" then
+        for i = 1, #CORE_ENGINE_EXPORTS do
+            missing_core[i] = CORE_ENGINE_EXPORTS[i]
+        end
+        return {
+            state = "absent",
+            api_version = nil,
+            engine_flavor = "vanilla",
+            missing_core = missing_core,
+            missing_features = {},
+        }
+    end
+
+    for _, fn_name in ipairs(CORE_ENGINE_EXPORTS) do
+        if type(g[fn_name]) ~= "function" then
+            missing_core[#missing_core + 1] = fn_name
+        end
+    end
+
+    if #missing_core > 0 then
+        return {
+            state = "absent",
+            api_version = nil,
+            engine_flavor = "vanilla",
+            missing_core = missing_core,
+            missing_features = {},
+        }
+    end
+
+    local engine_flavor = "unversioned-legacy"
+    if type(g.get_gamepad_engine_flavor) == "function" then
+        local ok_f, flv = pcall(g.get_gamepad_engine_flavor)
+        if ok_f and type(flv) == "string" and flv ~= "" then
+            engine_flavor = flv
+        end
+    end
+
+    local api_version = nil
+    if type(g.get_gamepad_api_version) == "function" then
+        local ok_v, ver = pcall(g.get_gamepad_api_version)
+        if not ok_v or type(ver) ~= "number" then
+            return {
+                state = "outdated_api",
+                api_version = ver,
+                engine_flavor = engine_flavor,
+                missing_core = {},
+                missing_features = {},
+            }
+        end
+        api_version = ver
+        if ver < EXPECTED_ENGINE_API_MIN then
+            return {
+                state = "outdated_api",
+                api_version = ver,
+                engine_flavor = engine_flavor,
+                missing_core = {},
+                missing_features = {},
+            }
+        elseif ver > EXPECTED_ENGINE_API_MAX then
+            return {
+                state = "newer_incompatible_api",
+                api_version = ver,
+                engine_flavor = engine_flavor,
+                missing_core = {},
+                missing_features = {},
+            }
+        end
+    end
+
+    local missing_features = {}
+    for _, grp in ipairs(FEATURE_ENGINE_EXPORTS) do
+        local grp_ok = true
+        for _, fn_name in ipairs(grp.fns) do
+            if type(g[fn_name]) ~= "function" then
+                grp_ok = false
+                break
+            end
+        end
+        if not grp_ok then
+            missing_features[#missing_features + 1] = grp.subsystem
+        end
+    end
+
+    if #missing_features > 0 then
+        return {
+            state = "partial",
+            api_version = api_version,
+            engine_flavor = engine_flavor,
+            missing_core = {},
+            missing_features = missing_features,
+        }
+    end
+
+    return {
+        state = "ok",
+        api_version = api_version,
+        engine_flavor = engine_flavor,
+        missing_core = {},
+        missing_features = {},
+    }
+end
+
+function probe_mod_files_integrity(opts)
+    local options = type(opts) == "table" and opts or {}
+    local expected_marker = options.expected_marker or _GP_FILE_MARKER
+    local check_missing = (options.check_missing == true)
+
+    local fs_obj = nil
+    if type(_G.getFS) == "function" then
+        local ok_fs, res_fs = pcall(_G.getFS)
+        if ok_fs and res_fs and type(res_fs.exist) == "function" then
+            fs_obj = res_fs
+        end
+    end
+
+    local bad_modules = {}
+    local missing_modules = {}
+    local affected_subsystems = {}
+    local seen_sub = {}
+
+    local function mark_sub(sub)
+        if not seen_sub[sub] then
+            seen_sub[sub] = true
+            affected_subsystems[#affected_subsystems + 1] = sub
+        end
+    end
+
+    for _, spec in ipairs(EXPECTED_MOD_MODULES) do
+        local m = _G[spec.name]
+        if m ~= nil then
+            local valid = (type(m) == "table")
+            if valid and m._GP_FILE_MARKER ~= nil and m._GP_FILE_MARKER ~= expected_marker then
+                valid = false
+            end
+            if valid then
+                for _, fn_name in ipairs(spec.fns) do
+                    if type(m[fn_name]) ~= "function" then
+                        valid = false
+                        break
+                    end
+                end
+            end
+            if not valid then
+                bad_modules[#bad_modules + 1] = spec.name
+                mark_sub(spec.subsystem)
+            end
+        else
+            local vfs_missing = false
+            if fs_obj then
+                local ok_e, ex = pcall(fs_obj.exist, fs_obj, "$game_scripts$", spec.name .. ".script")
+                if ok_e and not ex then
+                    vfs_missing = true
+                end
+            elseif check_missing then
+                vfs_missing = true
+            end
+            if vfs_missing then
+                missing_modules[#missing_modules + 1] = spec.name
+                mark_sub(spec.subsystem)
+            end
+        end
+    end
+
+    local xml_missing = false
+    if gc then
+        local ok_base, base_tr = pcall(gc, "ui_mm_return_game")
+        if ok_base and type(base_tr) == "string" and base_tr ~= "" and base_tr ~= "ui_mm_return_game" then
+            local ok_gp, gp_tr = pcall(gc, "ui_gp_compat_cap_mags")
+            if not ok_gp or gp_tr == "ui_gp_compat_cap_mags" or gp_tr == "" then
+                xml_missing = true
+                mark_sub("ui_text")
+            end
+        end
+    end
+
+    local problem_items = {}
+    for _, n in ipairs(bad_modules) do problem_items[#problem_items + 1] = n end
+    for _, n in ipairs(missing_modules) do problem_items[#problem_items + 1] = n end
+
+    local st = "ok"
+    if #bad_modules > 0 or xml_missing then
+        st = "overwritten"
+    elseif #missing_modules > 0 then
+        st = "missing_files"
+    end
+
+    return {
+        state = st,
+        expected_marker = expected_marker,
+        bad_modules = bad_modules,
+        missing_modules = missing_modules,
+        problem_items = problem_items,
+        affected_subsystems = affected_subsystems,
+        xml_missing = xml_missing,
+    }
+end
+
+--===========================================================================
+-- Pack detection (ANOM-COMPAT 2026-11-15): one mod build runs on the original G.A.M.M.A.
+-- modpack and on clean Anomaly 1.5.3. The profile is decided once per session from the
+-- G.A.M.M.A. signature modules (GAMMA_SIGNATURE_MODS; vanilla Anomaly 1.5.3 scripts.db0 has none
+-- of them, observed in D:\GAMMA-Gamepad-Lab\build\anom_ref, docs/anomaly/deps.md).
+--===========================================================================
+local pack_profile_cache = nil
+
+function get_pack_profile()
+    if pack_profile_cache then
+        return pack_profile_cache
+    end
+    local ok_fs, fs_obj = false, nil
+    if type(_G.getFS) == "function" then
+        ok_fs, fs_obj = pcall(_G.getFS)
+    end
+    local has_fs_exist = ok_fs and fs_obj ~= nil and type(fs_obj.exist) == "function"
+    local is_gamma_pack = false
+    for _, mod_name in ipairs(GAMMA_SIGNATURE_MODS) do
+        if rawget(_G, mod_name) ~= nil then
+            is_gamma_pack = true
+            break
+        elseif has_fs_exist then
+            local ok_ex, found = pcall(fs_obj.exist, fs_obj, "$game_scripts$", mod_name .. ".script")
+            if ok_ex and found then
+                is_gamma_pack = true
+                break
+            end
+        else
+            local ok, m = pcall(function() return _G[mod_name] end)
+            if ok and m ~= nil then
+                is_gamma_pack = true
+                break
+            end
+        end
+    end
+    pack_profile_cache = is_gamma_pack and "gamma" or "anomaly"
+    if type(_G.printf) == "function" then
+        pcall(_G.printf, "[gp_compat] pack profile: %s", pack_profile_cache)
+    end
+    return pack_profile_cache
+end
+
+function is_gamma()
+    return get_pack_profile() == "gamma"
+end
+
+function is_vanilla_anomaly()
+    return get_pack_profile() == "anomaly"
+end
+
+function reset_pack_profile_for_test()
+    pack_profile_cache = nil
+end
+
+-- ANOM-COMPAT 2026-11-16: is an optional script module installed? Prefers the VFS check so that a
+-- missing module is never touched as a global on clean Anomaly.
+function module_present(name)
+    name = tostring(name or "")
+    if name == "" then return false end
+    if rawget(_G, name) ~= nil then return true end
+    local ok_fs, fs_obj = false, nil
+    if type(_G.getFS) == "function" then
+        ok_fs, fs_obj = pcall(_G.getFS)
+    end
+    if ok_fs and fs_obj ~= nil and type(fs_obj.exist) == "function" then
+        local ok_ex, found = pcall(fs_obj.exist, fs_obj, "$game_scripts$", name .. ".script")
+        return (ok_ex and found) and true or false
+    end
+    local ok, m = pcall(function() return _G[name] end)
+    return (ok and m ~= nil) and true or false
+end
+
+function optional_module(name)
+    if not module_present(name) then return nil end
+    local ok, m = pcall(function() return _G[name] end)
+    if ok and type(m) == "table" then return m end
+    return nil
+end
+
+-- Quick Action Wheel: our bundled fallback copy (gp_qaw_fallback) runs only when the original
+-- Haru QAW addon is not installed (clean Anomaly); with Haru QAW the patch drives the original.
+function qaw_fallback_needed()
+    return not (module_present("haru_quick_action_wheel_mcm") and module_present("haru_arm"))
+end
+
+-- Vanilla axr_main.callback_set prints "callback %s doesn't exist!" + callstack for names that
+-- are not in its local `intercepts` table (axr_main.script:249-261, vanilla 1.5.3). Read that
+-- upvalue to know whether a callback exists. Returns true / false, or nil when unknown.
+function script_callback_exists(name)
+    local axr = rawget(_G, "axr_main")
+    if axr == nil then
+        local ok_a, a = pcall(function() return _G.axr_main end)
+        axr = ok_a and a or nil
+    end
+    local fn = type(axr) == "table" and axr.callback_set or nil
+    if type(fn) ~= "function" or type(debug) ~= "table" or type(debug.getupvalue) ~= "function" then
+        return nil
+    end
+    for i = 1, 64 do
+        local ok_u, uname, uval = pcall(debug.getupvalue, fn, i)
+        if not ok_u or uname == nil then break end
+        if uname == "intercepts" and type(uval) == "table" then
+            return uval[tostring(name)] ~= nil
+        end
+    end
+    return nil
+end
+
+-- Registers a callback unless we run on clean Anomaly and the callback is known to be absent
+-- (e.g. DXML "on_xml_read", modded-exes "on_luabind_fatal_error"). On G.A.M.M.A. or when
+-- existence is unknown, behaves exactly like RegisterScriptCallback.
+function register_optional_callback(name, fn)
+    local rsc = _G.RegisterScriptCallback
+    if type(rsc) ~= "function" then
+        return false
+    end
+    if is_vanilla_anomaly() and script_callback_exists(name) == false then
+        return false
+    end
+    local ok = pcall(rsc, name, fn)
+    return ok
+end
+
+function probe_dependent_mods()
+    local is_gamma_pack = is_gamma()
+    local pack_profile = is_gamma_pack and "gamma" or "anomaly-vanilla"
+
+    local issues = {}
+    local state = "ok"
+
+    if is_external_haru_qaw_detected() then
+        issues[#issues + 1] = "Haru QAW conflict"
+        state = "conflict"
+    end
+
+    local m_st = probe_mags()
+    if m_st == "broken" then
+        issues[#issues + 1] = "magazines"
+        if state == "ok" then state = "degraded" end
+    end
+
+    local ac_st = probe_ammo_check()
+    if ac_st == "broken" then
+        issues[#issues + 1] = "ammo_check_mcm"
+        if state == "ok" then state = "degraded" end
+    end
+
+    if _G.haru_quick_action_wheel_mcm ~= nil and type(_G.haru_quick_action_wheel_mcm) ~= "table" then
+        issues[#issues + 1] = "haru_quick_action_wheel_mcm"
+        if state == "ok" then state = "degraded" end
+    end
+
+    return {
+        state = state,
+        pack_profile = pack_profile,
+        issues = issues,
+    }
+end
+
+function deliver_pending_player_notice()
+    if diag_state.notified_player or not diag_state.pending_message then
+        return false, nil
+    end
+    local msg = diag_state.pending_message
+    local delivered = false
+
+    if type(_G.gp_toasts) == "table" and type(_G.gp_toasts.show_toast) == "function" then
+        local ok_t = pcall(_G.gp_toasts.show_toast, msg)
+        if ok_t then delivered = true end
+    end
+
+    if not delivered and type(_G.actor_menu) == "table" and type(_G.actor_menu.set_msg) == "function"
+        and type(_G.db) == "table" and _G.db.actor ~= nil then
+        local ok_m = pcall(_G.actor_menu.set_msg, 1, msg, 8)
+        if ok_m then delivered = true end
+    end
+
+    if not delivered and type(_G.db) == "table" and _G.db.actor ~= nil
+        and type(_G.db.actor.give_game_news) == "function" then
+        local ok_n = pcall(_G.db.actor.give_game_news, _G.db.actor, "Gamepad", msg, "ui_inGame2_D_Ohotnik_na_mutantov", 0, 10000)
+        if ok_n then delivered = true end
+    end
+
+    if delivered then
+        diag_state.notified_player = true
+        return true, msg
+    end
+    return false, nil
+end
+
+function run_startup_diagnostics(opts)
+    local options = type(opts) == "table" and opts or {}
+    if diag_state.ran and not options.force then
+        return diag_state.report
+    end
+
+    if options.force then
+        pack_profile_cache = nil -- ANOM-COMPAT: forced re-diagnostics re-detects the pack
+        diag_state.gamepad_disabled = false
+        empty_table(diag_state.disabled_subsystems)
+    end
+
+    local eng = probe_engine_api()
+    local files = probe_mod_files_integrity(options)
+    local mods = probe_dependent_mods()
+
+    local primary_source = "ok"
+    local primary_state = "ok"
+    local has_problem = false
+
+    if eng.state == "absent" or eng.state == "outdated_api" or eng.state == "newer_incompatible_api" then
+        has_problem = true
+        primary_source = "engine_exe"
+        primary_state = "broken"
+        isolate_subsystem("core", eng.state)
+    elseif eng.state == "partial" then
+        has_problem = true
+        primary_source = "engine_exe"
+        primary_state = "partial"
+        for _, sub in ipairs(eng.missing_features) do
+            isolate_subsystem(sub, "missing_cpp_" .. sub)
+        end
+    end
+
+    if files.state ~= "ok" then
+        if not has_problem or primary_state == "partial" then
+            primary_source = table.concat(files.problem_items, ",")
+            if primary_source == "" then primary_source = "ui_st_gamepad.xml" end
+            primary_state = "broken"
+        end
+        has_problem = true
+        for _, sub in ipairs(files.affected_subsystems) do
+            isolate_subsystem(sub, files.state)
+        end
+    end
+
+    if mods.state ~= "ok" then
+        if not has_problem then
+            primary_source = table.concat(mods.issues, ",")
+            primary_state = (mods.state == "conflict") and "conflict" or "partial"
+        end
+        has_problem = true
+        for _, issue in ipairs(mods.issues) do
+            isolate_subsystem("ext_" .. issue, mods.state)
+        end
+    end
+
+    local lang = detect_startup_lang(options.lang)
+    local report = {
+        mod_version = MOD_VERSION,
+        file_marker = _GP_FILE_MARKER,
+        lang = lang,
+        has_problem = has_problem,
+        gamepad_disabled = diag_state.gamepad_disabled,
+        primary_source = primary_source,
+        primary_state = primary_state,
+        engine = eng,
+        files = files,
+        mods = mods,
+        player_message = nil,
+    }
+
+    if has_problem then
+        local msg = format_startup_player_message(report, lang)
+        report.player_message = msg
+        if msg and not diag_state.pending_message then
+            diag_state.pending_message = msg
+        end
+        if msg and not diag_state.logged_console then
+            diag_state.logged_console = true
+            pcall(printf, "! [gp_compat] %s (profile=%s, engine=%s, files=%s, mods=%s)",
+                msg, tostring(mods.pack_profile), tostring(eng.state), tostring(files.state), tostring(mods.state))
+        end
+    else
+        if not diag_state.logged_console then
+            diag_state.logged_console = true
+            pcall(printf, "* [gp_compat] startup self-check OK (version=%s, marker=%s, engine=%s/%s, profile=%s)",
+                MOD_VERSION, _GP_FILE_MARKER, tostring(eng.engine_flavor), tostring(eng.api_version or "legacy"), tostring(mods.pack_profile))
+        end
+    end
+
+    diag_state.ran = true
+    diag_state.report = report
+
+    if has_problem then
+        deliver_pending_player_notice()
+    end
+
+    return report
+end
+
+function is_engine_compatible()
+    if not diag_state.ran then
+        run_startup_diagnostics()
+    end
+    return diag_state.gamepad_disabled ~= true
+end
+
+function is_subsystem_enabled(subsystem)
+    if not diag_state.ran then
+        run_startup_diagnostics()
+    end
+    if diag_state.gamepad_disabled then
+        return false
+    end
+    return diag_state.disabled_subsystems[tostring(subsystem or "")] ~= true
+end
+
+function get_startup_report()
+    if not diag_state.ran then
+        run_startup_diagnostics()
+    end
+    return diag_state.report
+end
+
+function reset_diagnostics_for_test()
+    pack_profile_cache = nil
+    diag_state.ran = false
+    diag_state.gamepad_disabled = false
+    empty_table(diag_state.disabled_subsystems)
+    diag_state.notified_player = false
+    diag_state.logged_console = false
+    diag_state.pending_message = nil
+    diag_state.report = nil
+end
+
+--===========================================================================
+-- FIX-LIVE2 п.21 (решение Миши 21а/21.1а/21.2а, 2026-11-16): адаптер к установленному Free Zoom
+-- (Kute's Free Zoom Rewrite / SlowVibe, модуль Free_ZoomV2_mcm). Связка LT + крестовина вверх
+-- (уточнение Миши 2026-11-16) у открытого прицела (мушка, коллиматор, альтернативная мушка) включает
+-- и выключает Free Zoom тем же публичным путём, что и его клавиша (on_key_press / toggleFreezoom).
+-- У оптики (прицел установлен и zoom type 0) связка не наша — движок оставляет кратность 3DSS
+-- (GamepadContextDispatcher, ветка ADS kWPN_ZOOM_INC). Свой захват помнится отдельно:
+-- снимаем только то, что включили сами (отпускание LT, смена оружия, перезарядка, меню, потеря
+-- геймпада); ручной Free Zoom с клавиатуры и MCM-переключатель не трогаем. Мода нет — ничего не делаем.
+--===========================================================================
+local fz = { own = false, sec = nil, wpn_id = nil }
+
+-- FIX-LIVE4: X-Ray держит ДВА пространства имён одного файла: `free_zoomv2_mcm` (axr_main при старте,
+-- в нём живут колбэки/MCM-настройки) и `Free_ZoomV2_mcm` (создаётся обращением free_zoom_hud_fov_patch,
+-- пустая копия без free_zoom_mult -> on_key_press падает). Сначала берём живую копию.
+FZ_MODULE_NAMES = { "free_zoomv2_mcm", "Free_ZoomV2_mcm" }
+function free_zoom_module()
+    for _, name in ipairs(FZ_MODULE_NAMES) do
+        local m = optional_module(name)
+        if m and type(m.on_key_press) == "function" and type(m.on_key_release) == "function" then
+            return m
+        end
+    end
+    return nil
+end
+
+local function fz_gamepad_active()
+    local b = rawget(_G, "gp_bridge")
+    if type(b) == "table" and type(b.is_gamepad_active) == "function" then
+        local ok, v = pcall(b.is_gamepad_active)
+        return ok and v == true
+    end
+    return false
+end
+
+-- FIX-LIVE3 п.11: без оружия (пустые руки, нож, болт, детектор) Free Zoom тоже разрешён — запрещена
+-- только оптика (прицел установлен и zoom type 0).
+local function fz_open_sight(wpn)
+    if not wpn or type(wpn.cast_Weapon) ~= "function" then return true end
+    local ok_w, w = pcall(wpn.cast_Weapon, wpn)
+    if not ok_w or not w then return true end
+    local ok_s, scoped = pcall(w.IsScopeAttached, w)
+    local ok_t, ztype = pcall(w.GetZoomType, w)
+    if ok_s and scoped and ok_t and ztype == 0 then
+        return false -- оптика: Free Zoom не включаем (D18, у оптики своя кратность)
+    end
+    return true
+end
+
+function free_zoom_is_own()
+    return fz.own
+end
+
+function free_zoom_release(reason)
+    if not fz.own then return false end
+    fz.own = false
+    fz.sec, fz.wpn_id = nil, nil
+    local m = free_zoom_module()
+    if not m or m.freezooming ~= true then return true end -- модуль уже сам снял зум (перезарядка/меню)
+    if m.freezoom_toggleable == true and type(m.toggleFreezoom) == "function" then
+        pcall(m.toggleFreezoom)
+    else
+        pcall(m.on_key_release, m.KEY_TOGGLE_ZOOM)
+    end
+    return true
+end
+
+-- Возвращает true, если связка LT + вверх ушла в Free Zoom (движок тогда не шлёт кратность).
+function on_free_zoom_chord()
+    if not fz_gamepad_active() then return false end
+    local m = free_zoom_module()
+    if not m then return false end
+    local actor = rawget(_G, "db") and db.actor
+    local wpn = actor and actor.active_item and actor:active_item()
+    if not fz_open_sight(wpn) then return false end -- оптика: кратность прицела
+    if fz.own then
+        free_zoom_release("chord")
+        return true
+    end
+    if m.freezooming == true then return true end -- ручной Free Zoom уже включён — не трогаем, но связку гасим
+    if m.freezoom_toggleable == true and type(m.toggleFreezoom) == "function" then
+        pcall(m.toggleFreezoom)
+    else
+        pcall(m.on_key_press, m.KEY_TOGGLE_ZOOM)
+    end
+    if m.freezooming == true then
+        fz.own = true
+        fz.sec = wpn and wpn.section and wpn:section() or nil
+        fz.wpn_id = wpn and wpn.id and wpn:id() or nil
+        return true
+    end
+    return false
+end
+
+function on_free_zoom_ads_out()
+    return free_zoom_release("ads_out")
+end
+
+function on_free_zoom_update()
+    if not fz.own then return end
+    local m = free_zoom_module()
+    if not m or m.freezooming ~= true then
+        fz.own = false -- модуль сам снял зум (перезарядка, меню, смена типа)
+        fz.sec, fz.wpn_id = nil, nil
+        return
+    end
+    if not fz_gamepad_active() then
+        free_zoom_release("device")
+        return
+    end
+    local actor = rawget(_G, "db") and db.actor
+    local wpn = actor and actor.active_item and actor:active_item()
+    local id = wpn and wpn.id and wpn:id() or nil
+    if id ~= fz.wpn_id then
+        free_zoom_release("weapon_change")
+    end
+end
+
+function on_free_zoom_menu()
+    return free_zoom_release("menu")
+end
+
+function reset_free_zoom_for_test()
+    fz.own, fz.sec, fz.wpn_id = false, nil, nil
+end
+
+function on_game_start()
+    pcall(run_startup_diagnostics)
+    if type(_G.RegisterScriptCallback) == "function" then
+        pcall(_G.RegisterScriptCallback, "actor_on_first_update", deliver_pending_player_notice)
+        pcall(_G.RegisterScriptCallback, "actor_on_weapon_zoom_out", on_free_zoom_ads_out)
+        pcall(_G.RegisterScriptCallback, "actor_on_update", on_free_zoom_update)
+        pcall(_G.RegisterScriptCallback, "GUI_on_show", on_free_zoom_menu)
+        pcall(_G.RegisterScriptCallback, "actor_on_net_destroy", on_free_zoom_menu)
+    end
+end
+
+
+--===========================================================================
+-- Settings Status Summary Line ("Gamepad" tab, D57 item 3, D58 item 1)
+-- Format: capability -> mod -> state: ok / absent / broken / fallback
+--===========================================================================
+
+local function state_label(st)
+    if st == "ok" then
+        return tr("ui_gp_compat_st_ok", "ok")
+    elseif st == "absent" then
+        return tr("ui_gp_compat_st_absent", "absent (fallback)")
+    elseif st == "partial" then
+        return tr("ui_gp_compat_st_partial", "works partially (fallback)")
+    elseif st == "broken" then
+        return tr("ui_gp_compat_st_broken", "broken (fallback)")
+    elseif st == "reserved" then
+        return tr("ui_gp_compat_st_reserved", "reserved (no button bound)")
+    elseif st == "conflict" then
+        return tr("ui_gp_compat_st_conflict", "disable external mod!")
+    end
+    return tostring(st)
+end
+
+function get_status_entries()
+    local m_st, m_mod = probe_mags()
+    local ac_st, ac_mod = probe_ammo_check()
+    local fr_st, fr_mod = probe_fast_reload()
+    local jm_st, jm_mod = probe_jamming()
+    local bt_st, bt_mod = probe_bullet_time()
+
+    local entries = {
+        { id = "mags",        cap = tr("ui_gp_compat_cap_mags", "Magazines"),         mod = m_mod,  state = m_st },
+        { id = "ammo_check",  cap = tr("ui_gp_compat_cap_ammo_check", "Ammo Check"),  mod = ac_mod, state = ac_st },
+        { id = "fast_reload", cap = tr("ui_gp_compat_cap_fast_reload", "Fast Reload"),mod = fr_mod, state = fr_st },
+        { id = "jamming",     cap = tr("ui_gp_compat_cap_jamming", "Weapon Jam"),     mod = jm_mod, state = jm_st },
+        { id = "bullet_time", cap = tr("ui_gp_compat_cap_bullet_time", "Bullet Time"),mod = bt_mod, state = bt_st },
+    }
+    if haru_qaw_ammo_wheel_enabled and external_haru_qaw_detected then
+        entries[#entries + 1] = {
+            id = "qaw_conflict",
+            cap = tr("ui_gp_compat_cap_qaw_ext", "External QAW Wheel"),
+            mod = "Haru QAW / Balance",
+            state = "conflict"
+        }
+    end
+    if diag_state.ran and diag_state.report and diag_state.report.has_problem then
+        local diag_cap = (diag_state.report.lang == "en") and "Self-Check" or "Самодиагностика"
+        entries[#entries + 1] = {
+            id = "startup_diag",
+            cap = diag_cap,
+            mod = tostring(diag_state.report.primary_source or "mod"),
+            state = tostring(diag_state.report.primary_state or "broken")
+        }
+    end
+    return entries
+end
+
+function get_options_status_text()
+    local entries = get_status_entries()
+    local parts = {}
+    for _, e in ipairs(entries) do
+        local st_lbl = state_label(e.state)
+        parts[#parts + 1] = string.format("%s -> %s -> %s", tostring(e.cap), tostring(e.mod), tostring(st_lbl))
+    end
+    local header = tr("ui_mm_desc_gamepad_mod_status_header", "Mod compatibility (capability -> mod -> state):")
+    return header .. " " .. table.concat(parts, "  |  ")
+end

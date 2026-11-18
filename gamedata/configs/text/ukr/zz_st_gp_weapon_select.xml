@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<string_table>
+    <string id="st_gp_weapon_select_release"><text>Y відпустити</text></string>
+    <string id="st_gp_weapon_select_holster"><text>Y + вниз  сховати зброю</text></string>
+    <string id="st_gp_weapon_select_empty"><text>Немає зброї</text></string>
+</string_table>
