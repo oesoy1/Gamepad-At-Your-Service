@@ -14,8 +14,6 @@ Close the game completely before installing or updating engine files.
 2. Right-click `GAMMA Gamepad & Tactical UI` in MO2, choose `Open in Explorer`, and double-click `Install_Engine.cmd` (or `Установить_движок.cmd`). The helper reads `ModOrganizer.ini` automatically to find `<Anomaly>`, backs up existing files into `<Anomaly>\bin\_gamepad_backup\`, and installs the gamepad binaries with SHA-256 verification. For the `gamma-monolith-dlss` edition, set MO2's launch executable to `<Anomaly>\bin\AnomalyDX12-DLSS.exe`.
 3. Disable Steam Input (`Properties -> Controller -> Disable Steam Input`) and close DS4Windows, reWASD, or x360ce when playing over USB or the Xbox Wireless Adapter so buttons do not register twice.
 
-If you play standalone Anomaly without MO2, copy `gamedata\` into your `<Anomaly>\` folder and run `Install_Engine.cmd` (pick your `<Anomaly>` root folder when asked).
-
 If you want to double-check paths, hashes, and MO2 order before starting the game, run the read-only verifier from inside the mod folder:
 
 ```powershell

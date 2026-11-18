@@ -10,10 +10,6 @@ DualSense, DualShock 4, Xbox One, Elite Series 2, Xbox 360, Switch Pro, Steam De
 
 Generic DirectInput USB gamepads (Class C) depend on OS drivers and require manual mapping through `Options -> Controls -> Gamepad -> Other Settings -> Class C Setup Wizard`.
 
-## Vanilla S.T.A.L.K.E.R. Anomaly 1.5.2 / 1.5.3
-
-The `anomaly-vanilla` build (`PORT-A`) passes offline automated tests (`luatest` and `verify.ps1`), using standard `reload_weapon()` and the built-in `gp_wheel_arm` wheel, and awaits full in-game playtesting. Do not copy G.A.M.M.A. `.exe` files into a clean Anomaly install.
-
 ## MO2 order and external mappers
 
 Keep `446- Quick Action Wheel - HarukaSai` and `G.A.M.M.A. Quick Action Wheel Balance` enabled above this mod in MO2, and keep `GAMMA Gamepad & Tactical UI` at the bottom of the load order. Leaving Steam Input, DS4Windows (on USB), reWASD, or x360ce running causes duplicate button presses.

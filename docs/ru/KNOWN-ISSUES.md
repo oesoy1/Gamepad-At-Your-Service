@@ -10,10 +10,6 @@ DualSense, DualShock 4, Xbox One, Elite Series 2, Xbox 360, Switch Pro, Steam De
 
 Старые и нестандартные USB-геймпады DirectInput (Класс C) зависят от драйвера в Windows и настраиваются вручную через `Настройки -> Управление -> Геймпад -> Другие настройки -> Мастер настройки`.
 
-## Чистая S.T.A.L.K.E.R. Anomaly 1.5.2 / 1.5.3
-
-Сборка `anomaly-vanilla` (`PORT-A`) со стандартной перезарядкой и встроенным колесом `gp_wheel_arm` прошла автотесты (`luatest` и `verify.ps1`), ожидает живого прогона в игре. Не ставьте `.exe`-файлы от G.A.M.M.A. в папку чистой Anomaly.
-
 ## Порядок модов в MO2 и сторонние программы
 
 Моды `446- Quick Action Wheel - HarukaSai` и `G.A.M.M.A. Quick Action Wheel Balance` должны быть включены выше нашего мода, а `GAMMA Gamepad & Tactical UI` должен стоять в самом низу списка MO2. Включённые параллельно Steam Input, DS4Windows (по кабелю), reWASD или x360ce приводят к двойным нажатиям.

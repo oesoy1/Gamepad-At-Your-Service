@@ -5,7 +5,6 @@
 Engine builds:
 - `gamma-monolith` (`gp-release-mt-may`): ported onto the standard G.A.M.M.A. `MT-TEST 2026.05.15` multithreaded DX11 engine (`AnomalyDX11AVX.exe` and `AnomalyDX11.exe`) with SDL3 `3.4.18`. Keyboard and mouse input is unchanged when no controller is active.
 - `gamma-monolith-dlss` (`gp-release-mt-may-dlss`): same `MT-TEST 2026.05.15` base paired with `brodrigz`'s DX12 presentation bridge for NVIDIA DLSS, Streamline Frame Generation, and AMD FSR 3 (`AnomalyDX12-DLSS.exe`).
-- `anomaly-vanilla` (`PORT-A`): standalone build for clean S.T.A.L.K.E.R. Anomaly 1.5.2 / 1.5.3 using vanilla `reload_weapon()` and the built-in `gp_wheel_arm` wheel. Passed offline test suites; awaiting live in-game testing.
 
 Recent fixes (`FIX-LIVE5` through `FIX-LIVE7`):
 - Easing the left stick below 70% physical tilt for 150 ms drops out of sprint back to a jog or walk without clicking `L3` again.

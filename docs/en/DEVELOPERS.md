@@ -7,7 +7,7 @@
   <img alt="Architecture overview" src="../../assets/arch-en-light.svg" width="880">
 </picture>
 
-This document explains how Gamepad At Your Service is structured and how to port it into another X-Ray 1.6, OpenXRay, or Anomaly `xray-monolith` fork.
+This document explains how Gamepad At Your Service is structured and how to port it into another X-Ray 1.6, OpenXRay, or `xray-monolith` fork.
 
 ## How the code is split
 
@@ -17,7 +17,7 @@ Device input, movement math, and frame-rate-critical state machines run in C++. 
 |---|---|---|
 | Hardware and bindings (`xrEngine`) | Opens controllers via SDL3 `3.4.18`, handles hotplug, deadzones, response curves, `Tap`/`Hold`/`DoubleTap`/`Chord` bindings (`appdata\gamepad\profile.ltx`), five rumble channels, and automatic keyboard/mouse vs. gamepad switching. Keyboard and mouse code paths stay untouched when a controller is idle. | `GamepadDeviceManager.*`, `GamepadBindings.*`, `GamepadMath.*`, `GamepadHaptics.*`, `GamepadGlyphs.*`, `Xr_input.cpp` |
 | Gameplay and UI router (`xrGame`) | Tracks the active context (`World_Gameplay`, `Inventory`, `PDA`, `RadialWheel`, `MenuUI`), drives 360-degree movement (`Actor_Movement.cpp`), `RayQuery` aim assist, focus snapping, pause tokens, and the `EN`/`RU` on-screen keyboard. | `GamepadContextDispatcher.*`, `PauseTokenManager.*`, `GamepadAimAssist.*`, `UICursor.cpp`, `GamepadOnScreenKeyboard.*` |
-| Lua screen adapters (`gamedata/scripts/`) | Attaches controller navigation to G.A.M.M.A. and Anomaly screens at runtime through callbacks and DXML, leaving all vanilla and modpack `.script` and `.xml` files intact on disk. | `gp_bridge.script`, `gp_inv_rework.script`, `gp_pda.script`, `gp_workshop.script`, `gp_mcm.script`, `ui_gp_native.script`, `gp_icons.script` |
+| Lua screen adapters (`gamedata/scripts/`) | Attaches controller navigation to G.A.M.M.A. screens at runtime through callbacks and DXML, leaving all base and modpack `.script` and `.xml` files intact on disk. | `gp_bridge.script`, `gp_inv_rework.script`, `gp_pda.script`, `gp_workshop.script`, `gp_mcm.script`, `ui_gp_native.script`, `gp_icons.script` |
 | Startup check and error guard | `gp_compat.script` checks `game.get_gamepad_api_version()` at launch. If the `.exe` was overwritten by an updater and lacks our C++ exports, the Lua layer disables itself without crashing. Runtime Lua handlers run inside `gp_safe_guard.script` (`xpcall`). | `gp_compat.script`, `gp_safe_guard.script`, `gp_failover.script`, `GamepadErrorGuard.*` |
 
 ## Porting to your own engine

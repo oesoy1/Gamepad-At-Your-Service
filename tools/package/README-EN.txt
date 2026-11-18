@@ -73,10 +73,6 @@ Controller note:
   close DS4Windows, reWASD, or x360ce over USB or Xbox Wireless Adapter so
   buttons do not register twice.
 
-Standalone Anomaly without MO2:
-  Copy gamedata\ into your Anomaly\ root folder and run "Install_Engine.cmd";
-  when prompted, choose your Anomaly root folder (the folder containing bin\).
-
 
 ================================================================================
 OPTIONAL: READ-ONLY VERIFICATION

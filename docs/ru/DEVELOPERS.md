@@ -7,7 +7,7 @@
   <img alt="Схема устройства мода" src="../../assets/arch-ru-light.svg" width="880">
 </picture>
 
-Короткая памятка для авторов движков (форков OpenXRay, `xray-monolith`, своих сборок Anomaly и G.A.M.M.A.) и скриптовых модов: как разделён код и как перенести поддержку геймпада к себе.
+Короткая памятка для авторов движков (форков OpenXRay, `xray-monolith` и сборок G.A.M.M.A.) и скриптовых модов: как разделён код и как перенести поддержку геймпада к себе.
 
 ## Как разделена работа между C++ и Lua
 
@@ -17,10 +17,10 @@
 |---|---|---|
 | Ввод и раскладки (`xrEngine`) | Работает с геймпадами через SDL3 `3.4.18`: горячее подключение, мёртвые зоны, кривые отклика, жесты `Tap`/`Hold`/`DoubleTap`/`Chord` (`appdata\gamepad\profile.ltx`), 5 каналов вибрации и автопереключение между клавиатурой/мышью и геймпадом. Когда геймпад не трогают, код клавиатуры и мыши работает как в оригинале. | `GamepadDeviceManager.*`, `GamepadBindings.*`, `GamepadMath.*`, `GamepadHaptics.*`, `GamepadGlyphs.*`, `Xr_input.cpp` |
 | Мир и навигация окон (`xrGame`) | Определяет активный режим (`World_Gameplay`, `Inventory`, `PDA`, `RadialWheel`, `MenuUI`), считает 360°-движение (`Actor_Movement.cpp`), помощь в прицеле по лучу `RayQuery`, переходы рамки фокуса, токены паузы и экранную клавиатуру `RU`/`EN`. | `GamepadContextDispatcher.*`, `PauseTokenManager.*`, `GamepadAimAssist.*`, `UICursor.cpp`, `GamepadOnScreenKeyboard.*` |
-| Экранные адаптеры (`gamedata/scripts/`) | Подключают управление кнопками ко всем окнам G.A.M.M.A. и Anomaly на лету через колбэки и DXML. Чужие и ванильные файлы `.script` и `.xml` на диске не перезаписываются. | `gp_bridge.script`, `gp_inv_rework.script`, `gp_pda.script`, `gp_workshop.script`, `gp_mcm.script`, `ui_gp_native.script`, `gp_icons.script` |
+| Экранные адаптеры (`gamedata/scripts/`) | Подключают управление кнопками ко всем окнам G.A.M.M.A. на лету через колбэки и DXML. Базовые и модовые файлы `.script` и `.xml` на диске не перезаписываются. | `gp_bridge.script`, `gp_inv_rework.script`, `gp_pda.script`, `gp_workshop.script`, `gp_mcm.script`, `ui_gp_native.script`, `gp_icons.script` |
 | Самопроверка и защита от сбоев | При запуске `gp_compat.script` сверяет `game.get_gamepad_api_version()`. Если лаунчер обновил `.exe` и в нём нет наших функций C++, скрипты отключаются без вылета. Все обработчики Lua обёрнуты в `gp_safe_guard.script` (`xpcall`). | `gp_compat.script`, `gp_safe_guard.script`, `gp_failover.script`, `GamepadErrorGuard.*` |
 
-## Перенос в свой форк X-Ray / Anomaly за 5 шагов
+## Перенос в свой форк X-Ray за 5 шагов
 
 За точку отсчёта взят коммит `3d4dcca52` из `themrdemonized/xray-monolith` (`MT-TEST 2026.05.15`). Все изменения со стороны движка собраны отдельно в папке [`engine-changes/`](../../engine-changes/).
 

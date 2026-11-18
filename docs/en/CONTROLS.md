@@ -66,7 +66,7 @@ Opening inventory pauses the world. Consumables and magazine loads triggered on 
 
 ## Quick Action Wheel and weapon fan
 
-Hold `LB` (`250 ms`) to open HarukaSai's Quick Action Wheel (or the built-in wheel on clean Anomaly). Tilt `RS` to a sector and release `LB` (or press `A`). `LT`/`RT` switch wheel tabs, `D-Pad` uses a pinned slot when `RS` is centered or pins the active sector when `RS` is tilted, and `B` cancels.
+Hold `LB` (`250 ms`) to open HarukaSai's Quick Action Wheel. Tilt `RS` to a sector and release `LB` (or press `A`). `LT`/`RT` switch wheel tabs, `D-Pad` uses a pinned slot when `RS` is centered or pins the active sector when `RS` is tilted, and `B` cancels.
 
 Hold `Y` (`300 ms`) to open the weapon selector fan, tilt `RS` to a weapon slot, and release `Y`.
 

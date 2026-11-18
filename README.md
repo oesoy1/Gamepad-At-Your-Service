@@ -25,7 +25,6 @@ Controller settings live under `Options -> Controls -> Gamepad` across four tabs
 |---|---|---|
 | `gamma-monolith` | Standard S.T.A.L.K.E.R. G.A.M.M.A. (DX11 / AVX) | `AnomalyDX11AVX.exe`, `AnomalyDX11.exe`, `SDL3.dll` |
 | `gamma-monolith-dlss` | S.T.A.L.K.E.R. G.A.M.M.A. with DX12 bridge (DLSS, FSR 3, Frame Generation) | `AnomalyDX12-DLSS.exe`, `SDL3.dll`, DLSS/FSR/Streamline DLLs, DLSS menu and shader patch |
-| `anomaly-vanilla` | Clean S.T.A.L.K.E.R. Anomaly 1.5.2 / 1.5.3 without G.A.M.M.A. | `AnomalyDX11.exe` (`PORT-A`, passed offline tests, awaiting live playtest) |
 
 Each `.zip` imports straight into Mod Organizer 2 (`Install a new mod from an archive`). Enable the mod at the bottom of your load order, open its folder in Explorer, and run `Install_Engine.cmd` (or `Установить_движок.cmd`) to update `<Anomaly>\bin\` with an automatic backup.
 

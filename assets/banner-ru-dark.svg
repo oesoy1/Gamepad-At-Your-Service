@@ -11,14 +11,5 @@
   <g transform="translate(654, 24)">
     <path d="M44,18 L132,18 C150,18 164,31 168,49 L174,79 C176,91 167,101 155,101 C146,101 139,95 134,86 L124,69 L52,69 L42,86 C37,95 30,101 21,101 C9,101 0,91 2,79 L8,49 C12,31 26,18 44,18 Z"
           fill="#171E26" stroke="#3B4A5A" stroke-width="1.75" stroke-linejoin="round"/>
-    <circle cx="52" cy="44" r="12" fill="none" stroke="#43B5A8" stroke-width="1.75"/>
-    <circle cx="52" cy="44" r="3.5" fill="#43B5A8"/>
-    <path d="M74,53 h8 v6 h-8 z M78,49 v14" stroke="#3B4A5A" stroke-width="1.75" stroke-linecap="round"/>
-    <circle cx="106" cy="56" r="9.5" fill="none" stroke="#3B4A5A" stroke-width="1.75"/>
-    <circle cx="106" cy="56" r="2.5" fill="#3B4A5A"/>
-    <circle cx="132" cy="34" r="4" fill="none" stroke="#3B4A5A" stroke-width="1.75"/>
-    <circle cx="142" cy="44" r="4" fill="none" stroke="#3B4A5A" stroke-width="1.75"/>
-    <circle cx="122" cy="44" r="4" fill="none" stroke="#3B4A5A" stroke-width="1.75"/>
-    <circle cx="132" cy="54" r="4" fill="#D49B4B"/>
   </g>
 </svg>
