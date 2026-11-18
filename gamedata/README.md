@@ -8,4 +8,4 @@ This folder holds the Mod Organizer 2 (`GAMMA Gamepad & Tactical UI`) files:
 
 ## File encoding
 
-Text files in this repository are stored in UTF-8 without BOM so Russian and Ukrainian strings are readable on GitHub. The X-Ray engine itself expects single-byte `Windows-1251` without BOM (`Windows-1252` for Western European folders). When you download a `.zip` from [Releases](../../releases) or run `tools/package/build_release.ps1`, every `.script`, `.ltx`, and `.xml` file is converted to `Windows-1251` automatically.
+Text files in this repository are stored in UTF-8 without BOM so Russian and Ukrainian strings are readable on GitHub. The X-Ray engine itself expects single-byte `Windows-1251` without BOM (`Windows-1252` for Western European folders). When you download a `.zip` from [Releases](https://github.com/oesoy1/Gamepad-At-Your-Service/releases) or run `tools/package/build_release.ps1`, every `.script`, `.ltx`, and `.xml` file is converted to `Windows-1251` automatically.

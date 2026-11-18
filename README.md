@@ -9,7 +9,7 @@
   <a href="README.ru.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/btn-lang-ru-dark.svg"><img alt="Русская версия" src="assets/btn-lang-ru-light.svg" height="36"></picture></a>
 </p>
 
-Gamepad At Your Service adds native SDL3 controller input and full gamepad UI navigation to S.T.A.L.K.E.R. G.A.M.M.A. (`xray-monolith` `MT-TEST 2026.05.15`). If you want to play the mod, grab one of the `.zip` packages on the [Releases](../../releases) page. The files in this repository are the readable UTF-8 source scripts, UI configs, and isolated C++ engine changes.
+Gamepad At Your Service adds native SDL3 controller input and full gamepad UI navigation to S.T.A.L.K.E.R. G.A.M.M.A. (`xray-monolith` `MT-TEST 2026.05.15`). If you want to play the mod, grab one of the `.zip` packages on the [Releases](https://github.com/oesoy1/Gamepad-At-Your-Service/releases) page. The files in this repository are the readable UTF-8 source scripts, UI configs, and isolated C++ engine changes.
 
 ## What's in the mod
 

@@ -2,7 +2,7 @@
 
 [In English](../en/INSTALL.md) / [На главную](../../README.ru.md)
 
-Скачайте нужный архив `.zip` в разделе [Releases](../../../releases):
+Скачайте нужный архив `.zip` в разделе [Releases](https://github.com/oesoy1/Gamepad-At-Your-Service/releases):
 - `Gamepad-At-Your-Service-vX.Y.Z-GAMMA-Standard.zip` для обычной S.T.A.L.K.E.R. G.A.M.M.A. (`AnomalyDX11AVX.exe`, `AnomalyDX11.exe`, `SDL3.dll`). Основной вариант для большинства игроков.
 - `Gamepad-At-Your-Service-vX.Y.Z-GAMMA-DLSS-Optional.zip` для G.A.M.M.A. с DX12-мостом, DLSS, генерацией кадров и FSR 3 (`AnomalyDX12-DLSS.exe`, `SDL3.dll`, библиотеки DLSS/FSR/Streamline/D3D12, меню и патч шейдеров DLSS). Архив полностью самодостаточный и не требует отдельного мода на DLSS (если он стоял раньше, отключите его). Для генерации кадров включите планирование GPU с аппаратным ускорением (HAGS) в настройках графики Windows и отключите MSAA с вертикальной синхронизацией в игре.
 

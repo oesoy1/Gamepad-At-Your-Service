@@ -9,7 +9,7 @@
   <a href="README.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/btn-lang-en-dark.svg"><img alt="English version" src="assets/btn-lang-en-light.svg" height="36"></picture></a>
 </p>
 
-Gamepad At Your Service добавляет в S.T.A.L.K.E.R. G.A.M.M.A. прямое управление с геймпада через SDL3 и переделанную под кнопки навигацию во всех окнах игры (на базе движка `xray-monolith` `MT-TEST 2026.05.15`). Готовые архивы для установки в игру лежат в разделе [Releases](../../releases). В самой папке репозитория находятся открытые исходники в кодировке UTF-8 и выделенные правки движка для чтения и переноса.
+Gamepad At Your Service добавляет в S.T.A.L.K.E.R. G.A.M.M.A. прямое управление с геймпада через SDL3 и переделанную под кнопки навигацию во всех окнах игры (на базе движка `xray-monolith` `MT-TEST 2026.05.15`). Готовые архивы для установки в игру лежат в разделе [Releases](https://github.com/oesoy1/Gamepad-At-Your-Service/releases). В самой папке репозитория находятся открытые исходники в кодировке UTF-8 и выделенные правки движка для чтения и переноса.
 
 ## Что внутри мода
 
