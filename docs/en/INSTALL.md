@@ -3,8 +3,8 @@
 [На русском](../ru/INSTALL.md) / [Back to README](../../README.md)
 
 Download one of the `.zip` archives from [Releases](../../../releases):
-- `Gamepad-At-Your-Service-vX.Y.Z-gamma-monolith.zip` for standard S.T.A.L.K.E.R. G.A.M.M.A. (`AnomalyDX11AVX.exe`, `AnomalyDX11.exe`, `SDL3.dll`).
-- `Gamepad-At-Your-Service-vX.Y.Z-gamma-monolith-dlss.zip` for G.A.M.M.A. with the DX12 bridge, DLSS, Frame Generation, and FSR 3 (`AnomalyDX12-DLSS.exe`, `SDL3.dll`, DLSS/FSR/Streamline/D3D12 runtime DLLs, and DLSS shader patch). If you turn on Frame Generation, enable Hardware-Accelerated GPU Scheduling (HAGS) in Windows graphics settings and turn off MSAA and VSync in video options.
+- `Gamepad-At-Your-Service-vX.Y.Z-GAMMA-Standard.zip` for standard S.T.A.L.K.E.R. G.A.M.M.A. (`AnomalyDX11AVX.exe`, `AnomalyDX11.exe`, `SDL3.dll`). Recommended for most players.
+- `Gamepad-At-Your-Service-vX.Y.Z-GAMMA-DLSS-Optional.zip` for G.A.M.M.A. with the DX12 bridge, DLSS, Frame Generation, and FSR 3 (`AnomalyDX12-DLSS.exe`, `SDL3.dll`, DLSS/FSR/Streamline/D3D12 runtime DLLs, DLSS menu, and shader patch). This package is self-contained and does not require a separate DLSS mod (disable any older standalone DLSS mod before installing). If you turn on Frame Generation, enable Hardware-Accelerated GPU Scheduling (HAGS) in Windows graphics settings and turn off MSAA and VSync in video options.
 
 Close the game completely before installing or updating engine files.
 
