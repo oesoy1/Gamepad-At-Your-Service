@@ -36,8 +36,6 @@ Actions available in the Quick Action Wheel (or via manual rebind) that have no 
 
 ## Inventory, loot, trade, and technician
 
-Opening inventory pauses the world. Consumables and magazine loads triggered on pause queue up and play in order after closing the window.
-
 | Input | Inventory | Loot / stash | Trade | Technician |
 |---|---|---|---|---|
 | `LS` / `D-Pad` | Move across item cells | Move across item cells | Move across item cells | Navigate items, parts, upgrade tree |
@@ -49,7 +47,7 @@ Opening inventory pauses the world. Consumables and magazine loads triggered on 
 | `X` | Context menu (`Hold X`: disassemble) | Same | Context menu (`Hold X`: secondary action) | Context action |
 | `LB` | - | Tap: Take All; Hold: Auto-Looter | Buy cart | - |
 | `RB` | Toggle medicine filter | Put All | Sell cart | - |
-| `L3` | Cancel last queued animation | Personal stash: rename; otherwise cancel queue | Non-empty cart: clear carts; otherwise cancel queue | Cancel last queued animation |
+| `L3` | — | Rename a personal stash | Clear non-empty carts | — |
 | `B` / `Menu` | Close menu or inventory | Same | Same | Back / close |
 
 ## 2D and 3D PDA

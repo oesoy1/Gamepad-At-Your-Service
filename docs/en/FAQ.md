@@ -17,8 +17,8 @@ Go to `Options -> Controls -> Gamepad -> Other Settings`, choose your `Gamepad T
 ### Why don't Xbox Series triggers vibrate on their own on PC?
 Windows XInput and Xbox Wireless Adapter drivers report `trig_rumble = 0` (`SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN = false`). When trigger motors are unavailable, weapon recoil uses the main grip motors.
 
-### How does the inventory pause queue work, and what does `L3` do?
-Opening inventory pauses the world. Bandages, food, and `FDDA` or `Mags` loads triggered while paused enter a queue and play in order once you close your bag. Clicking `L3` in inventory cancels the last queued action. In Trade, `L3` clears non-empty carts; in a personal stash, `L3` renames the stash.
+### What does `L3` do in Trade and in a personal stash?
+In Trade, `L3` clears non-empty carts. In a personal stash, it opens the rename prompt.
 
 ### Can I move the Quick Action Wheel to `Y`?
 Open `Options -> Controls -> Gamepad -> Other Settings -> Assign Buttons` and click the `Wheel on Y` preset, or rebind any of the 18 slots manually. Holding `X` for 1 second on any gamepad settings tab resets that tab to defaults.
