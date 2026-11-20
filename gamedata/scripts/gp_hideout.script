@@ -1,6 +1,6 @@
 _GP_FILE_MARKER = "GAYS_REL1_20261114"
 -- =============================================================================
--- gp_hideout.script — W5-HIDEOUT-PROG (2026-11-14)
+-- gp_hideout.script — W5-HIDEOUT-PROG (2026-11-14) + FIX-FT-P1.J.14 (2026-11-20)
 -- Адаптер геймпада для окон убежища и набора карт по единому концепту
 -- (docs/ui/concept/00-windows-concept.md, ТЗ 20-hideout-furniture.md):
 --   1. Установка мебели в мире + точная подгонка (placeable_furniture, UIAdvancedControls,
@@ -83,11 +83,16 @@ local PIANO_SLIDERS = {
 }
 
 state = {
-    hooks_installed   = false,
-    active_trading_pc = nil,
-    active_adv_ctrl   = nil,
-    denies            = 0,
-    rot_accum_holding = 0,
+    hooks_installed      = false,
+    active_trading_pc    = nil,
+    active_adv_ctrl      = nil,
+    denies               = 0,
+    rot_accum_holding    = 0,
+    in_start_placing     = false,
+    placement_bbox_ready = false,
+    placement_cam_ready  = false,
+    orig_start_placing   = nil,
+    active_bbox_drawer   = nil,
 }
 
 local XML = nil
@@ -536,6 +541,61 @@ end
 local function bit_set(mask, bit_val)
     local m = math.floor(tonumber(mask) or 0)
     return math.floor(m / bit_val) % 2 == 1
+end
+
+local function get_upvalue_by_name(fn, target_name)
+    local dbg = rawget(_G, "debug")
+    if type(fn) ~= "function" or type(dbg) ~= "table" or type(dbg.getupvalue) ~= "function" then
+        return false, nil
+    end
+    for idx = 1, 25 do
+        local name, val = dbg.getupvalue(fn, idx)
+        if not name then break end
+        if name == target_name then
+            return true, val
+        end
+    end
+    return false, nil
+end
+
+function placement_has_bbox(pf)
+    pf = pf or rawget(_G, "placeable_furniture")
+    if type(pf) ~= "table" then return false end
+    if state.in_start_placing then return true end
+    local orig_start = state.orig_start_placing or pf.start_placing_item
+    if type(orig_start) == "function" then
+        local found, val = get_upvalue_by_name(orig_start, "bbox")
+        if found then
+            return not rawequal(val, nil)
+        end
+        return state.placement_bbox_ready == true
+    end
+    return true
+end
+
+function placement_has_player_cam(pf)
+    pf = pf or rawget(_G, "placeable_furniture")
+    if type(pf) ~= "table" then return false end
+    local tf, st = pf.transition_functors, pf.states
+    local fn = type(tf) == "table" and type(st) == "table"
+        and type(tf[st.HOLDING]) == "table" and tf[st.HOLDING][st.ADV_CTRL] or nil
+    if type(fn) == "function" then
+        local found, val = get_upvalue_by_name(fn, "player_pos")
+        if found then
+            return not rawequal(val, nil)
+        end
+        return state.placement_cam_ready == true
+    end
+    return true
+end
+
+function stop_placement_drawer()
+    local drw = state.active_bbox_drawer
+    if drw and type(drw.Stop) == "function" then
+        pcall(drw.Stop, drw)
+        return true
+    end
+    return false
 end
 
 local function update_upvalue_by_name(fn, target_name, updater)
@@ -1381,7 +1441,102 @@ local function hook_map_kit()
 end
 
 local function hook_furniture_placement()
+    local bshape_mod = rawget(_G, "hf_bshape")
+    local bshape_cls = type(bshape_mod) == "table" and bshape_mod.bshape_renderer or nil
+    if bshape_cls and not bshape_cls._gp_hideout_hooked then
+        bshape_cls._gp_hideout_hooked = true
+        local orig_draw_cube = bshape_cls.DrawCube
+        if type(orig_draw_cube) == "function" then
+            bshape_cls.DrawCube = function(self, ...)
+                state.active_bbox_drawer = self
+                return orig_draw_cube(self, ...)
+            end
+        end
+        local orig_stop_gizmo = bshape_cls.StopCrosshairGizmo
+        if type(orig_stop_gizmo) == "function" then
+            bshape_cls.StopCrosshairGizmo = function(self, ...)
+                if not self or not self.crosshair_gizmo or not self.crosshair_gizmo.gizmo then
+                    return nil
+                end
+                return orig_stop_gizmo(self, ...)
+            end
+        end
+    end
+
     local pf = rawget(_G, "placeable_furniture")
+    if type(pf) == "table" and not pf._gp_hideout_pf_hooked then
+        pf._gp_hideout_pf_hooked = true
+        local orig_start = pf.start_placing_item
+        if type(orig_start) == "function" then
+            state.orig_start_placing = orig_start
+            pf.start_placing_item = function(section, ...)
+                state.in_start_placing = true
+                local ok, r1, r2 = pcall(orig_start, section, ...)
+                state.in_start_placing = false
+                if not ok then
+                    if type(pf.set_state) == "function" and type(pf.states) == "table" and pf.states.IDLE ~= nil then
+                        pcall(pf.set_state, pf.states.IDLE)
+                    end
+                    return nil
+                end
+                if type(pf.get_state) == "function" and type(pf.states) == "table" then
+                    local ok_s, cur = pcall(pf.get_state)
+                    if ok_s and cur ~= pf.states.IDLE then
+                        state.placement_bbox_ready = true
+                    end
+                end
+                return r1, r2
+            end
+        end
+        local orig_set_state = pf.set_state
+        if type(orig_set_state) == "function" and type(pf.states) == "table" then
+            pf.set_state = function(new_state, ...)
+                local st_tbl = pf.states
+                local st_idle = st_tbl.IDLE
+                if new_state == st_idle then
+                    local r = orig_set_state(new_state, ...)
+                    stop_placement_drawer()
+                    return r
+                end
+                if not placement_has_bbox(pf) then
+                    if printf then
+                        printf("! [GP][hideout] blocked placeable_furniture.set_state(%s): bbox is nil", tostring(new_state))
+                    end
+                    local ok_s, cur_st = false, st_idle
+                    if type(pf.get_state) == "function" then
+                        ok_s, cur_st = pcall(pf.get_state)
+                    end
+                    if ok_s and cur_st ~= st_idle then
+                        pcall(orig_set_state, st_idle)
+                        stop_placement_drawer()
+                    end
+                    return nil
+                end
+                local ok_s, cur_st = false, st_idle
+                if type(pf.get_state) == "function" then
+                    ok_s, cur_st = pcall(pf.get_state)
+                    if not ok_s then cur_st = st_idle end
+                end
+                if (new_state == st_tbl.ADV_CTRL or new_state == st_tbl.PREVIEW) and not placement_has_player_cam(pf) then
+                    if cur_st ~= st_tbl.HOLDING then
+                        pcall(orig_set_state, st_tbl.HOLDING)
+                    end
+                    if new_state == st_tbl.PREVIEW then
+                        pcall(orig_set_state, st_tbl.ADV_CTRL)
+                        state.placement_cam_ready = true
+                        return orig_set_state(st_tbl.PREVIEW, ...)
+                    end
+                    state.placement_cam_ready = true
+                    return orig_set_state(st_tbl.ADV_CTRL, ...)
+                end
+                if new_state == st_tbl.ADV_CTRL and cur_st == st_tbl.HOLDING then
+                    state.placement_cam_ready = true
+                end
+                return orig_set_state(new_state, ...)
+            end
+        end
+    end
+
     local cls = type(pf) == "table" and pf.UIAdvancedControls or nil
     if cls and not cls._gp_hideout_hooked then
         cls._gp_hideout_hooked = true
@@ -1415,6 +1570,41 @@ local function hook_furniture_placement()
                     apply_adv_offsets(self)
                 end
                 return orig_upd(self, ...)
+            end
+        end
+        local orig_kp = cls.KeyPress
+        if type(orig_kp) == "function" then
+            cls.KeyPress = function(self, dik, kb_action, ...)
+                if not placement_has_bbox(pf) then
+                    return nil
+                end
+                return orig_kp(self, dik, kb_action, ...)
+            end
+        end
+        local orig_kb = cls.OnKeyboard
+        if type(orig_kb) == "function" then
+            cls.OnKeyboard = function(self, dik, kb_action, ...)
+                local st_idle = type(pf.states) == "table" and pf.states.IDLE or 1
+                local ok_s, cur_st = false, st_idle
+                if type(pf.get_state) == "function" then
+                    ok_s, cur_st = pcall(pf.get_state)
+                    if not ok_s then cur_st = st_idle end
+                end
+                if not placement_has_bbox(pf) or cur_st == st_idle then
+                    local ev_press = rawget(_G, "ui_events") and _G.ui_events.WINDOW_KEY_PRESSED
+                    local dik_esc = rawget(_G, "DIK_keys") and _G.DIK_keys.DIK_ESCAPE
+                    if kb_action == ev_press and dik == dik_esc then
+                        if type(self.Close) == "function" then pcall(self.Close, self) end
+                        return true
+                    end
+                    local csw = rawget(_G, "CUIScriptWnd")
+                    if csw and type(csw.OnKeyboard) == "function" then
+                        local ok_k, kres = pcall(csw.OnKeyboard, self, dik, kb_action)
+                        if ok_k then return kres end
+                    end
+                    return false
+                end
+                return orig_kb(self, dik, kb_action, ...)
             end
         end
         local orig_close = cls.Close

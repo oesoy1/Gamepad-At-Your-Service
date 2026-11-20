@@ -90,6 +90,9 @@
 	<string id="ui_gp_wheel_comp_idiots">
 		<text>Tactical Companion Menu (IDIOTS)</text>
 	</string>
+	<string id="ui_gp_wheel_comp_inventory">
+		<text>Companion inventory</text>
+	</string>
 	<string id="ui_gp_wheel_hint_assign">
 		<text>Assign</text>
 	</string>
@@ -1072,6 +1075,12 @@
 	</string>
 	<string id="ui_gp_oth_reload_guard_desc">
 		<text>On: while the crosshair is on an item or spot with an interaction mark (even a distant one), X does not reload - the gamepad gives a light pulse instead. LT + X still reloads. Off: X reloads as usual.</text>
+	</string>
+	<string id="ui_gp_oth_osk">
+		<text>On-screen keyboard</text>
+	</string>
+	<string id="ui_gp_oth_osk_desc">
+		<text>Show the on-screen keyboard for text fields. When off, the field just becomes active for typing on a physical or Steam keyboard.</text>
 	</string>
 	<string id="ui_mm_control_gamepad_reload_guard">
 		<text>Accidental reload protection</text>

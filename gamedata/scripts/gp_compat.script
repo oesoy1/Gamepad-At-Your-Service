@@ -786,7 +786,12 @@ function on_gamepad_jump_press(hold_window_ms)
         end
         gamepad_jump_until_ms = now + (win_ms or 1200)
     end
-    if level and type(level.press_action) == "function" and key_bindings and key_bindings.kJUMP then
+    local level_ok = (type(level) == "table")
+    if level_ok and type(level.present) == "function" then
+        local ok_p, pres = pcall(level.present)
+        level_ok = (ok_p and pres == true)
+    end
+    if level_ok and type(level.press_action) == "function" and key_bindings and key_bindings.kJUMP then
         pcall(level.press_action, key_bindings.kJUMP)
     end
     local st = probe_ledge_grabbing()
@@ -804,7 +809,12 @@ end
 function on_gamepad_jump_release()
     gamepad_jump_held = false
     gamepad_jump_until_ms = 0
-    if level and type(level.release_action) == "function" and key_bindings and key_bindings.kJUMP then
+    local level_ok = (type(level) == "table")
+    if level_ok and type(level.present) == "function" then
+        local ok_p, pres = pcall(level.present)
+        level_ok = (ok_p and pres == true)
+    end
+    if level_ok and type(level.release_action) == "function" and key_bindings and key_bindings.kJUMP then
         pcall(level.release_action, key_bindings.kJUMP)
     end
     return true, "ledge_jump_release"

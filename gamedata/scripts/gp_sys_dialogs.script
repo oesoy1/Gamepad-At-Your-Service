@@ -245,6 +245,10 @@ local function drain_queue(wnd)
     end
 end
 
+local function osk_enabled()
+    return not (game and type(game.gamepad_osk_enabled) == "function") or game.gamepad_osk_enabled()
+end
+
 local function osk_is_open_for(wnd)
     if game and type(game.gamepad_osk_is_open) == "function" then
         local ok, open = pcall(game.gamepad_osk_is_open)
@@ -638,11 +642,19 @@ local function open_stash_osk(g)
     local st = g._gpsys
     local inp = g.input or ctrl_of(g, "fld_input")
     if not inp then return deny() end
-    st.osk_was_open = true
     st.osk_guard_until = now_ms() + OSK_GUARD_MS
     consume_buttons()
+    if not osk_enabled() then
+        st.osk_was_open = false
+        if inp.CaptureFocus then pcall(inp.CaptureFocus, inp, true) end
+        return "used"
+    end
+    st.osk_was_open = true
     if game and type(game.gamepad_new_game_keyboard) == "function" then
-        pcall(game.gamepad_new_game_keyboard, inp)
+        local ok, opened = pcall(game.gamepad_new_game_keyboard, inp)
+        if ok and opened == false then
+            st.osk_was_open = false
+        end
         return "used"
     end
     return ""
@@ -738,7 +750,7 @@ local function tick_stash(g)
             local cx, cy = center(r)
             move_cursor(cx, cy)
         end
-    elseif is_gamepad() and not osk_open then
+    elseif is_gamepad() and not osk_open and osk_enabled() then
         release_edit_focus(g)
     end
 

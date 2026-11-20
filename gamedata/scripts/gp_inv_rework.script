@@ -5634,7 +5634,12 @@ function stash_apply_name(gui, npc_id, new_name)
     return true
 end
 
+local function osk_enabled()
+    return not (game and type(game.gamepad_osk_enabled) == "function") or game.gamepad_osk_enabled()
+end
+
 function stash_rename_open(gui)
+    if not osk_enabled() then return false end
     if not (gui and stash_is_personal(gui)) then return false end
     local npc = stash_partner(gui)
     local npc_id = (npc and type(npc.id) == "function" and npc:id()) or gui.npc_id
@@ -5716,7 +5721,7 @@ function on_button_a_fast()
     local gui = get_gui()
     if not (is_active() and gui) then return nil end
     if gui.mode == "loot" and stash_rename_at_cursor(gui) then
-        stash_rename_open(gui)
+        if not stash_rename_open(gui) then deny() end
         return "handled_item_props:stash_rename"
     end
     if gui.mode == "repair" and state.panel == "tech" then
@@ -5771,7 +5776,8 @@ function l3_press()
         return false
     end
     if gui.mode == "loot" and stash_is_personal(gui) then
-        return stash_rename_open(gui)
+        if not stash_rename_open(gui) then deny() end
+        return true
     end
     return false
 end

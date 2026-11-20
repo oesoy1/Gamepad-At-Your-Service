@@ -362,16 +362,48 @@ local function layout_footer(n, family, glyph_prefix, pfx)
     end
     sync_footer_hold_bar(n)
 end
-local function cancel_options()
-    if owner and owner.OnButton_Cancel then owner:OnButton_Cancel() end
+local hide_panels, detach_panels
+
+local function is_owner_live(host)
+    local h = host or owner
+    if not h then return false end
+    local mm_mod = rawget(_G, "main_menu")
+    if type(mm_mod) == "table" and type(mm_mod.get_main_menu) == "function" then
+        local ok_m, mm_c = pcall(mm_mod.get_main_menu)
+        if ok_m and mm_c and type(mm_c.IsActive) == "function" then
+            local ok_a, act = pcall(mm_c.IsActive, mm_c)
+            if not ok_a or act ~= true then return false end
+        end
+    end
+    if type(h.IsShown) == "function" then
+        local ok_s, shown = pcall(h.IsShown, h)
+        if not ok_s or shown ~= true then return false end
+    end
     return true
+end
+local function cancel_options()
+    if is_owner_live(owner) and owner.OnButton_Cancel then
+        owner:OnButton_Cancel()
+        return true
+    end
+    if owner then
+        local stale = owner
+        hide_panels()
+        detach_panels(stale)
+        aim_applied = nil
+        other_applied = nil
+    end
+    return false
 end
 local function accept_options()
-    if owner and owner.OnButton_Accept then owner:OnButton_Accept() end
-    return true
+    if is_owner_live(owner) and owner.OnButton_Accept then
+        owner:OnButton_Accept()
+        return true
+    end
+    return false
 end
 local function update_pending()
-    if owner and owner.UpdatePending then owner:UpdatePending() end
+    if is_owner_live(owner) and owner.UpdatePending then owner:UpdatePending() end
 end
 
 -- ---------------------------------------------------------------------------------------------
@@ -429,30 +461,39 @@ local function build_controls(w)
     if w._n then return w._n end
     local x = xmlh()
     local n = { rows = {}, groups = {}, help = {}, model = {}, nav = {}, help_open = true } -- FIX-LIVE2 6a: help always on
+    if w._standalone_name == nil then
+        w._standalone_name = (w.WindowName and w:WindowName()) or ""
+    end
+    local host = CUIStatic()
+    host:SetAutoDelete(true)
+    host:Enable(true)
+    rect(host, 0, 0, PANEL_W, PANEL_H)
+    w:AttachChild(host)
+    n.host = host
     show(w.back, false)
     w:SetWindowName("gp_native_controls")
-    n.cap = x:InitFrameLine("cap", w)
-    n.cap_t = txt(w, "t16", 8, 0, 420, 15)
-    x:InitFrameLine("hdr_1", w)
-    x:InitFrameLine("hdr_2", w)
-    x:InitFrameLine("hdr_3", w)
-    txt(w, "t_hdr", 4, 20, 86, 15):SetText(tr("ui_gp_n_col_btn"))
-    txt(w, "t_hdr", 96, 20, 122, 15):SetText(tr("ui_gp_n_col_tap"))
-    txt(w, "t_hdr", 224, 20, 114, 15):SetText(tr("ui_gp_n_col_hold"))
-    n.frame = x:InitFrame("frame", w)
+    n.cap = x:InitFrameLine("cap", host)
+    n.cap_t = txt(host, "t16", 8, 0, 420, 15)
+    x:InitFrameLine("hdr_1", host)
+    x:InitFrameLine("hdr_2", host)
+    x:InitFrameLine("hdr_3", host)
+    txt(host, "t_hdr", 4, 20, 86, 15):SetText(tr("ui_gp_n_col_btn"))
+    txt(host, "t_hdr", 96, 20, 122, 15):SetText(tr("ui_gp_n_col_tap"))
+    txt(host, "t_hdr", 224, 20, 114, 15):SetText(tr("ui_gp_n_col_hold"))
+    n.frame = x:InitFrame("frame", host)
     for i = 1, MAX_GROUPS do
-        n.groups[i] = txt(w, "t_group", 3, 0, 330, 20)
+        n.groups[i] = txt(host, "t_group", 3, 0, 330, 20)
     end
     for i = 1, MAX_ROWS do
         local r = {}
-        r.cell = fill(w, 0, 0, 10, ROW_H, clr(55, 255, 255, 255))
-        r.mark = fill(w, 2, 0, 2, ROW_H, clr(255, 255, 255, 255))
-        r.icon = icon(w, 7, 0, 12, 16, button_icon("xbox", nil, "A"))
-        r.name = txt(w, "t16", 32, 0, 58, ROW_H)
+        r.cell = fill(host, 0, 0, 10, ROW_H, clr(55, 255, 255, 255))
+        r.mark = fill(host, 2, 0, 2, ROW_H, clr(255, 255, 255, 255))
+        r.icon = icon(host, 7, 0, 12, 16, button_icon("xbox", nil, "A"))
+        r.name = txt(host, "t16", 32, 0, 58, ROW_H)
         r.name:SetWindowName("gp_native_row_" .. i)
-        r.tap  = txt(w, "t16", 96, 0, 122, ROW_H)
-        r.hold = txt(w, "t16", 224, 0, 114, ROW_H)
-        r.btn  = x:Init3tButton("row_btn", w)
+        r.tap  = txt(host, "t16", 96, 0, 122, ROW_H)
+        r.hold = txt(host, "t16", 224, 0, 114, ROW_H)
+        r.btn  = x:Init3tButton("row_btn", host)
         local name = "gp_n_row_" .. i
         w:Register(r.btn, name)
         w:AddCallback(name, ui_events.BUTTON_CLICKED, function()
@@ -461,21 +502,21 @@ local function build_controls(w)
         end, w)
         n.rows[i] = r
     end
-    n.pad = icon(w, SIDE_X, 20, SIDE_W, SIDE_W, "ui_gp_native_pad_LT")
-    n.pad_disc = icon(w, SIDE_X, 20, 14, 14, "ui_gp_circle_disc")
-    n.pad_ring = icon(w, SIDE_X, 20, 22, 22, "ui_gp_circle_ring")
+    n.pad = icon(host, SIDE_X, 20, SIDE_W, SIDE_W, "ui_gp_native_pad_LT")
+    n.pad_disc = icon(host, SIDE_X, 20, 14, 14, "ui_gp_circle_disc")
+    n.pad_ring = icon(host, SIDE_X, 20, 22, 22, "ui_gp_circle_ring")
     n.pad_disc:SetTextureColor(clr(195, 232, 232, 238))
     n.pad_ring:SetTextureColor(clr(245, 245, 245, 250))
     show(n.pad_disc, false)
     show(n.pad_ring, false)
-    n.card = x:InitFrame("frame", w)
-    n.help_title = txt(w, "t18", 0, 0, 100, 20)
+    n.card = x:InitFrame("frame", host)
+    n.help_title = txt(host, "t18", 0, 0, 100, 20)
     for i = 1, MAX_HELP do
-        n.help[i] = txt(w, "t16", 0, 0, 100, 18, clr(255, 200, 200, 200))
+        n.help[i] = txt(host, "t16", 0, 0, 100, 18, clr(255, 200, 200, 200))
     end
-    n.help_long = txt(w, "t16w", 0, 0, 100, 60)
-    n.status = txt(w, "t_status", 2, 554, PANEL_W - 4, 18)
-    build_footer(w, n, {
+    n.help_long = txt(host, "t16w", 0, 0, 100, 60)
+    n.status = txt(host, "t_status", 2, 554, PANEL_W - 4, 18)
+    build_footer(host, n, {
         { buttons = { "A" },        label = "ui_gp_n_f_change" },
         { buttons = { "X" },        label = "ui_gp_n_f_hold" },
         { buttons = { "LB", "RB" }, label = "ui_gp_n_f_tab" },
@@ -488,6 +529,9 @@ end
 function layout_controls(w)
     if not w._native_owner or not w.view_model then return end
     local n = build_controls(w)
+    show(w.back, false)
+    show(n.host, true)
+    w:SetWindowName("gp_native_controls")
     n.menu_pad_focus = use_native_menu_focus()
     n.icon_rev = icons_revision()
     local vm = w.view_model
@@ -772,15 +816,24 @@ local function build_aim(w)
     if w._n then return w._n end
     local x = xmlh()
     local n = { rows = {}, groups = {}, order = {}, points = {}, dashes = {}, help_open = true } -- FIX-LIVE2 6a
+    if w._standalone_name == nil then
+        w._standalone_name = (w.WindowName and w:WindowName()) or ""
+    end
+    local host = CUIStatic()
+    host:SetAutoDelete(true)
+    host:Enable(true)
+    rect(host, 0, 0, PANEL_W, PANEL_H)
+    w:AttachChild(host)
+    n.host = host
     show(w.back, false)
     w:SetWindowName("gp_native_aim")
-    n.cap = x:InitFrameLine("cap", w)
-    n.cap_t = txt(w, "t16", 8, 0, 420, 15)
-    x:InitFrameLine("hdr_a1", w)
-    x:InitFrameLine("hdr_a2", w)
-    txt(w, "t_hdr", 4, 20, 150, 15):SetText(tr("ui_gp_n_col_param"))
-    txt(w, "t_hdr", 168, 20, 160, 15):SetText(tr("ui_gp_n_col_value"))
-    n.frame = x:InitFrame("frame", w)
+    n.cap = x:InitFrameLine("cap", host)
+    n.cap_t = txt(host, "t16", 8, 0, 420, 15)
+    x:InitFrameLine("hdr_a1", host)
+    x:InitFrameLine("hdr_a2", host)
+    txt(host, "t_hdr", 4, 20, 150, 15):SetText(tr("ui_gp_n_col_param"))
+    txt(host, "t_hdr", 168, 20, 160, 15):SetText(tr("ui_gp_n_col_value"))
+    n.frame = x:InitFrame("frame", host)
 
     local y = 38
     for _, grp in ipairs(AIM_GROUPS) do
@@ -790,33 +843,33 @@ local function build_aim(w)
             if idx and w.rows[idx].spec.supported ~= false then members[#members + 1] = idx end
         end
         if #members > 0 then
-            local g = txt(w, "t_group", 3, y + 3, 330, 20)
+            local g = txt(host, "t_group", 3, y + 3, 330, 20)
             g:SetText(tr("ui_gp_n_grp_aim_" .. grp.id))
             n.groups[#n.groups + 1] = g
             y = y + GROUP_STEP
             for _, idx in ipairs(members) do
                 local spec = w.rows[idx].spec
                 local r = { idx = idx, spec = spec, y = y }
-                r.mark = fill(w, 2, y, 2, 22, clr(255, 255, 255, 255))
-                r.cap = txt(w, "t16", 8, y, 156, 22)
+                r.mark = fill(host, 2, y, 2, 22, clr(255, 255, 255, 255))
+                r.cap = txt(host, "t16", 8, y, 156, 22)
                 r.cap:SetWindowName("gp_native_row_" .. idx)
                 r.cap:SetText(tr("ui_gp_n_aim_" .. spec.id))
                 if spec.kind == "slider" then
-                    r.track = x:InitTrackBar("track", w)
+                    r.track = x:InitTrackBar("track", host)
                     rect(r.track, 166, y + 3, 132, 16)
                     r.track:SetStep(spec.step)
                     r.track:SetOptFBounds(spec.min, spec.max)
-                    r.value = txt(w, "t16c", 298, y, 40, 22)
-                    r.knob = fill(w, 166, y + 20, 8, 2, clr(255, 255, 255, 255))
+                    r.value = txt(host, "t16c", 298, y, 40, 22)
+                    r.knob = fill(host, 166, y + 20, 8, 2, clr(255, 255, 255, 255))
                 else
                     local radio = bool_options(spec)
                     if radio then
                         r.radio = {}
                         for j, o in ipairs(radio) do
                             local e = { opt = o }
-                            e.btn = x:InitCheck("radio_btn", w)
+                            e.btn = x:InitCheck("radio_btn", host)
                             rect(e.btn, 166 + (j - 1) * 84, y, 26, 22)
-                            e.lbl = txt(w, "t16", 194 + (j - 1) * 84, y, 54, 22, clr(255, 200, 200, 200))
+                            e.lbl = txt(host, "t16", 194 + (j - 1) * 84, y, 54, 22, clr(255, 200, 200, 200))
                             e.lbl:SetText(tr(o.label_id))
                             local name = "gp_n_radio_" .. spec.id .. "_" .. j
                             w:Register(e.btn, name)
@@ -826,7 +879,7 @@ local function build_aim(w)
                             r.radio[j] = e
                         end
                     else
-                        r.list = x:InitComboBox("list", w)
+                        r.list = x:InitComboBox("list", host)
                         rect(r.list, 166, y, 170, 22)
                         for j, o in ipairs(spec.options or {}) do
                             r.list:AddItem(tr(o.label_id), j)
@@ -847,31 +900,31 @@ local function build_aim(w)
     end
 
     -- Response curve graph: axes 0..100%, dashed linear reference, dead zones, live input point.
-    n.g_title = txt(w, "t18", SIDE_X, 20, SIDE_W, 20)
+    n.g_title = txt(host, "t18", SIDE_X, 20, SIDE_W, 20)
     n.g_title:SetText(tr("ui_gp_n_graph_title"))
-    n.g_bg    = fill(w, 0, 0, 10, 10, clr(140, 0, 0, 0))
-    n.g_dz_l  = fill(w, 0, 0, 10, 10, clr(45, 255, 255, 255))
-    n.g_dz_r  = fill(w, 0, 0, 10, 10, clr(45, 255, 255, 255))
-    n.g_axis_x = fill(w, 0, 0, 10, 1, clr(255, 170, 170, 170))
-    n.g_axis_y = fill(w, 0, 0, 1, 10, clr(255, 170, 170, 170))
-    for i = 1, 16 do n.dashes[i] = fill(w, 0, 0, 2, 2, clr(255, 110, 110, 110)) end
-    for i = 1, 61 do n.points[i] = fill(w, 0, 0, 2, 2, clr(255, 235, 235, 235)) end
-    n.g_live = fill(w, 0, 0, 5, 5, clr(255, 255, 255, 255))
-    n.g_y100 = txt(w, "t_hdr", 0, 0, 40, 14)
+    n.g_bg    = fill(host, 0, 0, 10, 10, clr(140, 0, 0, 0))
+    n.g_dz_l  = fill(host, 0, 0, 10, 10, clr(45, 255, 255, 255))
+    n.g_dz_r  = fill(host, 0, 0, 10, 10, clr(45, 255, 255, 255))
+    n.g_axis_x = fill(host, 0, 0, 10, 1, clr(255, 170, 170, 170))
+    n.g_axis_y = fill(host, 0, 0, 1, 10, clr(255, 170, 170, 170))
+    for i = 1, 16 do n.dashes[i] = fill(host, 0, 0, 2, 2, clr(255, 110, 110, 110)) end
+    for i = 1, 61 do n.points[i] = fill(host, 0, 0, 2, 2, clr(255, 235, 235, 235)) end
+    n.g_live = fill(host, 0, 0, 5, 5, clr(255, 255, 255, 255))
+    n.g_y100 = txt(host, "t_hdr", 0, 0, 40, 14)
     n.g_y100:SetText("100%")
-    n.g_x0   = txt(w, "t_hdr", 0, 0, 40, 14)
+    n.g_x0   = txt(host, "t_hdr", 0, 0, 40, 14)
     n.g_x0:SetText("0%")
-    n.g_x100 = txt(w, "t_hdr", 0, 0, 40, 14)
+    n.g_x100 = txt(host, "t_hdr", 0, 0, 40, 14)
     n.g_x100:SetText("100%")
-    n.g_xcap = txt(w, "t16", 0, 0, 100, 18)
+    n.g_xcap = txt(host, "t16", 0, 0, 100, 18)
     n.g_xcap:SetText(tr("ui_gp_n_graph_x"))
-    n.g_ycap = txt(w, "t16", 0, 0, 100, 18)
+    n.g_ycap = txt(host, "t16", 0, 0, 100, 18)
     n.g_ycap:SetText(tr("ui_gp_n_graph_y"))
-    n.info_title = txt(w, "t18", 0, 0, 100, 20)
-    n.info_line  = txt(w, "t16", 0, 0, 100, 18, clr(255, 200, 200, 200))
-    n.help_long  = txt(w, "t16w", 0, 0, 100, 60)
-    n.status = txt(w, "t_status", 2, 554, PANEL_W - 4, 18)
-    build_footer(w, n, {
+    n.info_title = txt(host, "t18", 0, 0, 100, 20)
+    n.info_line  = txt(host, "t16", 0, 0, 100, 18, clr(255, 200, 200, 200))
+    n.help_long  = txt(host, "t16w", 0, 0, 100, 60)
+    n.status = txt(host, "t_status", 2, 554, PANEL_W - 4, 18)
+    build_footer(host, n, {
         { buttons = { "DL", "DR" }, label = "ui_gp_n_f_change" },
         { buttons = { "LB", "RB" }, label = "ui_gp_n_f_tab" },
         { buttons = { "B" },        label = "ui_gp_n_f_close" },
@@ -903,6 +956,9 @@ end
 function layout_aim(w)
     if not w._native_owner then return end
     local n = build_aim(w)
+    show(w.back, false)
+    show(n.host, true)
+    w:SetWindowName("gp_native_aim")
     n.menu_pad_focus = use_native_menu_focus()
     n.icon_rev = icons_revision()
     local st = w.state or {}
@@ -1088,6 +1144,10 @@ local function has_source_mode_api()
         and type(_G.game.set_gamepad_source_mode) == "function"
 end
 
+local function has_osk_api()
+    return _G.game ~= nil and type(_G.game.gamepad_osk_enabled) == "function"
+end
+
 local function query_active_pad_name()
     if _G.game and type(_G.game.gamepad_get_active_name) == "function" then
         local ok, name = pcall(_G.game.gamepad_get_active_name)
@@ -1254,6 +1314,14 @@ local OTHER_SPECS = {
           { val = false, label_id = "ui_gp_oth_off" },
           { val = true,  label_id = "ui_gp_oth_on" },
       } },
+    -- FIX-LIVE8 I-06: on-screen keyboard toggle (default ON; when OFF, editboxes take normal keyboard focus)
+    { id = "osk", group = "control", kind = "step", def = true,
+      supported = has_osk_api, phase2_engine = true,
+      label_id = "ui_gp_oth_osk", desc_id = "ui_gp_oth_osk_desc",
+      options = {
+          { val = false, label_id = "ui_gp_oth_off" },
+          { val = true,  label_id = "ui_gp_oth_on" },
+      } },
 
     -- 11.4 Gamepad (GPSET-2 Phase 2: active controller name & SDL3 battery info; P22 hides when unavailable)
     { id = "pad_device", group = "pad", kind = "info", supported = has_active_pad_name, phase2_engine = true,
@@ -1366,6 +1434,7 @@ function load_other_state_from_engine()
     st.crouch_mode = read_con_bool("g_crouch_toggle", "control/general/crouch_toggle", false)
     st.sprint_mode = read_con_bool("g_sprint_toggle", "control/general/sprint_toggle", true)
     st.reload_guard = read_con_bool("gp_reload_guard", "control/gamepad/gp_reload_guard", true)
+    st.osk = (tonumber(read_con_float("gp_osk_enabled", 1)) or 1) >= 0.5
     if _G.gp_cursor and type(_G.gp_cursor.get_size_pct) == "function" then
         pcall(_G.gp_cursor.load_settings)
         local ok_sz, sz = pcall(_G.gp_cursor.get_size_pct)
@@ -1461,6 +1530,7 @@ function apply_other_to_engine(st)
     end
     exec_cmd("g_crouch_toggle " .. (st.crouch_mode and "1" or "0"))
     exec_cmd("g_sprint_toggle " .. (st.sprint_mode and "1" or "0"))
+    exec_cmd("gp_osk_enabled " .. (st.osk ~= false and "1" or "0"))
     if _G.gp_cursor and type(_G.gp_cursor.apply_settings) == "function" then
         pcall(_G.gp_cursor.apply_settings, st.cursor_size, st.cursor_speed, st.cursor_toggle_btn)
     else
@@ -2362,20 +2432,20 @@ end
 -- ---------------------------------------------------------------------------------------------
 -- Hosting inside UIOptions: third column tabs, show / hide, apply / cancel
 -- ---------------------------------------------------------------------------------------------
-local function hide_panels()
+hide_panels = function()
     cancel_x_hold()
     if _G.ui_gp_button_test and type(_G.ui_gp_button_test.is_open) == "function" and _G.ui_gp_button_test.is_open() then
         _G.ui_gp_button_test.close()
     end
-    if controls then
+    if controls and controls._native_owner then
         if controls.remap_state == "capturing" and controls.CancelCapture then
             controls:CancelCapture()
         end
         controls.remap_state = "browse"
         controls:Show(false)
     end
-    if aim then aim:Show(false) end
-    if other then
+    if aim and aim._native_owner then aim:Show(false) end
+    if other and other._native_owner then
         if other.rumble_restore_at then restore_applied_haptics() end
         other:Show(false)
     end
@@ -2383,12 +2453,60 @@ local function hide_panels()
     if owner and owner._gp_page then owner._gp_page:Show(false) end
     if owner and owner.scroll_opt then owner.scroll_opt:Show(true) end
 end
+local function restore_standalone(w)
+    if not w then return end
+    if w._n and w._n.host then
+        show(w._n.host, false)
+    end
+    if w.back then
+        show(w.back, true)
+    end
+    if w.SetWndPos and w.SetWndSize then
+        pcall(w.SetWndPos, w, vector2():set(0, 0))
+        pcall(w.SetWndSize, w, vector2():set(1024, 768))
+    end
+    if w.SetWindowName then
+        pcall(w.SetWindowName, w, w._standalone_name or "")
+    end
+end
+local function detach_from_native(w, from_host)
+    if not w then return end
+    local prev = w._native_owner
+    if from_host and not rawequal(prev, from_host) then return end
+    w._native_owner = nil
+    if rawequal(active, w) then active = nil end
+    if prev and prev._gp_page then
+        pcall(prev._gp_page.DetachChild, prev._gp_page, w)
+    end
+    if rawequal(w, controls) or rawequal(w, aim) then
+        restore_standalone(w)
+    end
+end
+detach_panels = function(host)
+    detach_from_native(controls, host)
+    detach_from_native(aim, host)
+    detach_from_native(other, host)
+    if rawequal(owner, host) then
+        owner = nil
+    end
+end
 -- Kept for callers of the previous adapter: opens the "Other settings" tab.
 function show_extra()
     if owner then return show_tab(owner, "other") end
     hide_panels()
 end
 local function attach(w)
+    if not w._native_owner and w.IsShown and w:IsShown() then
+        if w.HideDialog then pcall(w.HideDialog, w) end
+        if rawequal(w, controls) and type(_G.Unregister_UI) == "function" then
+            pcall(_G.Unregister_UI, "UIGpControlsWnd")
+        end
+        if rawequal(w, aim) and w.pause_token_id and w.pause_token_id ~= 0
+            and _G.game and type(_G.game.release_pause_token) == "function" then
+            pcall(_G.game.release_pause_token, w.pause_token_id)
+            w.pause_token_id = 0
+        end
+    end
     if not owner._gp_page then
         local page = CUIStatic()
         page:SetAutoDelete(false)
@@ -2400,7 +2518,9 @@ local function attach(w)
     owner._gp_page:Show(true)
     owner._gp_page:Enable(true)
     if not rawequal(w._native_owner, owner) then
-        if w._native_owner and w._native_owner._gp_page then w._native_owner._gp_page:DetachChild(w) end
+        if w._native_owner and w._native_owner._gp_page then
+            pcall(w._native_owner._gp_page.DetachChild, w._native_owner._gp_page, w)
+        end
         w:SetAutoDelete(false)
         owner._gp_page:AttachChild(w)
         w._native_owner = owner
@@ -2676,6 +2796,7 @@ function install()
     cls.On_Cancel = function(self, ...)
         if rawequal(owner, self) then
             hide_panels()
+            detach_panels(self)
             aim_applied = nil
             other_applied = nil
         end
@@ -3080,9 +3201,23 @@ function install()
         if self._native_owner then return cycle_tab(delta) end
         return cycle(self, delta)
     end
+    local open_ctrl = cc.OpenWindow
+    cc.OpenWindow = function(self, ...)
+        if self._native_owner then
+            detach_from_native(self)
+        elseif self._n then
+            restore_standalone(self)
+        end
+        return open_ctrl(self, ...)
+    end
     local close = cc.CloseWindow
     cc.CloseWindow = function(self, ...)
-        if self._native_owner then return cancel_options() end
+        if self._native_owner then
+            if rawequal(owner, self._native_owner) and is_owner_live(owner) then
+                return cancel_options()
+            end
+            detach_from_native(self)
+        end
         return close(self, ...)
     end
     local pad_button = ui_gp_controls.on_gamepad_button
@@ -3147,13 +3282,32 @@ function install()
         if self._native_owner then return cycle_tab(-1) end
         return tab_menu(self, ...)
     end
+    local aim_open = ac.Open
+    ac.Open = function(self, ...)
+        if self._native_owner then
+            detach_from_native(self)
+        elseif self._n then
+            restore_standalone(self)
+        end
+        return aim_open(self, ...)
+    end
     ac.Close = function(self, ...)
-        if self._native_owner then return cancel_options() end
+        if self._native_owner then
+            if rawequal(owner, self._native_owner) and is_owner_live(owner) then
+                return cancel_options()
+            end
+            detach_from_native(self)
+        end
         return aim_close(self, ...)
     end
     local aim_close_clicked = ac.OnCloseClicked
     ac.OnCloseClicked = function(self, ...)
-        if self._native_owner then return cancel_options() end
+        if self._native_owner then
+            if rawequal(owner, self._native_owner) and is_owner_live(owner) then
+                return cancel_options()
+            end
+            detach_from_native(self)
+        end
         return aim_close_clicked(self, ...)
     end
     local aim_button = ui_gp_aim.on_gamepad_button

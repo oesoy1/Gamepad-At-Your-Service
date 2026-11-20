@@ -1251,12 +1251,28 @@ function install_mcm_hooks()
 
     local orig_on_cancel = cls.On_Cancel
     if type(orig_on_cancel) == "function" then
+        local noop_owner = {
+            ShowDialog = function() end,
+            Show       = function() end,
+            SetMsg     = function() end,
+        }
         local function wrapped_on_cancel(self, ...)
             if type(self.k_binder) == "function" then
                 cancel_keybind_capture(self)
             end
-            local res = orig_on_cancel(self, ...)
+            local used_stub = false
+            if rawequal(self.owner, nil) then
+                self.owner = noop_owner
+                used_stub = true
+            end
+            local ok_c, res = pcall(orig_on_cancel, self, ...)
+            if used_stub then
+                self.owner = nil
+            end
             sync_gui_mirror(self, false)
+            if not ok_c then
+                error(res, 0)
+            end
             return res
         end
         cls.On_Cancel = wrapped_on_cancel

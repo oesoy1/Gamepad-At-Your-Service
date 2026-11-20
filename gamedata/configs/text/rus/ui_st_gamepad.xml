@@ -90,6 +90,9 @@
 	<string id="ui_gp_wheel_comp_idiots">
 		<text>Тактическое меню отряда (IDIOTS)</text>
 	</string>
+	<string id="ui_gp_wheel_comp_inventory">
+		<text>Вещи напарника</text>
+	</string>
 	<string id="ui_gp_wheel_hint_assign">
 		<text>Назначить</text>
 	</string>
@@ -1072,6 +1075,12 @@
 	</string>
 	<string id="ui_gp_oth_reload_guard_desc">
 		<text>Включено: если прицел наведён на предмет или место с меткой (даже далёкой и пока недоступной), X не перезаряжает оружие — геймпад слегка толкнёт. Перезарядить всё равно можно сочетанием LT + X. Выключено: X перезаряжает как обычно.</text>
+	</string>
+	<string id="ui_gp_oth_osk">
+		<text>Экранная клавиатура</text>
+	</string>
+	<string id="ui_gp_oth_osk_desc">
+		<text>Показывать экранную клавиатуру на полях ввода. Если выключить — поле просто становится активным для набора на обычной клавиатуре или клавиатурой Steam.</text>
 	</string>
 	<string id="ui_mm_control_gamepad_reload_guard">
 		<text>Защита от случайной перезарядки</text>

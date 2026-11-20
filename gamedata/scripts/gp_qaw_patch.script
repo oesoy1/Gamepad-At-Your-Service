@@ -16,7 +16,11 @@ local labels = {"st_gp_qaw_meds", "st_gp_qaw_grenades", "st_gp_qaw_devices", "st
 local categories = {"ui_gp_qaw_category_meds", "ui_gp_qaw_category_grenades", "ui_gp_qaw_category_devices", "ui_gp_qaw_category_companions"}
 local defaults = {
     {"act:mask_wipe", "act:laser", "act:binocular", "act:nvg_brightness"},
-    {"comp:1", "comp:2", "comp:3", "comp:4", "comp:5", "act:comp_move_to_point", "act:comp_idiots_ui"}
+    {"comp:1", "comp:2", "comp:3", "comp:4", "comp:5", "act:comp_move_to_point", "act:comp_idiots_ui", "act:comp_inventory"}
+}
+local allowed = {
+    {"act:mask_wipe", "act:laser", "act:binocular", "act:nvg_brightness", "act:torch", "act:nvg_toggle", "act:qdet", "act:pda_3d", "act:fast_reload"},
+    {"comp:1", "comp:2", "comp:3", "comp:4", "comp:5", "act:comp_move_to_point", "act:comp_idiots_ui", "act:comp_inventory"}
 }
 local actions = {{}, {}}
 local devices = {}
@@ -164,7 +168,14 @@ local function make_action(xml, gui, spec)
         if cell then cell:Colorize(action:is_enabled() and "def" or "hide") end
     end
     function option:OnClick()
-        if action and action:is_enabled() then action:execute() end
+        if not action then return end
+        if action:is_enabled() then
+            action:execute()
+        elseif gp_inv_rework and gp_inv_rework.deny then
+            gp_inv_rework.deny()
+        elseif game and game.trigger_gamepad_haptics then
+            pcall(game.trigger_gamepad_haptics, "deny", 0.20)
+        end
     end
     return option
 end
@@ -387,6 +398,14 @@ end
 local function consume_option(stay)
     local opt = shown(window) and window.options[selected]
     if not opt or opt.gp_empty or moving or (opt.gp_entry and opt.count_itr and (opt.count or 0) <= 0) then return false end
+    if opt.gp_action and opt.gp_action.is_enabled and not opt.gp_action:is_enabled() then
+        if gp_inv_rework and gp_inv_rework.deny then
+            gp_inv_rework.deny()
+        elseif game and game.trigger_gamepad_haptics then
+            pcall(game.trigger_gamepad_haptics, "deny", 0.20)
+        end
+        return false
+    end
     keep_open = stay == true
     local ok = gp_compat.safe_call("qaw_action", opt.Click, opt)
     keep_open = false
@@ -1141,6 +1160,7 @@ local function profile()
     return gp_bridge.resolve_binding_profile_path()
 end
 local function load_profile()
+    actions = {{}, {}}
     for i = 1, 2 do for slot, spec in ipairs(defaults[i]) do actions[i][slot] = spec end end
     local path = profile()
     if not path then return end
@@ -1170,17 +1190,30 @@ local function load_profile()
             local spec = fields[name .. "_" .. slot] or legacy[name .. "_" .. slot]
             if spec == "empty" then actions[i][slot] = nil
             elseif spec then
-                for _, allowed in ipairs(defaults[i]) do
-                    if spec == allowed then actions[i][slot] = spec; break end
+                for _, ok_spec in ipairs(allowed[i]) do
+                    if spec == ok_spec then actions[i][slot] = spec; break end
                 end
             end
+        end
+    end
+    if fields.known_comp_inventory ~= "1" then
+        local has_comp_inv = false
+        for slot = 1, 8 do
+            if actions[2][slot] == "act:comp_inventory" then
+                has_comp_inv = true
+                break
+            end
+        end
+        if not has_comp_inv then
+            local free = first_empty(actions[2])
+            if free then actions[2][free] = "act:comp_inventory" end
         end
     end
 end
 function save_profile()
     if profile_schema > 1 then return false end
     local path = profile()
-    if not path then return end
+    if not path then return false end
     local old = io.open(path, "rb")
     local text = old and old:read("*a") or ""
     if old then old:close() end
@@ -1190,30 +1223,20 @@ function save_profile()
         if section then skip = section == "wheel_qaw" end
         if not skip then lines[#lines + 1] = line end
     end
-    lines[#lines + 1] = "\n[wheel_qaw]\nschema_version = 1\norder = " .. table.concat(order, ",") .. "\ntime_mode = " .. gp_wheel.get_time_mode()
+    lines[#lines + 1] = "\n[wheel_qaw]\nschema_version = 1\nknown_comp_inventory = 1\norder = " .. table.concat(order, ",") .. "\ntime_mode = " .. gp_wheel.get_time_mode()
     for i = 1, 4 do lines[#lines + 1] = "tab" .. i .. " = " .. (enabled[i] and "on" or "off") end
     for i, name in ipairs({"devices_light", "companions"}) do
         for slot = 1, 8 do lines[#lines + 1] = name .. "_" .. slot .. " = " .. (actions[i][slot] or "empty") end
     end
-    local tmp = path .. ".qaw.tmp"
-    local output = io.open(tmp, "wb")
+    local output = io.open(path, "wb")
     if not output then return false end
     local ok = output:write(table.concat(lines, "\n"), "\n")
     local closed = output:close()
-    if not ok or not closed then os.remove(tmp); return false end
-    local backup = path .. ".qaw.previous"
-    os.remove(backup)
-    if old and not os.rename(path, backup) then os.remove(tmp); return false end
-    if not os.rename(tmp, path) then
-        if old then os.rename(backup, path) end
-        os.remove(tmp)
-        return false
-    end
-    os.remove(backup)
+    if not ok or not closed then return false end
     return true
 end
 function get_settings()
-    return order, enabled, actions, defaults, quick, labels, devices
+    return order, enabled, actions, allowed, quick, labels, devices
 end
 function set_tab_enabled(tab)
     local count = 0

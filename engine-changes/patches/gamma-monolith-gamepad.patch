@@ -27,24 +27,6 @@ index 6d5f8c07e..0efb7919d 100644
 +!/src/3rd party/SDL3/lib/x64/SDL3.dll
 +/src/3rd party/SDL3/lib/arm64/
 +/src/3rd party/SDL3/lib/x86/
-diff --git a/src/3rd party/lua-extensions/script_additional_libs.cpp b/src/3rd party/lua-extensions/script_additional_libs.cpp
-index 981f3032f..d1b3b6ccb 100644
---- a/src/3rd party/lua-extensions/script_additional_libs.cpp	
-+++ b/src/3rd party/lua-extensions/script_additional_libs.cpp	
-@@ -198,11 +198,11 @@ int open_string(lua_State *L)
- /******************** MATH ********************/
- std::random_device ndrng;
- std::mt19937 intgen;
--std::uniform_real<float> float_random_01;
-+std::uniform_real_distribution<float> float_random_01;
- 
- int gen_random_in_range(int a1, int a2)
- {	//unsigned?
--    std::uniform_int<> dist(a1, a2);
-+    std::uniform_int_distribution<> dist(a1, a2);
-     return dist(intgen);
- }
- 
 diff --git a/src/xrCore/LocatorAPI.cpp b/src/xrCore/LocatorAPI.cpp
 index e4f83a381..49a65a2cd 100644
 --- a/src/xrCore/LocatorAPI.cpp
@@ -36851,10 +36833,10 @@ index 000000000..a39330233
 +} // namespace gpmodal
 diff --git a/src/xrGame/GamepadOnScreenKeyboard.cpp b/src/xrGame/GamepadOnScreenKeyboard.cpp
 new file mode 100644
-index 000000000..1ebc93999
+index 000000000..ebb133aaf
 --- /dev/null
 +++ b/src/xrGame/GamepadOnScreenKeyboard.cpp
-@@ -0,0 +1,2600 @@
+@@ -0,0 +1,2615 @@
 +#pragma warning(disable: 4995)
 +#ifndef GPOSK_STANDALONE_TEST
 +#include "stdafx.h"
@@ -39190,6 +39172,8 @@ index 000000000..1ebc93999
 +    }
 +} // namespace
 +
++int ps_gp_osk_enabled = 1; // FIX-LIVE8 I-06: 1 = показывать экранную клавиатуру, 0 = только фокус поля
++
 +CGamepadOnScreenKeyboardUI& CGamepadOnScreenKeyboardUI::Instance()
 +{
 +    static CGamepadOnScreenKeyboardUI s_instance;
@@ -39263,6 +39247,19 @@ index 000000000..1ebc93999
 +{
 +    if (!pEdit || pEdit->IsReadOnly())
 +        return false;
++
++    if (!ps_gp_osk_enabled)
++    {
++        static thread_local bool s_focusing = false;
++        if (!s_focusing && !pEdit->HasInputFocus())
++        {
++            s_focusing = true;
++            pEdit->CaptureFocus(true);
++            s_focusing = false;
++        }
++        Msg("* [Gamepad] gp_osk disabled: focus edit (%s)", sourceTag ? sourceTag : "?");
++        return false;
++    }
 +
 +    CDialogHolder* holder = GetActiveDialogHolderForOsk();
 +    if (!holder)
@@ -53633,17 +53630,28 @@ index f6be402d9..c6320ae4c 100644
  	void Show() { bVisible = true; }
  	void Hide() { bVisible = false; }
 diff --git a/src/xrGame/UIDialogHolder.cpp b/src/xrGame/UIDialogHolder.cpp
-index 8932fb44b..845155341 100644
+index 8932fb44b..67fa90c37 100644
 --- a/src/xrGame/UIDialogHolder.cpp
 +++ b/src/xrGame/UIDialogHolder.cpp
-@@ -1,5 +1,6 @@
+@@ -1,6 +1,8 @@
  #include "stdafx.h"
  #include "UIDialogHolder.h"
 +#include "GpHintXray.h"
  #include "ui/UIDialogWnd.h"
++#include "ui/UIComboBox.h"
  #include "UIGameCustom.h"
  #include "UICursor.h"
-@@ -186,6 +187,7 @@ void CDialogHolder::DoRenderDialogs()
+ #include "level.h"
+@@ -144,6 +146,8 @@ void CDialogHolder::AddDialogToRender(CUIWindow* pDialog)
+ 
+ void CDialogHolder::RemoveDialogToRender(CUIWindow* pDialog)
+ {
++	CUIComboBox::RemoveFromRenderTree(pDialog);
++
+ 	if (TopInputReceiver() == pDialog)
+ 		SetMainInputReceiver(NULL, false);
+ 
+@@ -186,6 +190,7 @@ void CDialogHolder::DoRenderDialogs()
  		if ((*it).enabled && (*it).wnd && (*it).wnd->IsShown())
  			(*it).wnd->Draw();
  	}
@@ -53651,7 +53659,7 @@ index 8932fb44b..845155341 100644
      m_b_in_render = false;
  }
  
-@@ -205,6 +207,18 @@ CUIDialogWnd* CDialogHolder::TopInputReceiver()
+@@ -205,6 +210,18 @@ CUIDialogWnd* CDialogHolder::TopInputReceiver()
  	if (!m_input_receivers.empty())
  		return m_input_receivers.back().m_item;
  	return NULL;
@@ -53670,6 +53678,20 @@ index 8932fb44b..845155341 100644
  };
  
  void CDialogHolder::SetMainInputReceiver(CUIDialogWnd* ir, bool _find_remove)
+@@ -299,7 +316,13 @@ void CDialogHolder::CleanInternals()
+ 	while (!m_input_receivers.empty())
+ 		m_input_receivers.pop_back();
+ 
++	for (auto& it : m_dialogsToRender)
++		CUIComboBox::RemoveFromRenderTree(it.wnd);
++	for (auto& it : m_dialogsToRender_new)
++		CUIComboBox::RemoveFromRenderTree(it.wnd);
++
+ 	m_dialogsToRender.clear();
++	m_dialogsToRender_new.clear();
+ 	GetUICursor().Hide();
+ }
+ 
 diff --git a/src/xrGame/UIDialogHolder.h b/src/xrGame/UIDialogHolder.h
 index 8be9e08c2..c24480d1f 100644
 --- a/src/xrGame/UIDialogHolder.h
@@ -54084,10 +54106,10 @@ index 56e73e9e0..e1353523e 100644
  		m_destEnemyDir.set(val).normalize_safe();
  		m_desire_angle_enable = false;
 diff --git a/src/xrGame/console_commands.cpp b/src/xrGame/console_commands.cpp
-index d0f6ddd0a..c9e39704b 100644
+index d0f6ddd0a..e7b6ff798 100644
 --- a/src/xrGame/console_commands.cpp
 +++ b/src/xrGame/console_commands.cpp
-@@ -68,6 +68,14 @@ string_path g_last_saved_game;
+@@ -68,6 +68,15 @@ string_path g_last_saved_game;
  #ifdef DEBUG
  extern float air_resistance_epsilon;
  #endif // #ifdef DEBUG
@@ -54099,10 +54121,11 @@ index d0f6ddd0a..c9e39704b 100644
 +extern int ps_gp_pda_eye_mode; // UICursor.cpp (PDA1-E)
 +extern int ps_gp_pda_reticle_shape; // UICursor.cpp (FIX-LIVE2 п.8)
 +extern int ps_gp_pda_reticle_size;  // UICursor.cpp (FIX-LIVE3 п.13)
++extern int ps_gp_osk_enabled;       // GamepadOnScreenKeyboard.cpp (FIX-LIVE8 I-06)
  
  extern void show_smart_cast_stats();
  extern void clear_smart_cast_stats();
-@@ -1087,9 +1095,21 @@ public:
+@@ -1087,9 +1096,21 @@ public:
  		Msg("Game save overhead  : %f milliseconds", timer.GetElapsed_sec()*1000.f);
  #endif
  		StaticDrawableWrapper* _s = CurrentGameUI()->AddCustomStatic("game_saved", true);
@@ -54127,7 +54150,7 @@ index d0f6ddd0a..c9e39704b 100644
  
  		xr_strcat(S, ".dds");
  		FS.update_path(S1, "$game_saves$", S);
-@@ -1928,6 +1948,7 @@ public:
+@@ -1928,6 +1949,7 @@ public:
  		xr_strcpy(I, "[on,off] or [1,0]");
  	}
  };
@@ -54135,7 +54158,7 @@ index d0f6ddd0a..c9e39704b 100644
  class CCC_TimeFactor : public IConsole_Command
  {
  public:
-@@ -1939,9 +1960,8 @@ public:
+@@ -1939,9 +1961,8 @@ public:
  	{
  		float time_factor = (float)atof(args);
  		clamp(time_factor, EPS, 1000.f);
@@ -54147,7 +54170,7 @@ index d0f6ddd0a..c9e39704b 100644
  	}
  
  	virtual void Status(TStatus& S)
-@@ -2364,6 +2384,1471 @@ public:
+@@ -2364,6 +2385,1471 @@ public:
  	}
  };
  
@@ -55619,7 +55642,7 @@ index d0f6ddd0a..c9e39704b 100644
  class CCC_GSCheckForUpdates : public IConsole_Command
  {
  public:
-@@ -2774,6 +4259,7 @@ void CCC_RegisterCommands()
+@@ -2774,6 +4260,7 @@ void CCC_RegisterCommands()
  		CMD3(CCC_Mask, "g_unlimitedammo", &psActorFlags, AF_UNLIMITEDAMMO);
  		CMD1(CCC_Script, "run_script");
  		CMD1(CCC_ScriptCommand, "run_string");
@@ -55627,7 +55650,7 @@ index d0f6ddd0a..c9e39704b 100644
  		//CMD3(CCC_Mask, "g_no_clip", &psActorFlags, AF_NO_CLIP);
  		CMD1(CCC_PHGravity, "ph_gravity");
  		CMD3(CCC_Mask, "log_missing_ini", &FS.m_Flags, FS.flPrintLTX);
-@@ -3254,4 +4740,34 @@ void CCC_RegisterCommands()
+@@ -3254,4 +4741,35 @@ void CCC_RegisterCommands()
      CMD1(CCC_Particle_TEST,     "g_ps_test");
      CMD4(CCC_Integer, "show_actor_body", &showActorBody, 0, 2);
      CMD4(CCC_Integer, "disable_actor_body_rotation_delay", &disableActorBodyRotationDelay, 0, 1);
@@ -55659,6 +55682,7 @@ index d0f6ddd0a..c9e39704b 100644
 +    CMD4(CCC_Integer, "gp_pda_reticle_shape", &ps_gp_pda_reticle_shape, 0, 2); // FIX-LIVE2 п.8: 0 = квадрат, 1 = круг, 2 = крест
 +    CMD4(CCC_Integer, "gp_pda_reticle_size", &ps_gp_pda_reticle_size, 20, 64); // FIX-LIVE3 п.13: размер метки карты КПК
 +    CMD1(CCC_GamepadOsk, "gp_osk"); // F5.1
++    CMD4(CCC_Integer, "gp_osk_enabled", &ps_gp_osk_enabled, 0, 1); // FIX-LIVE8 I-06
 +    CMD4(CCC_Float, "gp_x_target_angle", &ps_gp_x_target_angle, 0.f, 30.f); // E2.2d: радиус подсказок для X, градусы
 +    gpaa::RegisterConsoleCommands(); // E4.1
  }
@@ -55691,7 +55715,7 @@ index 485b60b87..bebf9d845 100644
  {
  	VERIFY(m_hits);
 diff --git a/src/xrGame/level_script.cpp b/src/xrGame/level_script.cpp
-index 39eb6eb6a..d0e1846c5 100644
+index 39eb6eb6a..2f340ab68 100644
 --- a/src/xrGame/level_script.cpp
 +++ b/src/xrGame/level_script.cpp
 @@ -7,6 +7,9 @@
@@ -55730,7 +55754,7 @@ index 39eb6eb6a..d0e1846c5 100644
  #include "script_ini_file.h"
  #include "EffectorBobbing.h"
  #include "LevelDebugScript.h"
-@@ -690,6 +705,258 @@ void enable_input()
+@@ -690,6 +705,265 @@ void enable_input()
  #endif // #ifdef DEBUG
  }
  
@@ -55749,6 +55773,13 @@ index 39eb6eb6a..d0e1846c5 100644
 +    auto* menu = smart_cast<CMainMenu*>(g_pGamePersistent ? g_pGamePersistent->m_pMainMenu : nullptr);
 +    auto* holder = menu && menu->IsActive() ? static_cast<CDialogHolder*>(menu) : static_cast<CDialogHolder*>(ui);
 +    return window && holder && holder->TopInputReceiver() == window;
++}
++
++extern int ps_gp_osk_enabled;
++
++bool gamepad_osk_enabled()
++{
++    return ps_gp_osk_enabled != 0;
 +}
 +
 +bool gamepad_new_game_keyboard(CUIWindow* window)
@@ -55989,7 +56020,7 @@ index 39eb6eb6a..d0e1846c5 100644
  void spawn_phantom(const Fvector& position)
  {
  	Level().spawn_item("m_phantom", position, u32(-1), u16(-1), false);
-@@ -1644,6 +1911,458 @@ bool only_movement_allowed()
+@@ -1644,6 +1918,458 @@ bool only_movement_allowed()
  	return g_block_all_except_movement;
  }
  
@@ -56448,7 +56479,7 @@ index 39eb6eb6a..d0e1846c5 100644
  void set_actor_allow_ladder(bool b)
  {
  	g_actor_allow_ladder = b;
-@@ -2353,6 +3072,20 @@ void take_screenshot(LPCSTR path, Fvector2 dimensions, IRender_interface::DxEnco
+@@ -2353,6 +3079,20 @@ void take_screenshot(LPCSTR path, Fvector2 dimensions, IRender_interface::DxEnco
  	Render->TakeScreenshot(path, dimensions, dx_encoding);
  }
  
@@ -56469,7 +56500,7 @@ index 39eb6eb6a..d0e1846c5 100644
  
  #pragma optimize("s",on)
  
-@@ -2558,6 +3291,7 @@ void CLevel::script_register(lua_State* L)
+@@ -2558,6 +3298,7 @@ void CLevel::script_register(lua_State* L)
  			def("present", is_level_present),
  			def("disable_input", disable_input),
  			def("enable_input", enable_input),
@@ -56477,7 +56508,7 @@ index 39eb6eb6a..d0e1846c5 100644
  			def("spawn_phantom", spawn_phantom),
  
  			def("get_bounding_volume", get_bounding_volume),
-@@ -2620,7 +3354,11 @@ void CLevel::script_register(lua_State* L)
+@@ -2620,7 +3361,11 @@ void CLevel::script_register(lua_State* L)
  			def("iterate_attachments", &IterateAttachments),
  
  			def("patrol_path_add", &patrol_path_add),
@@ -56490,7 +56521,7 @@ index 39eb6eb6a..d0e1846c5 100644
  		],
  
  		module(L, "actor_stats")
-@@ -2803,6 +3541,64 @@ void CLevel::script_register(lua_State* L)
+@@ -2803,6 +3548,65 @@ void CLevel::script_register(lua_State* L)
  		def("change_game_news_show_time", &change_game_news_show_time),
  		def("update_pda_news_from_uiwindow", &update_pda_news_from_uiwindow),
  
@@ -56505,6 +56536,7 @@ index 39eb6eb6a..d0e1846c5 100644
 +        def("set_gamepad_lua_hints", &set_gamepad_lua_hints_script),
 +        def("gamepad_is_top_dialog", &gamepad_is_top_dialog),
 +        def("gamepad_new_game_keyboard", &gamepad_new_game_keyboard),
++        def("gamepad_osk_enabled", &gamepad_osk_enabled),
 +        def("gamepad_pda_map", &gamepad_pda_map),
 +        def("gamepad_pda_targets", &gamepad_pda_targets),
 +        def("gamepad_set_pda_hints_hidden", &gamepad_set_pda_hints_hidden),
@@ -57640,6 +57672,205 @@ index 0eb91a3da..3d1d97fea 100644
  		.def("GetIValue", &CUITrackBar::GetIValue)
  		.def("GetFValue", &CUITrackBar::GetFValue)
  		.def("SetIValue", &CUITrackBar::SetIValue)
+diff --git a/src/xrGame/ui/UIComboBox.cpp b/src/xrGame/ui/UIComboBox.cpp
+index 07bbbbacb..817a6e4e4 100644
+--- a/src/xrGame/ui/UIComboBox.cpp
++++ b/src/xrGame/ui/UIComboBox.cpp
+@@ -7,7 +7,14 @@
+ 
+ #define CB_HEIGHT 20.0f
+ 
+-CUIComboBox::CUIComboBox()
++namespace
++{
++	xrCriticalSection s_combo_render_cs;
++	xr_vector<CUIComboBox*> s_combo_render_list;
++	std::atomic<u32> s_combo_render_count{0};
++}
++
++CUIComboBox::CUIComboBox() : m_bInSeqRender(false)
+ {
+ 	AttachChild(&m_frameLine);
+ 	AttachChild(&m_text);
+@@ -23,6 +30,71 @@ CUIComboBox::CUIComboBox()
+ 
+ CUIComboBox::~CUIComboBox()
+ {
++	UnregisterFromRender();
++}
++
++void CUIComboBox::RegisterForRender()
++{
++	xrCriticalSectionGuard guard(s_combo_render_cs);
++	Device.seqRender.Remove(this);
++	Device.seqRender.Add(this, 3);
++	if (std::find(s_combo_render_list.begin(), s_combo_render_list.end(), this) == s_combo_render_list.end())
++	{
++		s_combo_render_list.push_back(this);
++		s_combo_render_count.store(static_cast<u32>(s_combo_render_list.size()), std::memory_order_release);
++	}
++	m_bInSeqRender.store(true, std::memory_order_release);
++}
++
++void CUIComboBox::UnregisterFromRender()
++{
++	if (!m_bInSeqRender.load(std::memory_order_acquire))
++		return;
++	xrCriticalSectionGuard guard(s_combo_render_cs);
++	if (!m_bInSeqRender.load(std::memory_order_relaxed))
++		return;
++	m_bInSeqRender.store(false, std::memory_order_release);
++	auto it = std::find(s_combo_render_list.begin(), s_combo_render_list.end(), this);
++	if (it != s_combo_render_list.end())
++	{
++		s_combo_render_list.erase(it);
++		s_combo_render_count.store(static_cast<u32>(s_combo_render_list.size()), std::memory_order_release);
++	}
++	Device.seqRender.Remove(this);
++}
++
++void CUIComboBox::RemoveFromRenderTree(CUIWindow* root)
++{
++	if (!root || s_combo_render_count.load(std::memory_order_acquire) == 0)
++		return;
++	xrCriticalSectionGuard guard(s_combo_render_cs);
++	for (size_t i = s_combo_render_list.size(); i-- > 0;)
++	{
++		CUIComboBox* cb = s_combo_render_list[i];
++		bool match = false;
++		for (CUIWindow* p = cb; p != nullptr; p = p->GetParent())
++		{
++			if (p == root)
++			{
++				match = true;
++				break;
++			}
++		}
++		if (match)
++		{
++			cb->m_bInSeqRender.store(false, std::memory_order_release);
++			s_combo_render_list.erase(s_combo_render_list.begin() + i);
++			Device.seqRender.Remove(cb);
++		}
++	}
++	s_combo_render_count.store(static_cast<u32>(s_combo_render_list.size()), std::memory_order_release);
++}
++
++void CUIComboBox::Show(bool status)
++{
++	CUIWindow::Show(status);
++	if (!status)
++		UnregisterFromRender();
+ }
+ 
+ void CUIComboBox::SetListLength(int length)
+@@ -224,14 +296,17 @@ void CUIComboBox::ShowList(bool bShow)
+ 		SetHeight(m_text.GetHeight() + m_list_box.GetHeight());
+ 		m_list_frame.Show(true);
+ 		m_eState = LIST_EXPANDED;
+-		GetParent()->SetCapture(this, true);
++		if (GetParent())
++			GetParent()->SetCapture(this, true);
+ 	}
+ 	else
+ 	{
+ 		m_list_frame.Show(false);
+ 		SetHeight(m_frameLine.GetHeight());
+ 		m_eState = LIST_FONDED;
+-		GetParent()->SetCapture(this, false);
++		if (GetParent())
++			GetParent()->SetCapture(this, false);
++		UnregisterFromRender();
+ 	}
+ }
+ 
+@@ -242,6 +317,7 @@ void CUIComboBox::Update()
+ 	{
+ 		m_frameLine.SetCurrentState(S_Disabled);
+ 		m_text.SetTextColor(m_textColor[1]);
++		UnregisterFromRender();
+ 	}
+ 	else
+ 	{
+@@ -249,8 +325,11 @@ void CUIComboBox::Update()
+ 
+ 		if (m_list_frame.IsShown())
+ 		{
+-			Device.seqRender.Remove(this);
+-			Device.seqRender.Add(this, 3);
++			RegisterForRender();
++		}
++		else
++		{
++			UnregisterFromRender();
+ 		}
+ 	}
+ }
+@@ -313,14 +392,24 @@ void CUIComboBox::SendMessage(CUIWindow* pWnd, s16 msg, void* pData)
+ 
+ void CUIComboBox::OnRender()
+ {
+-	if (IsShown())
++	if (IsShown() && m_list_frame.IsShown())
+ 	{
+-		if (m_list_frame.IsShown())
++		bool parent_shown = true;
++		for (CUIWindow* p = GetParent(); p != nullptr; p = p->GetParent())
+ 		{
+-			m_list_frame.Draw();
+-			Device.seqRender.Remove(this);
++			if (!p->IsShown())
++			{
++				parent_shown = false;
++				break;
++			}
+ 		}
++		if (parent_shown)
++			m_list_frame.Draw();
+ 	}
++	if (m_bInSeqRender.load(std::memory_order_acquire))
++		UnregisterFromRender();
++	else
++		Device.seqRender.Remove(this);
+ }
+ 
+ void CUIComboBox::Draw()
+diff --git a/src/xrGame/ui/UIComboBox.h b/src/xrGame/ui/UIComboBox.h
+index e30dc5efb..e7e482799 100644
+--- a/src/xrGame/ui/UIComboBox.h
++++ b/src/xrGame/ui/UIComboBox.h
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
++#include <atomic>
++
+ #include "UIEditBox.h"
+ #include "UIListBox.h"
+ #include "UIInteractiveBackground.h"
+@@ -29,6 +31,8 @@ public:
+ 	virtual bool IsChangedOptValue() const; // backup!=current
+ 
+ 	virtual void OnRender(); // only for list-box
++	virtual void Show(bool status);
++	static void RemoveFromRenderTree(CUIWindow* root);
+ 
+ 	LPCSTR GetText();
+ 	LPCSTR GetTextOf(int index);
+@@ -59,11 +63,14 @@ protected:
+ 	virtual void Update();
+ 	virtual void Draw();
+ 	void ClearList();
++	void RegisterForRender();
++	void UnregisterFromRender();
+ 
+ 	u32 GetSize();
+ 
+ protected:
+ 	bool m_bInited;
++	std::atomic<bool> m_bInSeqRender;
+ 	int m_iListHeight;
+ 	int m_itoken_id;
+ 	E_COMBO_STATE m_eState;
 diff --git a/src/xrGame/ui/UIComboBox_script.cpp b/src/xrGame/ui/UIComboBox_script.cpp
 index b0a32f38f..66f7d2e4c 100644
 --- a/src/xrGame/ui/UIComboBox_script.cpp

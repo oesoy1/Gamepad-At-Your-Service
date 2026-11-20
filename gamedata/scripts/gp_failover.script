@@ -130,7 +130,13 @@ function reset_controls_and_vibration(reason)
     run_console_cmd("gp_rumble_test stop")
 
     -- 4. Release held game actions so actor does not keep firing, aiming, or walking
-    if level and type(level.release_action) == "function" and type(_G.key_bindings) == "table" then
+    -- Guard against g_pGameLevel == nullptr crash when triggered in Main Menu.
+    local level_ok = (type(level) == "table")
+    if level_ok and type(level.present) == "function" then
+        local ok_p, pres = pcall(level.present)
+        level_ok = (ok_p and pres == true)
+    end
+    if level_ok and type(level.release_action) == "function" and type(_G.key_bindings) == "table" then
         for _, act_name in ipairs(ACTIONS_TO_RELEASE) do
             local act_id = _G.key_bindings[act_name]
             if act_id ~= nil then

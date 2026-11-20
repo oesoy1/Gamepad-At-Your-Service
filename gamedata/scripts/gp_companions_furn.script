@@ -108,6 +108,8 @@ state = {
     comp_cur_id = nil,
     comp_pending = nil,
     comp_scroll_acc = { npc = nil, player = nil },
+    orig_comp_start = nil,
+    comp_start_hooked = false,
     -- addonCompanionsContextMenu
     quick_gui = nil,
     quick_cur_id = nil,
@@ -1941,6 +1943,177 @@ end
 -- 8. Неинтрузивная установка хуков на классы окон и мост gp_bridge (P23)
 -- ---------------------------------------------------------------------------
 
+local function is_living_companion_near(actor, npc, max_dist)
+    if rawequal(npc, nil) then return false, nil end
+    if type(npc.alive) == "function" then
+        local ok_a, al = pcall(npc.alive, npc)
+        if not (ok_a and al == true) then return false, nil end
+    end
+    if type(npc.has_info) ~= "function" then return false, nil end
+    local ok_i, is_c = pcall(npc.has_info, npc, "npcx_is_companion")
+    if not (ok_i and is_c == true) then return false, nil end
+    local ok_pa, pa = pcall(actor.position, actor)
+    local ok_pn, pn = pcall(npc.position, npc)
+    if ok_pa and ok_pn and pa and pn and type(pa.distance_to) == "function" then
+        local ok_d, d = pcall(pa.distance_to, pa, pn)
+        local dist = ok_d and tonumber(d) or nil
+        if dist and dist <= max_dist then
+            return true, dist
+        end
+    end
+    return false, nil
+end
+
+function find_companion_near(max_dist)
+    local limit = tonumber(max_dist) or 8
+    local actor = rawget(_G, "db") and db.actor or nil
+    if rawequal(actor, nil) or type(actor.position) ~= "function" then return nil end
+    local lvl = rawget(_G, "level")
+    if type(lvl) == "table" and type(lvl.get_target_obj) == "function" then
+        local ok_t, tgt = pcall(lvl.get_target_obj)
+        if ok_t and tgt and is_living_companion_near(actor, tgt, limit) then
+            return tgt
+        end
+    end
+    local ac = rawget(_G, "axr_companions")
+    local list = type(ac) == "table" and ac.non_task_companions or nil
+    if type(list) == "table" and type(lvl) == "table" and type(lvl.object_by_id) == "function" then
+        local best, best_d = nil, math.huge
+        for id in pairs(list) do
+            local ok_o, obj = pcall(lvl.object_by_id, id)
+            if ok_o and obj then
+                local ok_c, dist = is_living_companion_near(actor, obj, limit)
+                if ok_c and (dist or 0) < best_d then
+                    best, best_d = obj, (dist or 0)
+                end
+            end
+        end
+        return best
+    end
+    return nil
+end
+
+function open_companion_inventory(npc, src)
+    if rawequal(npc, nil) then
+        deny()
+        return false
+    end
+    if type(npc.alive) == "function" then
+        local ok_a, al = pcall(npc.alive, npc)
+        if not (ok_a and al == true) then
+            deny()
+            return false
+        end
+    end
+    local inv = rawget(_G, "ui_inventory")
+    local inv_enabled = false
+    if type(inv) == "table" and type(inv.is_enabled) == "function" then
+        local ok_e, en = pcall(inv.is_enabled)
+        inv_enabled = (ok_e and en == true)
+    end
+    local function call_orig()
+        if type(state.orig_comp_start) == "function" then
+            return state.orig_comp_start(npc)
+        end
+        if not state.comp_start_hooked then
+            local uci = rawget(_G, "ui_companion_inv")
+            if type(uci) == "table" and type(uci.start) == "function" then
+                return uci.start(npc)
+            end
+        end
+        return false
+    end
+    if not inv_enabled then
+        return call_orig()
+    end
+
+    local tag = tostring(src or "start")
+    local function do_open()
+        if rawequal(npc, nil) then
+            deny()
+            return true
+        end
+        if type(npc.alive) == "function" then
+            local ok_a, al = pcall(npc.alive, npc)
+            if not (ok_a and al == true) then
+                deny()
+                return true
+            end
+        end
+        local retried = false
+        local skip_check = false
+        local ok, err = pcall(function()
+            local get_menu = rawget(_G, "GetActorMenu")
+            local gui = (type(get_menu) == "function" and get_menu()) or inv.GUI
+            if rawequal(gui, nil) then error("no actor menu") end
+            if type(gui.IsShown) == "function" and gui:IsShown() then
+                local npc_id = type(npc.id) == "function" and npc:id() or nil
+                local same = (gui.mode == "loot") and (npc_id ~= nil) and (gui.npc_id == npc_id)
+                if not same then deny() end
+                skip_check = true
+                return
+            end
+            if type(inv.change_last_mode) == "function" then
+                inv.change_last_mode(4)
+            end
+            gui:LMode_Init(npc)
+            gui:ShowDialog(true)
+            local kf = rawget(_G, "_GUIs_keyfree")
+            if type(kf) == "table" then
+                kf["UIInventory"] = false
+            end
+            if type(Register_UI) == "function" then
+                Register_UI("UIInventory", "ui_inventory")
+            end
+        end)
+        if not ok then
+            if printf then
+                printf("! [GP][comp_inv] open error src=%s err=%s", tag, tostring(err))
+            end
+            retried = true
+            call_orig()
+        end
+        if not skip_check and type(CreateTimeEvent) == "function" then
+            CreateTimeEvent("gp_companions_furn", "comp_inv_check", 0.2, function()
+                local get_menu = rawget(_G, "GetActorMenu")
+                local g2 = (type(get_menu) == "function" and get_menu()) or inv.GUI
+                local is_shown = (not rawequal(g2, nil) and type(g2.IsShown) == "function" and g2:IsShown()) == true
+                if printf then
+                    printf("[GP][comp_inv] src=%s opened=%s mode=%s", tag, tostring(is_shown), tostring(g2 and g2.mode))
+                end
+                if not is_shown and not retried and type(state.orig_comp_start) == "function" then
+                    retried = true
+                    pcall(state.orig_comp_start, npc)
+                end
+                return true
+            end)
+        end
+        return true
+    end
+
+    if type(CreateTimeEvent) == "function" then
+        CreateTimeEvent("gp_companions_furn", "comp_inv_open", 0, do_open)
+        return true
+    end
+    return do_open()
+end
+
+function install_comp_start_hook()
+    if state.comp_start_hooked then return false end
+    local uci = rawget(_G, "ui_companion_inv")
+    if type(uci) ~= "table" or type(uci.start) ~= "function" then return false end
+    state.comp_start_hooked = true
+    state.orig_comp_start = uci.start
+    uci.start = function(npc)
+        return open_companion_inventory(npc, "start")
+    end
+    return true
+end
+
+function actor_on_first_update()
+    install_comp_start_hook()
+end
+
 function hook_companion_inv()
     local mod = rawget(_G, "ui_companion_inv")
     local cls = type(mod) == "table" and mod.UICompanionInv or nil
@@ -2038,6 +2211,35 @@ function hook_wheel_companion()
     return true
 end
 
+function hf_wrapper_ready(obj_id)
+    local bhb = rawget(_G, "bind_hf_base")
+    if type(bhb) ~= "table" or type(bhb.get_wrapper) ~= "function" then
+        return true
+    end
+    if obj_id == nil then return false end
+    local ok, w = pcall(bhb.get_wrapper, obj_id)
+    return ok and not rawequal(w, nil)
+end
+
+local function guard_hf_method(cls, method_name, id_field, alt_field, clear_state_key)
+    local orig = cls[method_name]
+    if type(orig) ~= "function" then return end
+    cls[method_name] = function(self, ...)
+        local oid = self[id_field]
+        if oid == nil and alt_field then oid = self[alt_field] end
+        if not hf_wrapper_ready(oid) then
+            if shown(self) and type(self.Close) == "function" then
+                pcall(self.Close, self)
+            end
+            if clear_state_key and rawequal(state[clear_state_key], self) then
+                state[clear_state_key] = nil
+            end
+            return nil
+        end
+        return orig(self, ...)
+    end
+end
+
 function hook_furniture_light()
     local mod = rawget(_G, "ui_furniture_light")
     local cls = type(mod) == "table" and mod.UIFurnitureLight or nil
@@ -2052,9 +2254,15 @@ function hook_furniture_light()
     end
     local orig_show = cls.TestAndShow
     if type(orig_show) == "function" then
-        cls.TestAndShow = function(self, ...)
+        cls.TestAndShow = function(self, obj_id, ...)
+            if not hf_wrapper_ready(obj_id) then
+                if printf then
+                    printf("! [GP][furn_light] skip TestAndShow: missing HF wrapper for id=%s", tostring(obj_id))
+                end
+                return nil
+            end
             set_wnd_name(self, "UIFurnitureLight")
-            local res = orig_show(self, ...)
+            local res = orig_show(self, obj_id, ...)
             fix_light_registered_path()
             state.light_gui = self
             state.light_cur_id = nil
@@ -2064,10 +2272,32 @@ function hook_furniture_light()
     local orig_update = cls.Update
     if type(orig_update) == "function" then
         cls.Update = function(self, ...)
+            local oid = self.light_id
+            if oid == nil then oid = self.obj_id end
+            if not hf_wrapper_ready(oid) then
+                if CUIScriptWnd and type(CUIScriptWnd.Update) == "function" then
+                    pcall(CUIScriptWnd.Update, self)
+                end
+                if shown(self) and type(self.Close) == "function" then
+                    pcall(self.Close, self)
+                end
+                if rawequal(state.light_gui, self) then state.light_gui = nil end
+                return nil
+            end
             local res = orig_update(self, ...)
             pcall(tick_light, self)
             return res
         end
+    end
+    local orig_close = cls.Close
+    if type(orig_close) == "function" then
+        cls.Close = function(self, ...)
+            if rawequal(state.light_gui, self) then state.light_gui = nil end
+            return orig_close(self, ...)
+        end
+    end
+    for _, mname in ipairs({ "ToggleLight", "Refuel", "Pickup" }) do
+        guard_hf_method(cls, mname, "light_id", "obj_id", "light_gui")
     end
     return true
 end
@@ -2087,11 +2317,17 @@ function hook_furniture_radio()
     end
     local orig_show = cls.TestAndShow
     if type(orig_show) == "function" then
-        cls.TestAndShow = function(self, ...)
+        cls.TestAndShow = function(self, obj_id, ...)
+            if not hf_wrapper_ready(obj_id) then
+                if printf then
+                    printf("! [GP][furn_radio] skip TestAndShow: missing HF wrapper for id=%s", tostring(obj_id))
+                end
+                return nil
+            end
             set_wnd_name(self, "UIFurnitureRadio")
             state.radio_gui = self
             state.radio_cur_id = nil
-            return orig_show(self, ...)
+            return orig_show(self, obj_id, ...)
         end
     end
     local orig_update = cls.Update
@@ -2108,6 +2344,12 @@ function hook_furniture_radio()
             if rawequal(state.radio_gui, self) then state.radio_gui = nil end
             return orig_close(self, ...)
         end
+    end
+    for _, mname in ipairs({
+        "Pickup", "OnSelectChannel", "On_Radio_Channel_1", "On_Radio_Channel_2",
+        "On_Radio_Volume_Down", "On_Radio_Volume_Up", "On_Radio_Stop", "On_Radio_Start",
+    }) do
+        guard_hf_method(cls, mname, "obj_id", nil, "radio_gui")
     end
     return true
 end
@@ -2175,5 +2417,6 @@ function on_game_start()
     install_hooks()
     if RegisterScriptCallback then
         RegisterScriptCallback("GUI_on_show", on_gui_show)
+        RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
     end
 end

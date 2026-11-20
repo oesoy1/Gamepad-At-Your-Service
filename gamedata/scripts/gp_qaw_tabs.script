@@ -318,6 +318,40 @@ ACTION_FACTORIES["comp_idiots_ui"] = function()
         end,
         function() return idiots_present() and has_any_companion() end)
 end
+ACTION_FACTORIES["comp_inventory"] = function()
+    local icon = (ini_sys and ini_sys.section_exist and ini_sys:section_exist("itm_backpack")) and "itm_backpack" or "device_pda_1"
+    return ActionWheelOption:new("comp_inventory", "ui_gp_wheel_comp_inventory", "Companion Inventory", icon,
+        function()
+            CreateTimeEvent("gp_qaw_tabs", "open_comp_inv", 0.05, function()
+                local cf = gp_companions_furn
+                if type(cf) == "table" and type(cf.find_companion_near) == "function" and type(cf.open_companion_inventory) == "function" then
+                    local npc = cf.find_companion_near(8)
+                    cf.open_companion_inventory(npc, "wheel")
+                else
+                    local npc = nil
+                    if type(axr_companions) == "table" and type(axr_companions.non_task_companions) == "table" and type(level) == "table" and type(level.object_by_id) == "function" then
+                        for id in pairs(axr_companions.non_task_companions) do
+                            local obj = level.object_by_id(id)
+                            if obj then npc = obj break end
+                        end
+                    end
+                    if npc and type(ui_companion_inv) == "table" and type(ui_companion_inv.start) == "function" then
+                        safe_foreign_call("comp_inv", ui_companion_inv.start, npc)
+                    elseif gp_inv_rework and type(gp_inv_rework.deny) == "function" then
+                        gp_inv_rework.deny()
+                    end
+                end
+                return true
+            end)
+        end,
+        function()
+            local cf = gp_companions_furn
+            if type(cf) == "table" and type(cf.find_companion_near) == "function" then
+                return cf.find_companion_near(8) ~= nil
+            end
+            return has_any_companion()
+        end)
+end
 
 
 local function laser_weapon()

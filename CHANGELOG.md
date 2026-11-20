@@ -6,6 +6,12 @@ Engine builds:
 - `gamma-monolith` (`gp-release-mt-may`): ported onto the standard G.A.M.M.A. `MT-TEST 2026.05.15` multithreaded DX11 engine (`AnomalyDX11AVX.exe` and `AnomalyDX11.exe`) with SDL3 `3.4.18`. Keyboard and mouse input is unchanged when no controller is active.
 - `gamma-monolith-dlss` (`gp-release-mt-may-dlss`): same `MT-TEST 2026.05.15` base paired with `brodrigz`'s DX12 presentation bridge for NVIDIA DLSS, Streamline Frame Generation, and AMD FSR 3 (`AnomalyDX12-DLSS.exe`).
 
+November 20 preview refresh:
+- Open a companion's inventory from dialogue or from the Quick Action Wheel.
+- Choose additional device actions in the wheel settings and turn the on-screen keyboard on or off.
+- Fixed crashes when closing certain settings menus and drop-downs, and improved controller handling in the main menu and hideout.
+- Fixed a DX12 presentation bridge crash when switching out of fullscreen with Alt+Tab.
+
 Recent fixes (`FIX-LIVE5` through `FIX-LIVE7`):
 - Easing the left stick below 70% physical tilt for 150 ms drops out of sprint back to a jog or walk without clicking `L3` again.
 - Added a right-stick neutral barrier (`< 0.3` deflection) when closing the Quick Action Wheel, weapon fan, or modal windows so the camera does not snap if the stick was held during selection.

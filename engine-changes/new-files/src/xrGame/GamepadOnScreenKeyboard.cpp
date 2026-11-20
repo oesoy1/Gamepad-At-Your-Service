@@ -2333,6 +2333,8 @@ namespace
     }
 } // namespace
 
+int ps_gp_osk_enabled = 1; // FIX-LIVE8 I-06: 1 = показывать экранную клавиатуру, 0 = только фокус поля
+
 CGamepadOnScreenKeyboardUI& CGamepadOnScreenKeyboardUI::Instance()
 {
     static CGamepadOnScreenKeyboardUI s_instance;
@@ -2406,6 +2408,19 @@ bool CGamepadOnScreenKeyboardUI::OpenForEditBox(CUICustomEdit* pEdit, const char
 {
     if (!pEdit || pEdit->IsReadOnly())
         return false;
+
+    if (!ps_gp_osk_enabled)
+    {
+        static thread_local bool s_focusing = false;
+        if (!s_focusing && !pEdit->HasInputFocus())
+        {
+            s_focusing = true;
+            pEdit->CaptureFocus(true);
+            s_focusing = false;
+        }
+        Msg("* [Gamepad] gp_osk disabled: focus edit (%s)", sourceTag ? sourceTag : "?");
+        return false;
+    }
 
     CDialogHolder* holder = GetActiveDialogHolderForOsk();
     if (!holder)
