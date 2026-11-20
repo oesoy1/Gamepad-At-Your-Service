@@ -11,6 +11,8 @@
 
 Gamepad At Your Service adds native SDL3 controller input and full gamepad UI navigation to S.T.A.L.K.E.R. G.A.M.M.A. (`xray-monolith` `MT-TEST 2026.05.15`). If you want to play the mod, grab one of the `.zip` packages on the [Releases](https://github.com/oesoy1/Gamepad-At-Your-Service/releases) page. The files in this repository are the readable UTF-8 source scripts, UI configs, and isolated C++ engine changes.
 
+[Watch the gameplay demo on YouTube](https://www.youtube.com/watch?v=1cSvmj2MOhs)
+
 ## What's in the mod
 
 Left stick tilt sets walk and jog speed directly in any direction, and `L3` sprint lets you steer within 60 degrees without dropping out of a run. Right stick aiming has separate horizontal and vertical sensitivity, an ADS multiplier on `LT`, inner and outer deadzones, and three response curves (linear, power, S-curve). Aim assist is optional, uses engine `RayQuery` line-of-sight checks so it ignores targets behind cover, skips allies and neutrals, and turns off in scopes above 4x magnification.
